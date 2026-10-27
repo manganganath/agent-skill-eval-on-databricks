@@ -1,0 +1,11 @@
+.venv/
+__pycache__/
+*.pyc
+.DS_Store
+node_modules/
+dist/
+.databricks/
+.env
+# internal working material: specs, plans, research. Never published
+internal/
+notes/
