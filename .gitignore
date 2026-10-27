@@ -9,3 +9,5 @@ dist/
 # internal working material: specs, plans, research. Never published
 internal/
 notes/
+.worktrees/
+.superpowers/
