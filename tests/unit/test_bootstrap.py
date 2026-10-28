@@ -1219,7 +1219,7 @@ def _stmts(sql):
     return [c[0] for c in sql.calls]
 
 
-def test_first_run_by_a_person_hands_schemas_tables_and_views_to_ci(cfg, tmp_path):
+def test_first_run_by_a_person_hands_schemas_and_tables_to_ci_and_keeps_views(cfg, tmp_path):
     from skillhub.registry.bootstrap import hub_schemas
 
     ev = evals_schema(cfg, "common")
@@ -1240,14 +1240,14 @@ def test_first_run_by_a_person_hands_schemas_tables_and_views_to_ci(cfg, tmp_pat
     assert calls == ["tables", "views", ("root", "app-1", "app-2"), "alerts", "genie"]
     moved = [s for s in stmts if " OWNER TO " in s]
     assert f"ALTER TABLE {ev}.eval_runs OWNER TO `app-1`" in moved
-    assert f"ALTER VIEW {ev}.eval_matrix OWNER TO `app-1`" in moved
+    assert not any(s.startswith("ALTER VIEW") for s in moved)  # UC refuses a view hand-over to a principal
     assert not any("ds_x" in s for s in moved)  # ci_eval's dataset keeps its owner
     assert {s for s in moved if s.startswith("ALTER SCHEMA")} == {
         f"ALTER SCHEMA {s} OWNER TO `app-1`" for s in hub_schemas(cfg)
     }
     assert stmts[-len(moved) :] == moved  # last: every grant was applied while the person owned the schemas
-    assert all(s.startswith("ALTER TABLE") or s.startswith("ALTER VIEW") for s in moved[:2])
-    assert log[-1].startswith(f"handed {len(moved)} schemas, tables and views to the ci principal app-1")
+    assert moved[0].startswith("ALTER TABLE")
+    assert log[-1].startswith(f"handed {len(moved)} schemas and tables to the ci principal app-1; views stay")
 
 
 def test_the_bootstrap_job_as_ci_passes_the_owner_checks_after_the_handover(cfg, tmp_path):
@@ -1261,6 +1261,20 @@ def test_the_bootstrap_job_as_ci_passes_the_owner_checks_after_the_handover(cfg,
     assert any(s.startswith("GRANT USE SCHEMA") for s in stmts)  # ci owns the schemas, so it re-grants
     n = len([s for s in grant_plan(cfg, CI, CI_EVAL) if " ON CATALOG " in s])
     assert any(line.startswith(f"skipped {n} catalog-level grant statements") for line in log)
+
+
+def test_the_bootstrap_job_as_ci_leaves_views_a_person_owns(cfg, tmp_path):
+    """Views stay with the catalog owner, so the ci Job must not try to replace them."""
+    cat = _Catalog(cfg, owner=CI)
+    w, sql, calls = _owned_w(cfg, cat, user=CI), cat.sql(), []
+    matrix = f"{evals_schema(cfg, next(iter(cfg.departments)))}.eval_matrix"
+    w.tables.get.side_effect = lambda name: SimpleNamespace(owner=DEPLOYER if name == matrix else CI)
+    log = bootstrap(cfg, w, sql, create_identities=False, skills_root=tmp_path, results=_steps(calls))
+    assert "tables" in calls and "views" not in calls
+    assert any(
+        line.startswith(f"results tables ensured; views left as they are: they are owned by {DEPLOYER}")
+        for line in log
+    )
 
 
 def test_the_bootstrap_job_as_ci_with_the_real_tables_steps_creates_no_schema(cfg, tmp_path):

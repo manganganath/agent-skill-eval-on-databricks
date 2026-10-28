@@ -195,6 +195,15 @@ class _Owners:
             )
 
 
+def _foreign_view_owner(cfg: HubConfig, w, ci: str) -> str | None:
+    """The owner of the results views when it is not ci, or None (no views yet, or ci owns them)."""
+    try:
+        owner = w.tables.get(f"{evals_schema(cfg, next(iter(cfg.departments)))}.eval_matrix").owner
+    except NotFound:
+        return None
+    return owner if owner and owner != ci else None
+
+
 def _schema_owner(w, name: str) -> str | None:
     """The owner, or None when the schema does not exist."""
     try:
@@ -209,7 +218,11 @@ _TABLE_NAME = re.compile(r"[A-Za-z0-9_]+")
 def ownership_transfers(
     cfg: HubConfig, w, owners: _Owners, schema_owners: dict[str, str | None]
 ) -> list[str]:
-    """ALTER ... OWNER TO ci for every hub schema, results table and view the deployer still owns.
+    """ALTER ... OWNER TO ci for every hub schema and results table the deployer still owns.
+
+    Views keep their owner: Unity Catalog lets a non-admin owner transfer a view only to a group they belong
+    to, because a view runs with its owner's privileges. The catalog owner keeps them, and only a person's
+    bootstrap run replaces them.
 
         Then the skillhub-bootstrap Job, which runs as ci, passes the owner checks and may re-apply the grants
     . Tables owned by ci_eval (the `ds_<skill>` datasets) keep their owner.
@@ -234,7 +247,7 @@ def ownership_transfers(
             if kind in (None, "MANAGED", "EXTERNAL"):
                 stmts.append(f"ALTER TABLE {schema}.{t.name} OWNER TO {ci}")
             elif kind == "VIEW":
-                stmts.append(f"ALTER VIEW {schema}.{t.name} OWNER TO {ci}")
+                continue  # see the docstring: views stay with the catalog owner
             else:
                 _log.warning(
                     "left %s.%s (%s) with its owner: bootstrap does not create that kind",
@@ -889,13 +902,21 @@ def bootstrap(
         for stmt in moved:
             sql.execute(stmt)
         log_lines.append(
-            f"handed {len(moved)} schemas, tables and views to the ci principal {ci_app_id}. The hub is already "
-            "owned by ci: run the skillhub-bootstrap Job to apply the grants, tables, views and hooks."
+            f"handed {len(moved)} schemas and tables to the ci principal {ci_app_id}; views stay with their "
+            "owner. The hub is already owned by ci: run the skillhub-bootstrap Job to apply the grants, tables "
+            "and hooks."
         )
         return log_lines
     steps.ensure_tables(cfg, sql)
-    steps.ensure_views(cfg, sql)
-    log_lines.append("results tables and views ensured")
+    view_owner = _foreign_view_owner(cfg, w, ci_app_id) if as_ci else None
+    if view_owner is None:
+        steps.ensure_views(cfg, sql)
+        log_lines.append("results tables and views ensured")
+    else:
+        log_lines.append(
+            f"results tables ensured; views left as they are: they are owned by {view_owner}, and only a "
+            "person's bootstrap run replaces them"
+        )
     for dept in cfg.departments:  # ci_eval could have pre-created any of these on an upgraded catalog
         for table in (JOURNAL_TABLE, *EVAL_WRITE_TABLES):
             name = f"{evals_schema(cfg, dept)}.{table}"
@@ -925,7 +946,8 @@ def bootstrap(
         for stmt in moved:
             sql.execute(stmt)
         log_lines.append(
-            f"handed {len(moved)} schemas, tables and views to the ci principal {ci_app_id}; "
-            "re-run bootstrap as the skillhub-bootstrap Job from now on"
+            f"handed {len(moved)} schemas and tables to the ci principal {ci_app_id}; views stay with their "
+            "owner. Re-run bootstrap as the skillhub-bootstrap Job from now on, and as a person after an upgrade "
+            "that changes the views"
         )
     return log_lines

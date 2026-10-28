@@ -1,5 +1,10 @@
 import os
 import shutil
+
+# CLI tests read help and error text. On CI runners (GITHUB_ACTIONS, FORCE_COLOR) Typer forces a colour
+# terminal, and ANSI codes split words such as `--config`. Set before anything imports typer.
+os.environ.setdefault("_TYPER_FORCE_DISABLE_TERMINAL", "1")
+os.environ.setdefault("NO_COLOR", "1")
 from pathlib import Path
 from types import SimpleNamespace
 
