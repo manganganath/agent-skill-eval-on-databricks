@@ -1,0 +1,160 @@
+{
+  "skill_name": "initiating-coverage",
+  "criteria": {},
+  "evals": [
+    {
+      "id": 1,
+      "kind": "trigger",
+      "prompt": "I'm a junior analyst and my MD wants us to pick up coverage on Celsius Holdings (CELH). Can you put together the full initiation report, the kind of 30-40 page doc a bulge bracket would publish?",
+      "should_trigger": true,
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": false
+    },
+    {
+      "id": 2,
+      "kind": "trigger",
+      "prompt": "Start the initiation workflow for Axon Enterprise. Do step 1, the company research piece: business overview, management bios, competitive landscape, TAM, and risks. I want the long-form markdown doc.",
+      "should_trigger": true,
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": false
+    },
+    {
+      "id": 3,
+      "kind": "trigger",
+      "prompt": "We already have the research doc and the Excel projection model for Duolingo from yesterday's session at /work/duol/. Now do the valuation step of the initiation: DCF with sensitivity, comps, football field, price target and rating.",
+      "should_trigger": true,
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": false
+    },
+    {
+      "id": 4,
+      "kind": "trigger",
+      "prompt": "Generate the chart pack for our Hims & Hers initiation. Research, model, and valuation tabs are all done and in the project folder. I need the 25+ charts zipped up, including the football field and DCF heatmap.",
+      "should_trigger": true,
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": false
+    },
+    {
+      "id": 5,
+      "kind": "trigger",
+      "prompt": "All four prior pieces for the Rocket Lab initiation are complete: the research md, the model xlsx with valuation tabs, and the charts zip. Assemble the final Word report now, with charts embedded throughout and the Investment Summary on page 1.",
+      "should_trigger": true,
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": false
+    },
+    {
+      "id": 6,
+      "kind": "trigger",
+      "prompt": "For our first-time coverage of Toast Inc, build the financial model that will feed the initiation. I need a revenue build by product and geography, a full IS/BS/CF, bull/base/bear scenarios, and a DCF inputs tab.",
+      "should_trigger": true,
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": false
+    },
+    {
+      "id": 7,
+      "kind": "trigger",
+      "prompt": "Can you just do the entire initiating coverage process on Samsara end to end? Research through the final report, all of it.",
+      "should_trigger": true,
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": false
+    },
+    {
+      "id": 8,
+      "kind": "trigger",
+      "prompt": "Please write the final initiation of coverage report on Cava Group for me. I haven't done any of the earlier pieces yet.",
+      "should_trigger": true,
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": false
+    },
+    {
+      "id": 9,
+      "kind": "trigger",
+      "prompt": "Build me a standalone DCF for Palantir in Excel. I need a WACC build, terminal value, and a sensitivity table. It's just for a quick internal check, not a report.",
+      "should_trigger": false,
+      "expected_skill": "dcf-model",
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": false
+    },
+    {
+      "id": 10,
+      "kind": "trigger",
+      "prompt": "Put together a comparable companies table for Shopify vs its e-commerce software peers with EV/Revenue and EV/EBITDA, plus max/median/min stats.",
+      "should_trigger": false,
+      "expected_skill": "comps-analysis",
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": false
+    },
+    {
+      "id": 11,
+      "kind": "trigger",
+      "prompt": "Nvidia reported last night. Write me a quick earnings recap covering beats and misses vs consensus, the guide, and key call takeaways.",
+      "should_trigger": false,
+      "expected_skill": "earnings-analysis",
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": false
+    },
+    {
+      "id": 12,
+      "kind": "trigger",
+      "prompt": "Write a sector overview on the US regional banking industry covering key players, trends, and the regulatory backdrop. It's for a client pitch, not tied to any one company.",
+      "should_trigger": false,
+      "expected_skill": "sector-overview",
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": false
+    },
+    {
+      "id": 13,
+      "kind": "trigger",
+      "prompt": "Help me plan a 5-day itinerary for Lisbon in October with good seafood spots.",
+      "should_trigger": false,
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": false
+    },
+    {
+      "id": 14,
+      "kind": "trigger",
+      "prompt": "My Python script throws a KeyError when parsing this JSON config. Can you debug it?",
+      "should_trigger": false,
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": false
+    },
+    {
+      "id": 15,
+      "kind": "trigger",
+      "prompt": "Draft a polite email to my landlord asking to fix the leaking kitchen faucet.",
+      "should_trigger": false,
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": false
+    }
+  ]
+}

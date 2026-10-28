@@ -1,0 +1,160 @@
+{
+  "skill_name": "ib-check-deck",
+  "criteria": {},
+  "evals": [
+    {
+      "id": 1,
+      "kind": "trigger",
+      "prompt": "Can you do a final pass on the attached pitch deck before I send it to the client tomorrow morning? Looking for anything that would embarrass us.",
+      "should_trigger": true,
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": false
+    },
+    {
+      "id": 2,
+      "kind": "trigger",
+      "prompt": "I've got a 28-slide sell-side presentation open in PowerPoint. Please reconcile the revenue and EBITDA figures across all slides. I think someone updated the financials on the summary page but not the appendix.",
+      "should_trigger": true,
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": false
+    },
+    {
+      "id": 3,
+      "kind": "trigger",
+      "prompt": "check my numbers in this deck pls, MD is going to flip if the EV doesn't match between the exec summary and the valuation section",
+      "should_trigger": true,
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": false
+    },
+    {
+      "id": 4,
+      "kind": "trigger",
+      "prompt": "Is this management presentation client-ready? Uploading the pptx now.",
+      "should_trigger": true,
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": false
+    },
+    {
+      "id": 5,
+      "kind": "trigger",
+      "prompt": "We claim the target is the #1 player in its segment on slide 3, but I'm not sure the market share data later in the book supports that. Can you review the whole presentation for places where the narrative doesn't line up with the charts?",
+      "should_trigger": true,
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": false
+    },
+    {
+      "id": 6,
+      "kind": "trigger",
+      "prompt": "Proof this board materials deck for tone. I want to catch casual language, contractions, and anything that doesn't sound like a bank wrote it. Also flag missing sources on charts.",
+      "should_trigger": true,
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": false
+    },
+    {
+      "id": 7,
+      "kind": "trigger",
+      "prompt": "What am I missing before I send this out? It's the buy-side pitch for the healthcare services roll-up, attached.",
+      "should_trigger": true,
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": false
+    },
+    {
+      "id": 8,
+      "kind": "trigger",
+      "prompt": "QC the deck please. Some slides use $MM and others use $M, and I suspect the LTM vs FY labels are mixed up too. Give me a list by severity.",
+      "should_trigger": true,
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": false
+    },
+    {
+      "id": 9,
+      "kind": "trigger",
+      "prompt": "Q3 numbers just came in. Please roll forward the pitch deck and update all the LTM revenue, EBITDA, and multiples on every slide to the new figures.",
+      "should_trigger": false,
+      "expected_skill": "deck-refresh",
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": false
+    },
+    {
+      "id": 10,
+      "kind": "trigger",
+      "prompt": "Can you audit my LBO spreadsheet for broken formulas, hardcodes, and circular references before I paste outputs into the deck?",
+      "should_trigger": false,
+      "expected_skill": "audit-xls",
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": false
+    },
+    {
+      "id": 11,
+      "kind": "trigger",
+      "prompt": "Build me a 10-slide pitch deck from scratch for a potential acquisition of a regional bank, with an exec summary, situation overview, and valuation section.",
+      "should_trigger": false,
+      "expected_skill": "pptx-author",
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": false
+    },
+    {
+      "id": 12,
+      "kind": "trigger",
+      "prompt": "Pull together a trading comps table for mid-cap SaaS companies with EV/Revenue and EV/EBITDA multiples.",
+      "should_trigger": false,
+      "expected_skill": "comps-analysis",
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": false
+    },
+    {
+      "id": 13,
+      "kind": "trigger",
+      "prompt": "What's a good recipe for a weeknight chicken curry that takes under 30 minutes?",
+      "should_trigger": false,
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": false
+    },
+    {
+      "id": 14,
+      "kind": "trigger",
+      "prompt": "Help me write a Python script that renames all the files in a folder based on their creation date.",
+      "should_trigger": false,
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": false
+    },
+    {
+      "id": 15,
+      "kind": "trigger",
+      "prompt": "Explain the difference between a Roth IRA and a traditional 401(k) for someone in their late twenties.",
+      "should_trigger": false,
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": false
+    }
+  ]
+}

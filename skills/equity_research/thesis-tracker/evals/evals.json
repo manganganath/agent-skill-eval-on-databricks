@@ -1,0 +1,160 @@
+{
+  "skill_name": "thesis-tracker",
+  "criteria": {},
+  "evals": [
+    {
+      "id": 1,
+      "kind": "trigger",
+      "prompt": "Costco just reported a membership fee hike and renewal rates ticked down to 90.2%. Can you update my long thesis on COST with this and tell me which pillar it affects?",
+      "should_trigger": true,
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": false
+    },
+    {
+      "id": 2,
+      "kind": "trigger",
+      "prompt": "I'm short a regional bank (WAL) on the idea that deposit costs will crush NIM. Their CFO just left unexpectedly. Is my thesis still intact?",
+      "should_trigger": true,
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": false
+    },
+    {
+      "id": 3,
+      "kind": "trigger",
+      "prompt": "Help me write up a new long thesis for Axon: core statement, 4 pillars, key risks, catalysts, target price, and what would make me exit.",
+      "should_trigger": true,
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": false
+    },
+    {
+      "id": 4,
+      "kind": "trigger",
+      "prompt": "Add a data point to my Deere file: management guided ag equipment sales down 15-20% next year. Mark conviction accordingly.",
+      "should_trigger": true,
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": false
+    },
+    {
+      "id": 5,
+      "kind": "trigger",
+      "prompt": "It's quarter-end. Can you review my positions — NVDA, LULU, UBER, and the CRWD short — and give me a scorecard per name showing whether each pillar is on track?",
+      "should_trigger": true,
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": false
+    },
+    {
+      "id": 6,
+      "kind": "trigger",
+      "prompt": "Quick thesis check on Snowflake before risk committee tomorrow. Margins have been flat for 3 quarters, which was one of my key pillars. Do I trim?",
+      "should_trigger": true,
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": false
+    },
+    {
+      "id": 7,
+      "kind": "trigger",
+      "prompt": "My original reason for owning Disney was parks margin expansion plus streaming hitting profitability. Streaming turned profitable but parks attendance is softening. Log this and update the pillar status table.",
+      "should_trigger": true,
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": false
+    },
+    {
+      "id": 8,
+      "kind": "trigger",
+      "prompt": "I have Pinterest on my watchlist with a thesis around international ARPU. Can you pull together a one-page summary of where that thesis stands for our morning meeting, with recent updates and conviction?",
+      "should_trigger": true,
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": false
+    },
+    {
+      "id": 9,
+      "kind": "trigger",
+      "prompt": "Build me a calendar of all upcoming earnings dates, investor days, and FDA decisions for the biotech names in our coverage universe over the next 90 days.",
+      "should_trigger": false,
+      "expected_skill": "catalyst-calendar",
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": false
+    },
+    {
+      "id": 10,
+      "kind": "trigger",
+      "prompt": "Microsoft reported last night. Break down the quarter versus consensus — revenue, EPS, Azure growth, guidance — and flag key takeaways.",
+      "should_trigger": false,
+      "expected_skill": "earnings-analysis",
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": false
+    },
+    {
+      "id": 11,
+      "kind": "trigger",
+      "prompt": "I need some fresh long ideas in industrials — screen for names with improving ROIC and depressed valuations that we don't already own.",
+      "should_trigger": false,
+      "expected_skill": "idea-generation",
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": false
+    },
+    {
+      "id": 12,
+      "kind": "trigger",
+      "prompt": "Build a DCF for Shopify with a 5-year projection, WACC build, and sensitivity table on terminal growth and discount rate.",
+      "should_trigger": false,
+      "expected_skill": "dcf-model",
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": false
+    },
+    {
+      "id": 13,
+      "kind": "trigger",
+      "prompt": "Can you help me draft an email to my landlord asking to break my lease early?",
+      "should_trigger": false,
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": false
+    },
+    {
+      "id": 14,
+      "kind": "trigger",
+      "prompt": "Write a Python function that deduplicates a list of dictionaries by a given key.",
+      "should_trigger": false,
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": false
+    },
+    {
+      "id": 15,
+      "kind": "trigger",
+      "prompt": "What's a good 4-day itinerary for Lisbon in October?",
+      "should_trigger": false,
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": false
+    }
+  ]
+}

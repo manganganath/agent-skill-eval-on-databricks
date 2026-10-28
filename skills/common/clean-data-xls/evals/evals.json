@@ -1,0 +1,160 @@
+{
+  "skill_name": "clean-data-xls",
+  "criteria": {},
+  "evals": [
+    {
+      "id": 1,
+      "kind": "trigger",
+      "prompt": "I've got a customer export in Sheet1 that's a total mess. Some names have trailing spaces, the country column has 'usa', 'USA', 'Usa' all mixed together, and some of the revenue cells show as text with dollar signs. Can you clean it up before I run pivots on it?",
+      "should_trigger": true,
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": false
+    },
+    {
+      "id": 2,
+      "kind": "trigger",
+      "prompt": "dedupe the rows in A1:H500 — there are a bunch of repeated orders, some that only differ by capitalization in the email field",
+      "should_trigger": true,
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": false
+    },
+    {
+      "id": 3,
+      "kind": "trigger",
+      "prompt": "The 'Signup Date' column in vendors_q1.xlsx has dates in like four different formats (3/8/26, 2026-03-08, March 8 2026...). Please standardize this column so I can sort by it.",
+      "should_trigger": true,
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": false
+    },
+    {
+      "id": 4,
+      "kind": "trigger",
+      "prompt": "Excel keeps showing the little green triangle on my quantity column saying numbers are stored as text, and SUM returns 0. Some cells also have commas and % signs. Fix it?",
+      "should_trigger": true,
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": false
+    },
+    {
+      "id": 5,
+      "kind": "trigger",
+      "prompt": "this data is messy — I'm seeing weird characters like Ã© and â€™ in the product descriptions, plus a few #N/A and #VALUE! cells scattered around. Can you go through the sheet and normalize everything?",
+      "should_trigger": true,
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": false
+    },
+    {
+      "id": 6,
+      "kind": "trigger",
+      "prompt": "Before I hand this survey results file to the analytics team, can you prep it? Flag any columns where most values are numbers but a few are random text entries, and point out blanks in columns that should be fully populated.",
+      "should_trigger": true,
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": false
+    },
+    {
+      "id": 7,
+      "kind": "trigger",
+      "prompt": "Can you fix formatting on the region and status columns in the active sheet? Mixed case everywhere and double spaces between words. Use helper columns with formulas rather than overwriting, my manager wants to see what changed.",
+      "should_trigger": true,
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": false
+    },
+    {
+      "id": 8,
+      "kind": "trigger",
+      "prompt": "I merged three CRM exports into one tab and now it's full of duplicates, inconsistent state abbreviations, and phone numbers with stray whitespace. Help me get it into a usable shape.",
+      "should_trigger": true,
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": false
+    },
+    {
+      "id": 9,
+      "kind": "trigger",
+      "prompt": "Can you review my financial model workbook for broken formulas, hardcoded numbers inside calc cells, and circular references? I want to make sure it's sound before sending to the client.",
+      "should_trigger": false,
+      "expected_skill": "audit-xls",
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": false
+    },
+    {
+      "id": 10,
+      "kind": "trigger",
+      "prompt": "Build me a new Excel workbook from scratch with a formatted table tracking monthly marketing spend by channel, with totals and a chart.",
+      "should_trigger": false,
+      "expected_skill": "xlsx-author",
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": false
+    },
+    {
+      "id": 11,
+      "kind": "trigger",
+      "prompt": "I have the trading multiples data for 8 peer companies in a sheet — can you set up a comparable companies analysis with EV/EBITDA and P/E, plus median and mean rows?",
+      "should_trigger": false,
+      "expected_skill": "comps-analysis",
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": false
+    },
+    {
+      "id": 12,
+      "kind": "trigger",
+      "prompt": "Our quarterly numbers changed — please update all the charts and figures in the board deck to reflect the new Q3 data from the attached spreadsheet.",
+      "should_trigger": false,
+      "expected_skill": "deck-refresh",
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": false
+    },
+    {
+      "id": 13,
+      "kind": "trigger",
+      "prompt": "What's the difference between a left join and an inner join in SQL? Give me a quick example.",
+      "should_trigger": false,
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": false
+    },
+    {
+      "id": 14,
+      "kind": "trigger",
+      "prompt": "Draft a polite email to my landlord asking to push the lease renewal deadline back two weeks.",
+      "should_trigger": false,
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": false
+    },
+    {
+      "id": 15,
+      "kind": "trigger",
+      "prompt": "Explain how compound interest works and why starting to save early matters so much.",
+      "should_trigger": false,
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": false
+    }
+  ]
+}

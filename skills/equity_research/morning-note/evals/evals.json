@@ -1,0 +1,249 @@
+{
+  "skill_name": "morning-note",
+  "criteria": {},
+  "evals": [
+    {
+      "id": 101,
+      "kind": "effectiveness",
+      "prompt": "Morning note for the coverage list. Overnight news on Northwind Robotics is attached. What is our take, and do we change the rating?",
+      "should_trigger": true,
+      "assertions": [
+        "Opens with a Top Call headline that gives a view on Northwind, not only a summary of the news",
+        "Uses the morning-note sections (Top Call, Overnight or Pre-Market Developments, Key Events Today, Trade Ideas) and stays on one page max, readable in 2 minutes",
+        "States the rating decision (maintain, upgrade or downgrade) and the price target, with one sentence of reason",
+        "Time-stamps the take as pre-market"
+      ],
+      "fixtures": [
+        "northwind/overnight_news.md",
+        "northwind/prior_estimates.json"
+      ],
+      "expected_tool_calls": [
+        {
+          "name": "web_search"
+        }
+      ],
+      "origin": "human",
+      "reviewed": true
+    },
+    {
+      "id": 102,
+      "kind": "effectiveness",
+      "prompt": "Keep it short: only the Northwind take for today's meeting, nothing on the sector.",
+      "should_trigger": true,
+      "assertions": [
+        "Covers Northwind only and leaves out the sector pre-announcement item",
+        "Stays under 200 words",
+        "Still states a top call and a rating decision"
+      ],
+      "fixtures": [
+        "northwind/overnight_news.md"
+      ],
+      "origin": "human",
+      "reviewed": true
+    },
+    {
+      "id": 103,
+      "kind": "effectiveness",
+      "prompt": "Give me a trade idea on Northwind off the supplier news, with the catalyst and what would make it wrong.",
+      "should_trigger": true,
+      "assertions": [
+        "Trade Ideas gives a long or short call with a one-to-two sentence thesis and names the catalyst",
+        "States the risk: what would make the trade wrong",
+        "Sizes the Q4 revenue at risk from the supplier delay against Q4 consensus of $428.0M (consensus as of 2026-10-20)"
+      ],
+      "fixtures": [
+        "northwind/overnight_news.md",
+        "northwind/consensus_q3.json"
+      ],
+      "origin": "human",
+      "reviewed": true
+    },
+    {
+      "id": 104,
+      "kind": "effectiveness",
+      "prompt": "What in the overnight news is noise, and what matters for the morning meeting on Northwind?",
+      "should_trigger": true,
+      "assertions": [
+        "Treats the supplier shipment delay as actionable and the trade-association order statistic as noise",
+        "Says plainly when an item does not change the thesis, rather than padding the note",
+        "Notes that the take is pre-market and may change by the open"
+      ],
+      "fixtures": [
+        "northwind/overnight_news.md"
+      ],
+      "origin": "human",
+      "reviewed": true
+    },
+    {
+      "id": 105,
+      "kind": "effectiveness",
+      "prompt": "Quick takes on Northwind's Q3 print for the morning meeting: consensus against actual, then our action.",
+      "should_trigger": true,
+      "assertions": [
+        "Quick-takes table with Metric, Consensus, Actual and Beat/Miss columns for revenue ($405.0M and $412.0M), EPS ($0.79 and $0.84) and gross margin (40.8% and 41.5%)",
+        "Gives an Our Take of two to three sentences on whether the print changes the thesis",
+        "Gives an Action line: maintain, upgrade or downgrade, and any price target change"
+      ],
+      "fixtures": [
+        "northwind/press_release_q3.md",
+        "northwind/consensus_q3.json"
+      ],
+      "origin": "human",
+      "reviewed": true
+    },
+    {
+      "id": 1,
+      "kind": "trigger",
+      "prompt": "Need to get ready for the 7am meeting. Two of my semis names reported after the close last night, and futures are down 1%. Can you draft something tight for the PMs?",
+      "should_trigger": true,
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": true
+    },
+    {
+      "id": 2,
+      "kind": "trigger",
+      "prompt": "what happened overnight across my consumer staples coverage? I want a quick writeup with our view on each before the open",
+      "should_trigger": true,
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": true
+    },
+    {
+      "id": 3,
+      "kind": "trigger",
+      "prompt": "Write today's daily note for the energy desk. Brent is up 3% on the OPEC headlines, and XOM has its investor day at 10am.",
+      "should_trigger": true,
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": true
+    },
+    {
+      "id": 4,
+      "kind": "trigger",
+      "prompt": "Morning call prep: Nike beat on EPS but cut its FY guide. I need a 2-minute read with a top call, a quick beat/miss table, and whether we stay at Buy.",
+      "should_trigger": true,
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": true
+    },
+    {
+      "id": 5,
+      "kind": "trigger",
+      "prompt": "Nothing really happened overnight in my REIT coverage. Can you still put together a short note for the morning meeting that says we're holding positioning?",
+      "should_trigger": true,
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": true
+    },
+    {
+      "id": 6,
+      "kind": "trigger",
+      "prompt": "Pre-market: there's a rumor that Pfizer is bidding for one of my mid-cap biotech names, which is up 25%. Draft a Slack-ready blurb for the traders with our take and a long/short idea.",
+      "should_trigger": true,
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": true
+    },
+    {
+      "id": 7,
+      "kind": "trigger",
+      "prompt": "Put together this morning's note for the banks team. CPI is out at 8:30, JPM was downgraded by a competitor, and the 10y is up 8bps overnight. Keep it to one page.",
+      "should_trigger": true,
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": true
+    },
+    {
+      "id": 8,
+      "kind": "trigger",
+      "prompt": "Yesterday I said to buy AMD into the print and I was wrong. Draft today's 7am note so it owns that call and gives the updated view.",
+      "should_trigger": true,
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": true
+    },
+    {
+      "id": 9,
+      "kind": "trigger",
+      "prompt": "Microsoft reports next Tuesday. Build me a preview of what consensus expects and the key metrics to watch on the call.",
+      "should_trigger": false,
+      "expected_skill": "earnings-preview",
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": true
+    },
+    {
+      "id": 10,
+      "kind": "trigger",
+      "prompt": "Do a full post-earnings deep dive on Salesforce's Q3. Segment trends, margin bridge, and the implications for our long-term estimates.",
+      "should_trigger": false,
+      "expected_skill": "earnings-analysis",
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": true
+    },
+    {
+      "id": 11,
+      "kind": "trigger",
+      "prompt": "Map out every catalyst for my healthcare coverage over the next quarter: FDA dates, conferences, and earnings.",
+      "should_trigger": false,
+      "expected_skill": "catalyst-calendar",
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": true
+    },
+    {
+      "id": 12,
+      "kind": "trigger",
+      "prompt": "Screen the industrials space for new long ideas based on valuation and estimate revisions. I'm looking for fresh names to pitch.",
+      "should_trigger": false,
+      "expected_skill": "idea-generation",
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": true
+    },
+    {
+      "id": 13,
+      "kind": "trigger",
+      "prompt": "Can you write a birthday message for my coworker who loves hiking?",
+      "should_trigger": false,
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": true
+    },
+    {
+      "id": 14,
+      "kind": "trigger",
+      "prompt": "Explain how to set up a Python virtual environment on Windows.",
+      "should_trigger": false,
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": true
+    },
+    {
+      "id": 15,
+      "kind": "trigger",
+      "prompt": "Give me a 20-minute morning workout I can do without equipment.",
+      "should_trigger": false,
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": true
+    }
+  ]
+}

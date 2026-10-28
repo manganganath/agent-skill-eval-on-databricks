@@ -1,0 +1,160 @@
+{
+  "skill_name": "idea-generation",
+  "criteria": {},
+  "evals": [
+    {
+      "id": 1,
+      "kind": "trigger",
+      "prompt": "Can you run a value screen on US small caps? I want stocks with FCF yield over 5%, P/B under 1.5x, and some insider buying in the last quarter.",
+      "should_trigger": true,
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": false
+    },
+    {
+      "id": 2,
+      "kind": "trigger",
+      "prompt": "Pitch me a couple of short ideas in consumer discretionary. I'm looking for names where receivables are rising faster than sales and margins are compressing.",
+      "should_trigger": true,
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": false
+    },
+    {
+      "id": 3,
+      "kind": "trigger",
+      "prompt": "I need fresh ideas for the fund. What looks interesting in mid-cap industrials right now, either long or short?",
+      "should_trigger": true,
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": false
+    },
+    {
+      "id": 4,
+      "kind": "trigger",
+      "prompt": "Do a thematic sweep on reshoring. Map out the value chain and find the second-order beneficiaries the market hasn't connected to the theme yet.",
+      "should_trigger": true,
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": false
+    },
+    {
+      "id": 5,
+      "kind": "trigger",
+      "prompt": "Screen for SaaS companies growing revenue over 15% with accelerating growth and net retention above 110%. Give me a shortlist with a comparison table.",
+      "should_trigger": true,
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": false
+    },
+    {
+      "id": 6,
+      "kind": "trigger",
+      "prompt": "Look for special situations: spin-offs from the last 12 months, upcoming lockup expirations, and companies with new activist stakes. Which ones should I research first?",
+      "should_trigger": true,
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": false
+    },
+    {
+      "id": 7,
+      "kind": "trigger",
+      "prompt": "I'm building a European quality bucket. Find companies with 5+ years of consistent revenue growth, ROE above 15%, low leverage, and meaningful insider ownership.",
+      "should_trigger": true,
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": false
+    },
+    {
+      "id": 8,
+      "kind": "trigger",
+      "prompt": "Which uncrowded names would benefit from aging demographics? Find some under-appreciated longs in healthcare services and give me one-page summaries.",
+      "should_trigger": true,
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": false
+    },
+    {
+      "id": 9,
+      "kind": "trigger",
+      "prompt": "Build me a DCF for Deere with a 10-year projection period, WACC build-up, and a sensitivity table on terminal growth.",
+      "should_trigger": false,
+      "expected_skill": "dcf-model",
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": false
+    },
+    {
+      "id": 10,
+      "kind": "trigger",
+      "prompt": "Put together a trading comps table for Snowflake against Datadog, MongoDB, and Confluent with EV/Revenue and EV/EBITDA multiples.",
+      "should_trigger": false,
+      "expected_skill": "comps-analysis",
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": false
+    },
+    {
+      "id": 11,
+      "kind": "trigger",
+      "prompt": "Check in on my long thesis for Costco. Which pillars still hold after last quarter, and has anything broken?",
+      "should_trigger": false,
+      "expected_skill": "thesis-tracker",
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": false
+    },
+    {
+      "id": 12,
+      "kind": "trigger",
+      "prompt": "List the upcoming earnings dates, investor days, and FDA decisions for the names in my portfolio over the next two months.",
+      "should_trigger": false,
+      "expected_skill": "catalyst-calendar",
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": false
+    },
+    {
+      "id": 13,
+      "kind": "trigger",
+      "prompt": "Write a Python function that removes duplicate entries from a list while preserving order.",
+      "should_trigger": false,
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": false
+    },
+    {
+      "id": 14,
+      "kind": "trigger",
+      "prompt": "Can you suggest a 5-day itinerary for Lisbon with some good seafood restaurants?",
+      "should_trigger": false,
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": false
+    },
+    {
+      "id": 15,
+      "kind": "trigger",
+      "prompt": "Help me draft a polite email to my landlord about a leaky kitchen faucet.",
+      "should_trigger": false,
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": false
+    }
+  ]
+}

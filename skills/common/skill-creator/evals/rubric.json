@@ -1,0 +1,79 @@
+{
+  "skill_name": "skill-creator",
+  "source_hash": "sha256:f83d363a85bbb750d0b84ec9243217669ef6d5e5a5bdb7a4566cd206ac53e30e",
+  "generated_by": "claude-opus",
+  "pass_score": 0.7,
+  "reviewed": false,
+  "criteria": [
+    {
+      "id": "c1",
+      "text": "The created or updated SKILL.md starts with YAML frontmatter containing only the `name` and `description` fields and no other fields.",
+      "type": "skill_format",
+      "weight": 5,
+      "source": "Anatomy of a Skill / Step 4 Frontmatter: 'Do not include any other fields in YAML frontmatter.'"
+    },
+    {
+      "id": "c2",
+      "text": "The `description` field says what the skill does and also gives specific triggers or contexts for when to use it. The SKILL.md body has no 'When to Use This Skill' section.",
+      "type": "skill_format",
+      "weight": 5,
+      "source": "Step 4 Frontmatter: description is the primary triggering mechanism; put all 'when to use' info there, not the body"
+    },
+    {
+      "id": "c3",
+      "text": "Before building the skill, the response gathers or proposes concrete usage examples, such as example user requests or trigger phrases. If it asks the user questions, it asks only a few focused ones at a time.",
+      "type": "task_quality",
+      "weight": 4,
+      "source": "Step 1: Understanding the Skill with Concrete Examples"
+    },
+    {
+      "id": "c4",
+      "text": "The response picks reusable resources from the examples and places each one correctly: deterministic or repeatedly rewritten code goes in scripts/, docs to load as needed go in references/, and output files such as templates go in assets/.",
+      "type": "task_quality",
+      "weight": 4,
+      "source": "Step 2: Planning the Reusable Skill Contents; Bundled Resources section"
+    },
+    {
+      "id": "c5",
+      "text": "For a new skill, the response runs or instructs `scripts/init_skill.py <skill-name> --path <dir>`. It then deletes unneeded example files and runs or instructs `scripts/package_skill.py` to validate and produce a .skill file.",
+      "type": "task_quality",
+      "weight": 4,
+      "source": "Step 3 Initializing and Step 5 Packaging"
+    },
+    {
+      "id": "c6",
+      "text": "The skill contains no extra docs such as README.md, INSTALLATION_GUIDE.md, QUICK_REFERENCE.md, or CHANGELOG.md, and no notes on creation process, setup, or testing meant for users.",
+      "type": "skill_format",
+      "weight": 3,
+      "source": "What to Not Include in a Skill"
+    },
+    {
+      "id": "c7",
+      "text": "The SKILL.md body is concise, well under 500 lines, and leaves out explanations Claude would already know. Detailed or variant-specific material goes in reference files, and the same information is not repeated in both SKILL.md and references.",
+      "type": "task_quality",
+      "weight": 4,
+      "source": "Core Principles: Concise is Key; Progressive Disclosure Patterns; Avoid duplication"
+    },
+    {
+      "id": "c8",
+      "text": "Every reference file is linked directly from SKILL.md, one level deep, with a clear note on when to read it. Any reference file over 100 lines starts with a table of contents.",
+      "type": "skill_format",
+      "weight": 3,
+      "source": "Progressive Disclosure: Important guidelines"
+    },
+    {
+      "id": "c9",
+      "text": "The SKILL.md instructions are written in imperative or infinitive form, such as 'Run the script…' or 'To rotate a PDF, use…'.",
+      "type": "skill_format",
+      "weight": 2,
+      "source": "Step 4 Update SKILL.md: Writing Guidelines"
+    },
+    {
+      "id": "c10",
+      "text": "How specific each instruction is matches how fragile the task is: exact scripts or command sequences for error-prone operations, and flexible text guidance where several approaches are valid. Any bundled scripts are tested by running them.",
+      "type": "task_quality",
+      "weight": 3,
+      "source": "Set Appropriate Degrees of Freedom; Step 4: scripts must be tested by actually running them"
+    }
+  ]
+}

@@ -1,0 +1,79 @@
+{
+  "skill_name": "comps-analysis",
+  "source_hash": "sha256:ec4a8a35ff6052d40d606661cced287780ef54b8602ade3393ccceaf49c0d432",
+  "generated_by": "claude-opus",
+  "pass_score": 0.7,
+  "reviewed": false,
+  "criteria": [
+    {
+      "id": "c1",
+      "text": "Derived values such as margins, multiples, and statistics are written as Excel formulas that reference input cells, for example \"=E7/C7\". They are not pasted in as precomputed numbers. Only raw inputs such as revenue, EBITDA, and share price are hardcoded.",
+      "type": "task_quality",
+      "weight": 5,
+      "source": "CRITICAL: Formulas Over Hardcodes"
+    },
+    {
+      "id": "c2",
+      "text": "Financial data is sourced from S&P Kensho, FactSet, or Daloopa MCP if those are available. Otherwise it comes from institutional sources such as Bloomberg or SEC EDGAR. Web search is not used as the primary data source.",
+      "type": "task_quality",
+      "weight": 5,
+      "source": "CRITICAL: Data Source Priority"
+    },
+    {
+      "id": "c3",
+      "text": "Every hardcoded input cell has a cell comment. The comment either cites the exact source (filing, page, or provider and access date) or explains the assumption behind the number.",
+      "type": "task_quality",
+      "weight": 4,
+      "source": "Section 6 As You Build / Output Checklist"
+    },
+    {
+      "id": "c4",
+      "text": "Valuation multiples such as EV/Revenue and EV/EBITDA reference the revenue and EBITDA cells in the operating section rather than re-entering the same raw data. Numerators and denominators use consistent time periods, for example LTM with LTM.",
+      "type": "task_quality",
+      "weight": 4,
+      "source": "Section 3 Cross-Reference Rule; Common Mistakes"
+    },
+    {
+      "id": "c5",
+      "text": "A statistics block with Maximum, 75th Percentile, Median, 25th Percentile, and Minimum is computed with formulas such as MAX, QUARTILE, MEDIAN, and MIN. It covers the comparable metrics (margins, growth, multiples) but not size metrics such as Revenue, Market Cap, or EV. It sits after one blank row and has no separate 'STATISTICS' header row.",
+      "type": "task_quality",
+      "weight": 4,
+      "source": "Section 2 Statistics Block"
+    },
+    {
+      "id": "c6",
+      "text": "The work proceeds in stages and pauses for user confirmation at each checkpoint: structure/headers, then raw inputs, then operating metrics, then valuation multiples. It does not build the whole sheet end-to-end and only then present it. Clarifying questions about audience, key question, context, or format preference are asked when relevant.",
+      "type": "skill_format",
+      "weight": 4,
+      "source": "Verify step-by-step with the user; ALWAYS ask yourself first"
+    },
+    {
+      "id": "c7",
+      "text": "The sheet starts with a header block that gives the analysis title, the companies with their tickers, and an 'As of [period]' line with a unit statement such as 'USD Millions'. It ends with a notes/methodology section covering data sources, definitions (for example the EBITDA and EV methods), and the valuation approach.",
+      "type": "task_quality",
+      "weight": 3,
+      "source": "Section 1 Header Block; Section 4 Notes & Methodology"
+    },
+    {
+      "id": "c8",
+      "text": "The metric selection is focused and suited to the industry and the question being answered, roughly 5 operating and 5 valuation metrics. Examples: Rule of 40 for SaaS, and no EBITDA for banks. Companies with negative EBITDA are not valued on EBITDA multiples.",
+      "type": "task_quality",
+      "weight": 3,
+      "source": "Section 5 Decision Framework; Section 10 Red Flags"
+    },
+    {
+      "id": "c9",
+      "text": "Without user or template overrides, the formatting follows the defaults: blue text for inputs and black for formulas, and a restrained palette of dark blue section headers, light blue column headers, and light grey stats rows. Percentages and multiples show 1 decimal, and dollar figures use thousands separators. In Office JS, values are written to the top-left cell before merging.",
+      "type": "skill_format",
+      "weight": 2,
+      "source": "Visual Convention Standards; Office JS merged cell pitfall"
+    },
+    {
+      "id": "c10",
+      "text": "Sanity checks are performed or reported: the margin hierarchy Gross > EBITDA > Net holds, multiples fall within reasonable ranges, and there are no #DIV/0! or #REF! errors.",
+      "type": "task_quality",
+      "weight": 3,
+      "source": "Section 6 Sanity Checks; Output Checklist"
+    }
+  ]
+}

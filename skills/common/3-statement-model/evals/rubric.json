@@ -1,0 +1,79 @@
+{
+  "skill_name": "3-statement-model",
+  "source_hash": "sha256:00bb323644a5f47969412d3e6b94bc20ef0bb3d9b5f3f7bcd45c0d8db28067d4",
+  "generated_by": "claude-opus",
+  "pass_score": 0.7,
+  "reviewed": false,
+  "criteria": [
+    {
+      "id": "c1",
+      "text": "Every projection cell, roll-forward, cross-tab link, and subtotal is written as an Excel formula string, for example \"=D14*(1+Assumptions!$B$5)\". Pre-computed values are not used for these cells. Hardcoded numbers appear only for historical actuals and assumption drivers.",
+      "type": "task_quality",
+      "weight": 5,
+      "source": "SKILL.md › Critical Principles › Formulas over hardcodes"
+    },
+    {
+      "id": "c2",
+      "text": "The response uses the tooling that matches its environment. Inside Excel it uses Office JS `range.formulas`, not `.values`, for derived cells. For a standalone .xlsx it uses openpyxl formula strings and runs recalc.py before delivery.",
+      "type": "skill_format",
+      "weight": 3,
+      "source": "SKILL.md › Critical Principles › Environment — Office JS vs Python"
+    },
+    {
+      "id": "c3",
+      "text": "The response works in stages and checks in with the user at each one. It first maps the template's tabs and sections, then populates historicals, then the IS, then the BS, then the CF. At each stage it shows the result and asks for confirmation before going on. It does not build the whole model end-to-end and present it as finished.",
+      "type": "skill_format",
+      "weight": 4,
+      "source": "SKILL.md › Critical Principles › Verify step-by-step with the user"
+    },
+    {
+      "id": "c4",
+      "text": "The model includes a check for every period that Total Assets − Total Liabilities − Total Equity = 0. It also includes a check that CF ending cash equals BS cash. The response reports both results.",
+      "type": "task_quality",
+      "weight": 5,
+      "source": "SKILL.md › Step 5 Cross-Statement Integrity Checks; Core Linkages"
+    },
+    {
+      "id": "c5",
+      "text": "Cash flow linkages are correct. CFO starts with a link to IS Net Income and adds back D&A and SBC. Increases in AR and inventory reduce cash, and increases in AP add cash. CapEx is negative in CFI. Each period's beginning cash equals the prior period's ending cash.",
+      "type": "task_quality",
+      "weight": 4,
+      "source": "SKILL.md › Sign Convention Reference; CF Quality Checks; references/formulas.md CF Structure"
+    },
+    {
+      "id": "c6",
+      "text": "Retained earnings roll forward by formula: Prior RE + Net Income (+ SBC, per the reference) − Dividends = Ending RE. Gross Profit is calculated from Net Revenue minus Cost of Revenue.",
+      "type": "task_quality",
+      "weight": 3,
+      "source": "references/formulas.md › Retained Earnings Formula; Gross Profit Calculation"
+    },
+    {
+      "id": "c7",
+      "text": "The response keeps the existing template intact. It writes only to input cells and does not overwrite existing formulas without noting the original. It also follows the template's units, sign conventions, and tab structure.",
+      "type": "task_quality",
+      "weight": 4,
+      "source": "SKILL.md › Step 2 Golden Rules for Data Entry"
+    },
+    {
+      "id": "c8",
+      "text": "If the template has no color scheme of its own, formatting follows the blue/grey palette: dark blue #1F4E79 section headers with white bold text, light blue #D9E1F2 column headers, blue font for inputs, black for formulas, green for cross-tab links, and #BDD7EE for check rows. No other accent fills such as yellow or orange are added.",
+      "type": "skill_format",
+      "weight": 2,
+      "source": "SKILL.md › Formatting — Professional Blue/Grey Palette"
+    },
+    {
+      "id": "c9",
+      "text": "Margin analysis and credit metrics are added only when the user asks for them or the template requires them. When there is no such request or requirement, the response does not add these sections on its own.",
+      "type": "task_quality",
+      "weight": 2,
+      "source": "SKILL.md › Margin Analysis / Credit Metrics notes"
+    },
+    {
+      "id": "c10",
+      "text": "If tax and NOL logic is present, taxes are floored at zero when taxable income is ≤ 0. NOL is generated only when EBT < 0. NOL utilization is capped at 80% of EBT.",
+      "type": "task_quality",
+      "weight": 2,
+      "source": "references/formulas.md › NOL Schedule Formulas; SKILL.md Section 6c"
+    }
+  ]
+}

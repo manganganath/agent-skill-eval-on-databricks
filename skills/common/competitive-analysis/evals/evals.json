@@ -1,0 +1,160 @@
+{
+  "skill_name": "competitive-analysis",
+  "criteria": {},
+  "evals": [
+    {
+      "id": 1,
+      "kind": "trigger",
+      "prompt": "Can you put together a competitive landscape deck for Toast? I want to see how they stack up against Square, Lightspeed, and Clover on growth, take rate, and customer count.",
+      "should_trigger": true,
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": false
+    },
+    {
+      "id": 2,
+      "kind": "trigger",
+      "prompt": "Who are the main competitors to Snowflake these days? I need a few slides mapping them out for a strategy offsite.",
+      "should_trigger": true,
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": false
+    },
+    {
+      "id": 3,
+      "kind": "trigger",
+      "prompt": "Build me a market map of the embedded finance space: infrastructure providers, BaaS platforms, and vertical SaaS players. Make it a pptx I can share.",
+      "should_trigger": true,
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": false
+    },
+    {
+      "id": 4,
+      "kind": "trigger",
+      "prompt": "I'm writing an investment memo on Chewy and need a deck section benchmarking them against Petco, Amazon pet, and Walmart. Include bull/base/bear scenarios with signposts.",
+      "should_trigger": true,
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": false
+    },
+    {
+      "id": 5,
+      "kind": "trigger",
+      "prompt": "I uploaded a CSV with revenue, NRR, and gross margin for 8 cybersecurity vendors. Turn it into a peer comparison presentation with a 2x2 positioning matrix and moat assessment.",
+      "should_trigger": true,
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": false
+    },
+    {
+      "id": 6,
+      "kind": "trigger",
+      "prompt": "Our board wants a strategic review of the US last-mile delivery industry: who's winning, who's vulnerable, how value flows through the chain. About 15 slides.",
+      "should_trigger": true,
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": false
+    },
+    {
+      "id": 7,
+      "kind": "trigger",
+      "prompt": "I have the deck open in PowerPoint. Add slides that assess Duolingo's market positioning against Babbel, Rosetta Stone, and Busuu, with a deep-dive slide for each rival.",
+      "should_trigger": true,
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": false
+    },
+    {
+      "id": 8,
+      "kind": "trigger",
+      "prompt": "Systematically evaluate the competitive dynamics in the GLP-1 obesity drug market and give me a short deck: incumbents vs new entrants, durable advantages, structural weaknesses.",
+      "should_trigger": true,
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": false
+    },
+    {
+      "id": 9,
+      "kind": "trigger",
+      "prompt": "Spread trading comps for Datadog in Excel: EV/Revenue, EV/EBITDA, and P/E for its peer group, with mean and median, so I can back into an implied valuation range.",
+      "should_trigger": false,
+      "expected_skill": "comps-analysis",
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": false
+    },
+    {
+      "id": 10,
+      "kind": "trigger",
+      "prompt": "Here's last quarter's competitor deck. Please update all the revenue and margin figures to Q3 actuals without changing the layout.",
+      "should_trigger": false,
+      "expected_skill": "deck-refresh",
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": false
+    },
+    {
+      "id": 11,
+      "kind": "trigger",
+      "prompt": "Before this pitch book goes to the MD, can you scan it for inconsistent numbers, typos, and formatting errors across slides?",
+      "should_trigger": false,
+      "expected_skill": "ib-check-deck",
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": false
+    },
+    {
+      "id": 12,
+      "kind": "trigger",
+      "prompt": "Build a DCF for Shopify with a 5-year projection, WACC build, and terminal value sensitivity table.",
+      "should_trigger": false,
+      "expected_skill": "dcf-model",
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": false
+    },
+    {
+      "id": 13,
+      "kind": "trigger",
+      "prompt": "Write a Python script that renames all the JPG files in a folder by their EXIF date.",
+      "should_trigger": false,
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": false
+    },
+    {
+      "id": 14,
+      "kind": "trigger",
+      "prompt": "What's a good weeknight recipe using chickpeas and spinach?",
+      "should_trigger": false,
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": false
+    },
+    {
+      "id": 15,
+      "kind": "trigger",
+      "prompt": "Draft a polite email to my landlord asking to have the broken dishwasher fixed this week.",
+      "should_trigger": false,
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": false
+    }
+  ]
+}

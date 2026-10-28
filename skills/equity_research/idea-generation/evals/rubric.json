@@ -1,0 +1,72 @@
+{
+  "skill_name": "idea-generation",
+  "source_hash": "sha256:e5e96175976077dd3978a10599a3e53cf4b6427c005bfa333573bc758fd44cea",
+  "generated_by": "claude-opus",
+  "pass_score": 0.7,
+  "reviewed": false,
+  "criteria": [
+    {
+      "id": "c1",
+      "text": "Before screening, the response either asks the user for the search parameters (direction, market cap, sector, style, geography, theme) or states which values it assumed for each.",
+      "type": "task_quality",
+      "weight": 4,
+      "source": "Step 1: Define Search Criteria"
+    },
+    {
+      "id": "c2",
+      "text": "The screening criteria come from the quantitative screen that matches the requested style, with concrete thresholds (e.g., FCF yield >5% for value, revenue growth >15% for growth, ROE >15% for quality).",
+      "type": "task_quality",
+      "weight": 4,
+      "source": "Step 2: Quantitative Screens"
+    },
+    {
+      "id": "c3",
+      "text": "For a thematic request, the response states the thesis, maps the value chain into direct and indirect beneficiaries, separates pure-play from diversified exposure, and names at least one second-order beneficiary.",
+      "type": "task_quality",
+      "weight": 4,
+      "source": "Step 3: Thematic Sweep"
+    },
+    {
+      "id": "c4",
+      "text": "Each idea is presented with a header in the form [Company] — [Long/Short] — [One-Line Thesis], followed by a metrics table with a vs. Peers column covering market cap, EV/EBITDA (NTM), P/E (NTM), revenue growth, EBITDA margin, and FCF yield.",
+      "type": "skill_format",
+      "weight": 4,
+      "source": "Step 4: Idea Presentation"
+    },
+    {
+      "id": "c5",
+      "text": "Each idea's thesis has 3-5 bullets that together explain why it is mispriced, what the market is missing, and a specific catalyst to realize value.",
+      "type": "task_quality",
+      "weight": 5,
+      "source": "Step 4 thesis bullets; Important Notes (contrarian ideas need a catalyst)"
+    },
+    {
+      "id": "c6",
+      "text": "Each idea lists key risks describing what would make the thesis wrong, plus suggested next steps such as building a model, deep-dive diligence, or an expert call.",
+      "type": "task_quality",
+      "weight": 3,
+      "source": "Step 4: Key Risks / Suggested Next Steps"
+    },
+    {
+      "id": "c7",
+      "text": "The final output includes a shortlist of 5-10 ideas, the documented screening methodology, a comparison table across all ideas, and a prioritized order for which ideas to research first.",
+      "type": "skill_format",
+      "weight": 4,
+      "source": "Step 5: Output"
+    },
+    {
+      "id": "c8",
+      "text": "The response frames screen results as candidates that need fundamental follow-up rather than as conclusions, and it neither invents precise financial figures nor presents uncertain or unverified data as fact.",
+      "type": "task_quality",
+      "weight": 5,
+      "source": "Important Notes (screens surface candidates, not conclusions)"
+    },
+    {
+      "id": "c9",
+      "text": "The response addresses crowding by referring to ownership data, short interest, or analyst coverage, and for any short idea it notes the higher conviction bar and the timing and asymmetric risk.",
+      "type": "task_quality",
+      "weight": 3,
+      "source": "Important Notes (avoid crowded trades; short ideas need higher conviction)"
+    }
+  ]
+}

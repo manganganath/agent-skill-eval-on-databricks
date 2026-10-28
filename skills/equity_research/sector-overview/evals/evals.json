@@ -1,0 +1,160 @@
+{
+  "skill_name": "sector-overview",
+  "criteria": {},
+  "evals": [
+    {
+      "id": 1,
+      "kind": "trigger",
+      "prompt": "Can you put together an industry report on the US cybersecurity market — market size, growth, who the major players are, and where it's heading over the next five years?",
+      "should_trigger": true,
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": false
+    },
+    {
+      "id": 2,
+      "kind": "trigger",
+      "prompt": "We need a market landscape deck on European renewable energy developers for a client pitch next week. Include TAM, value chain, top players and their valuation multiples.",
+      "should_trigger": true,
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": false
+    },
+    {
+      "id": 3,
+      "kind": "trigger",
+      "prompt": "Write a thematic research piece on the AI infrastructure buildout — data centers, power, cooling, networking. Which subsectors benefit most and what are the key bull/bear debates?",
+      "should_trigger": true,
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": false
+    },
+    {
+      "id": 4,
+      "kind": "trigger",
+      "prompt": "I'm new to the specialty chemicals coverage group. Give me a deep dive on the industry: structure, consolidation, barriers to entry, how companies compete, and how the sector trades vs the S&P.",
+      "should_trigger": true,
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": false
+    },
+    {
+      "id": 5,
+      "kind": "trigger",
+      "prompt": "Our client is thinking about entering the pet care market in Southeast Asia. Build a landscape report covering market segmentation, key public and private players, recent M&A deals and multiples, and what it means for them.",
+      "should_trigger": true,
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": false
+    },
+    {
+      "id": 6,
+      "kind": "trigger",
+      "prompt": "need a quick 8-page sector analysis on vertical SaaS for healthcare — fragmented vs consolidated, business models, top 5 share, trading multiples",
+      "should_trigger": true,
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": false
+    },
+    {
+      "id": 7,
+      "kind": "trigger",
+      "prompt": "Prepare an overview of the global semiconductor equipment space for internal knowledge building: secular tailwinds, regulatory headwinds like export controls, who's gaining share, and a competitive positioning map.",
+      "should_trigger": true,
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": false
+    },
+    {
+      "id": 8,
+      "kind": "trigger",
+      "prompt": "Do a landscape of the GLP-1 / obesity drug market — TAM realistic vs hype, key players' revenue and margins, pipeline disruption risk, and where the best risk/reward is.",
+      "should_trigger": true,
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": false
+    },
+    {
+      "id": 9,
+      "kind": "trigger",
+      "prompt": "Build a comparable companies table for Snowflake vs Datadog, MongoDB, and Confluent with EV/Revenue and EV/EBITDA on NTM estimates.",
+      "should_trigger": false,
+      "expected_skill": "comps-analysis",
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": false
+    },
+    {
+      "id": 10,
+      "kind": "trigger",
+      "prompt": "Write a full initiation report on Rivian with a rating, price target, and DCF-based valuation.",
+      "should_trigger": false,
+      "expected_skill": "initiating-coverage",
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": false
+    },
+    {
+      "id": 11,
+      "kind": "trigger",
+      "prompt": "Compare Uber's competitive moat against Lyft and DoorDash specifically — product, pricing, driver supply. Just these three companies, head to head.",
+      "should_trigger": false,
+      "expected_skill": "competitive-analysis",
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": false
+    },
+    {
+      "id": 12,
+      "kind": "trigger",
+      "prompt": "Screen for undervalued mid-cap industrials with improving margins and give me five new long ideas.",
+      "should_trigger": false,
+      "expected_skill": "idea-generation",
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": false
+    },
+    {
+      "id": 13,
+      "kind": "trigger",
+      "prompt": "Help me draft a birthday toast for my sister's 30th.",
+      "should_trigger": false,
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": false
+    },
+    {
+      "id": 14,
+      "kind": "trigger",
+      "prompt": "My Python script throws a KeyError when reading a JSON config file — can you debug it?",
+      "should_trigger": false,
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": false
+    },
+    {
+      "id": 15,
+      "kind": "trigger",
+      "prompt": "What's a good 4-day itinerary for Lisbon in October?",
+      "should_trigger": false,
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": false
+    }
+  ]
+}

@@ -1,0 +1,79 @@
+{
+  "skill_name": "initiating-coverage",
+  "source_hash": "sha256:b92429f836753a5c8290b53d23cf049f1ac26d32ccaa5354824b284ac21b0fca",
+  "generated_by": "claude-opus",
+  "pass_score": 0.7,
+  "reviewed": false,
+  "criteria": [
+    {
+      "id": "c1",
+      "text": "When the user asks for a full initiation report or all tasks at once (e.g., 'Create a coverage initiation report for X'), the response does not start any task. It lists the 5 tasks and asks the user which one to begin with. If the user explicitly wants everything together, it says only one task runs at a time and offers to start with Task 1.",
+      "type": "skill_format",
+      "weight": 5,
+      "source": "SKILL.md: CRITICAL: One Task at a Time / Required Response / Pattern 2 & 3"
+    },
+    {
+      "id": "c2",
+      "text": "The response carries out only the one task requested. It does not chain on to the next task and does not assume the user wants to continue.",
+      "type": "skill_format",
+      "weight": 4,
+      "source": "SKILL.md: Task Execution Rules"
+    },
+    {
+      "id": "c3",
+      "text": "For Task 3, 4, or 5, the response checks the required prerequisites first (Task 3 needs Task 2; Task 4 needs Tasks 1–3 plus external data; Task 5 needs Tasks 1–4). If any are missing, it stops, names which tasks must be done first, and does not create placeholder content.",
+      "type": "task_quality",
+      "weight": 5,
+      "source": "SKILL.md: Task 3/4/5 Prerequisites, CRITICAL stop instructions, Input Verification Protocol"
+    },
+    {
+      "id": "c4",
+      "text": "The response delivers only the files specified for the task: Task 1 .md, Task 2 .xlsx, Task 3 .md plus tabs added to the existing Task 2 workbook, Task 4 .zip, or Task 5 .docx. It does not produce extras such as completion summaries, executive summaries, next-steps documents, or a separate valuation Excel file.",
+      "type": "skill_format",
+      "weight": 4,
+      "source": "SKILL.md: Deliverables Policy: NO SHORTCUTS; task3-valuation.md Output Files"
+    },
+    {
+      "id": "c5",
+      "text": "For Task 1, the research document covers all 9 sections, from Company Overview through Risk Assessment. It includes 300–400 word bios for 3–4 executives (CEO and CFO among them), analyzes 5–10 named competitors, sizes the TAM, and lists 8–12 risks across company, industry, financial, and macro categories. It totals roughly 6,000–8,000 words.",
+      "type": "task_quality",
+      "weight": 4,
+      "source": "SKILL.md Task 1 Output; references/task1-company-research.md Step 7"
+    },
+    {
+      "id": "c6",
+      "text": "For Task 2, the Excel model contains six tabs: Revenue Model (20–30 product rows and 15–20 geography rows), Income Statement (40–50 line items), Cash Flow Statement, Balance Sheet, Scenarios with distinct Bull/Base/Bear parameters, and DCF Inputs with unlevered FCF. Each tab covers 3–5 historical years and 5 projected years, and the balance sheet balances.",
+      "type": "task_quality",
+      "weight": 4,
+      "source": "SKILL.md Task 2 Output; references/task2-financial-modeling.md"
+    },
+    {
+      "id": "c7",
+      "text": "For Task 3, the valuation includes a DCF with a documented WACC calculation and a 2-way WACC vs. terminal growth sensitivity table. It includes a comps table of 5–10 peers with a max/75th/median/25th/min statistical summary and a weighted reconciliation. It ends with an explicit price target, a BUY/HOLD/SELL recommendation, upside %, and 3–5 catalysts.",
+      "type": "task_quality",
+      "weight": 4,
+      "source": "SKILL.md Task 3 Output; references/task3-valuation.md"
+    },
+    {
+      "id": "c8",
+      "text": "For Task 4, the response produces at least 25 charts using chart_##_description.png naming at 300 DPI, packaged in a zip with chart_index.txt. The set includes all four mandatory charts: chart_03 revenue by product (stacked area), chart_04 revenue by geography (stacked bar), chart_28 DCF sensitivity (heatmap), and chart_32 valuation football field (horizontal bars).",
+      "type": "task_quality",
+      "weight": 4,
+      "source": "SKILL.md Task 4 Output & MANDATORY Charts"
+    },
+    {
+      "id": "c9",
+      "text": "For Task 5, the report is a real DOCX, not markdown and not placeholder text like 'this section would include…'. It opens with an 'INITIATING COVERAGE' Page 1 that has a rating box and ■ bullets. It embeds all Task 4 charts, includes 12+ tables, and contains a Projection Assumptions section of 2,000–3,000 words and a Scenario Analysis section of 1,500–2,000 words.",
+      "type": "task_quality",
+      "weight": 4,
+      "source": "SKILL.md Task 5 Specifications & NEVER list; references/task5-report-assembly.md"
+    },
+    {
+      "id": "c10",
+      "text": "Figures in deliverables lead with specific quantified numbers rather than generic claims and cite their sources. Numbers stay consistent across outputs; for example, the price target and projections match between the model and the written analysis.",
+      "type": "task_quality",
+      "weight": 3,
+      "source": "SKILL.md Quality Standards; task5 Writing Style Guidelines; quality-checklist Cross-File Consistency"
+    }
+  ]
+}

@@ -1,0 +1,79 @@
+{
+  "skill_name": "thesis-tracker",
+  "source_hash": "sha256:76b853fa058fdffda7ff3a5748abce954acb6d8260f6c177534582b5210b9265",
+  "generated_by": "claude-opus",
+  "pass_score": 0.7,
+  "reviewed": false,
+  "criteria": [
+    {
+      "id": "c1",
+      "text": "When a new thesis is created, the response gives the company name and ticker, a Long or Short position, and a 1-2 sentence core thesis statement.",
+      "type": "task_quality",
+      "weight": 4,
+      "source": "Step 1: Define or Load Thesis"
+    },
+    {
+      "id": "c2",
+      "text": "A new thesis lists 3-5 key pillars and 3-5 key risks, and each risk is stated concretely enough that it could invalidate the thesis.",
+      "type": "task_quality",
+      "weight": 4,
+      "source": "Step 1 key pillars/risks; Important Notes on falsifiability"
+    },
+    {
+      "id": "c3",
+      "text": "A new thesis gives a target price or valuation basis and a stop-loss or exit trigger.",
+      "type": "task_quality",
+      "weight": 3,
+      "source": "Step 1: Target price / valuation, Stop-loss trigger"
+    },
+    {
+      "id": "c4",
+      "text": "Each new data point is logged with a date, a description of what changed, its impact on a named specific pillar (strengthen/weaken/neutral), an action (No change/Increase/Trim/Exit), and an updated conviction level (High/Medium/Low).",
+      "type": "task_quality",
+      "weight": 5,
+      "source": "Step 2: Update Log"
+    },
+    {
+      "id": "c5",
+      "text": "The response includes a thesis scorecard table with columns Pillar, Original Expectation, Current Status, and Trend.",
+      "type": "skill_format",
+      "weight": 4,
+      "source": "Step 3: Thesis Scorecard"
+    },
+    {
+      "id": "c6",
+      "text": "The response includes a catalyst calendar table with columns Date, Event, Expected Impact, and Notes.",
+      "type": "skill_format",
+      "weight": 3,
+      "source": "Step 4: Catalyst Calendar"
+    },
+    {
+      "id": "c7",
+      "text": "Disconfirming evidence is weighed as rigorously as confirming evidence: negative developments are flagged explicitly and reflected in the pillar status, trend, or conviction, not downplayed.",
+      "type": "task_quality",
+      "weight": 5,
+      "source": "Important Notes: track disconfirming evidence"
+    },
+    {
+      "id": "c8",
+      "text": "When updating an existing thesis and no new data point has been supplied, the response asks the user for the new development instead of inventing one.",
+      "type": "task_quality",
+      "weight": 3,
+      "source": "Step 1: If updating an existing thesis, ask the user"
+    },
+    {
+      "id": "c9",
+      "text": "The final output is a concise summary that combines the scorecard, recent updates, and the current conviction level, and is suitable for a morning meeting, portfolio review, or risk committee.",
+      "type": "skill_format",
+      "weight": 3,
+      "source": "Step 5: Output"
+    },
+    {
+      "id": "c10",
+      "text": "If the user holds multiple positions, the response offers a full portfolio thesis review. The thesis data is presented in a structured, reusable format that can be referenced across sessions.",
+      "type": "task_quality",
+      "weight": 2,
+      "source": "Important Notes: portfolio review offer; structured storage"
+    }
+  ]
+}
