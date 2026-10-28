@@ -191,6 +191,21 @@ def test_child_runs_skip_untrusted_authors_with_a_counted_warning(monkeypatch, c
     assert "skipped 2 child runs by untrusted authors" in caplog.text
 
 
+def test_the_author_falls_back_to_the_mlflow_user_tag(monkeypatch, caplog):
+    """Databricks returns no run.info.user_id; the MLflow client's mlflow.user tag names the author."""
+    _experiments(monkeypatch, (f"{ROOT}/common/earnings-preview", "11"))
+    by_tag = run("t1", user_id=None)
+    by_tag.data.tags["mlflow.user"] = CI_EVAL
+    stranger = run("t2", user_id=None)
+    stranger.data.tags["mlflow.user"] = "mallory@example.com"
+    _search(monkeypatch, [by_tag, stranger])
+    with caplog.at_level("WARNING", logger=sync_mod.__name__):
+        got = sync_mod.child_runs(make_cfg(), "pr12_ab12cd3", trusted=TRUSTED)
+    assert [r.info.run_id for r in got] == ["t1"]
+    assert sync_mod.run_author(by_tag) == CI_EVAL
+    assert "skipped 1 child runs by untrusted authors" in caplog.text
+
+
 def test_child_runs_skip_a_run_whose_dept_or_skill_differs_from_its_experiment(monkeypatch, caplog):
     """No confused deputy: a run in department A's experiment can't write into department B's tables."""
     _experiments(monkeypatch, (f"{ROOT}/common/earnings-preview", "11"))
@@ -686,6 +701,30 @@ def test_partial_path_drops_untagged_and_modeless_traces_and_counts_them(monkeyp
         traces, _ = sync_mod.wait_for_traces(r, timeout_s=5, allow_partial=True)
     assert [t.info.trace_id for t in traces] == ["a"]
     assert "2 untagged traces dropped" in caplog.text and "re-run sync" in caplog.text
+
+
+def test_a_scored_run_stops_waiting_once_traces_stop_changing(monkeypatch, caplog):
+    """A run with a verdict is finished. When a cell never gets an assessment (seen live: one OK trace
+    with none), sync waits only until nothing changes for STALL_S, not for the whole timeout."""
+    r = run("r1", n_cases=2, repeats=1)
+    monkeypatch.setattr(
+        sync_mod.mlflow, "search_traces", lambda **kw: [trace("a", 1, [A]), trace("b", 2, [])]
+    )
+    with caplog.at_level("WARNING", logger="skillhub.results.sync"):
+        traces, waited = sync_mod.wait_for_traces(r, timeout_s=300, allow_partial=True)
+    assert len(traces) == 2
+    assert sync_mod.STALL_S <= waited < 300
+    assert "1 of 2 cells ready" in caplog.text
+
+
+def test_an_unscored_run_still_waits_for_the_full_timeout(monkeypatch):
+    r = run("r1", n_cases=2, repeats=1)
+    monkeypatch.setattr(
+        sync_mod.mlflow, "search_traces", lambda **kw: [trace("a", 1, [A]), trace("b", 2, [])]
+    )
+    with pytest.raises(sync_mod.SyncIncomplete):
+        sync_mod.wait_for_traces(r, timeout_s=300)
+    assert sync_mod.time.monotonic() >= 300
 
 
 def test_child_run_without_harness_tag_syncs_reference(monkeypatch):

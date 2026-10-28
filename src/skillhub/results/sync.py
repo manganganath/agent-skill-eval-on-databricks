@@ -23,6 +23,7 @@ log = logging.getLogger(__name__)
 DEFAULT_HARNESS = "reference"  # the built-in agent loop; the only harness so far
 PARENT_TAG = "parent_run_id"  # The runner sets it on each child run
 POLL_S = 5
+STALL_S = 60  # how long a scored run's trace count may stay unchanged before sync writes what it has
 CHUNK = 500
 
 RUN_FIELDS: list[tuple[str, str]] = [
@@ -63,7 +64,7 @@ RUN_FIELDS: list[tuple[str, str]] = [
     ("started_at", "timestamp"),
     ("ended_at", "timestamp"),
     ("synced_at", "timestamp"),
-    ("run_author", "string"),  # run.info.user_id; the gates read only trusted authors
+    ("run_author", "string"),  # see run_author(); the gates read only trusted authors
 ]
 CASE_FIELDS: list[tuple[str, str]] = [
     ("run_id", "string"),
@@ -176,7 +177,7 @@ def child_runs(cfg: HubConfig, run_key: str, *, trusted: frozenset[str] | None =
     The search runs department by department over this catalog's skill experiments. The parent run
     also carries run_key, but it has no parent_run_id tag, so it's skipped. These are skipped with a
     WARNING and counted, never raised: an experiment that is not <root>/<dept>/<skill> for a configured
-    department, a run whose author (`run.info.user_id`) is not in `trusted` (default:
+    department, a run whose author (`run_author`) is not in `trusted` (default:
     trusted_run_authors()), a run that someone else wrote to (`tampering`), and a run whose dept or skill differs
     from its experiment's.
     """
@@ -211,7 +212,7 @@ def child_runs(cfg: HubConfig, run_key: str, *, trusted: frozenset[str] | None =
             for r in page:
                 if PARENT_TAG not in (r.data.tags or {}):
                     continue
-                if getattr(r.info, "user_id", None) not in trusted:
+                if run_author(r) not in trusted:
                     untrusted += 1
                 elif (why := tampering(r)) is not None:
                     tampered += 1
@@ -292,6 +293,17 @@ def _usable(traces: list) -> tuple[list, int]:
     return keep, len(traces) - len(keep)
 
 
+def run_author(run) -> str | None:
+    """Who created the run. Databricks returns no `run.info.user_id`, so the MLflow client's `mlflow.user` tag
+    is the fallback. A client sets that tag, so it is only as trustworthy as write access to the experiment:
+    bootstrap restricts the experiment folder to the ci, ci_eval and app principals."""
+    author = getattr(run.info, "user_id", None)
+    if author:
+        return author
+    tags = getattr(run.data, "tags", None) or {}
+    return tags.get("mlflow.user") or None
+
+
 def wait_for_traces(run, timeout_s: int, *, allow_partial: bool = False) -> tuple[list, float]:
     """Poll until every expected (case_id, repeat) cell has a ready trace.
 
@@ -302,15 +314,23 @@ def wait_for_traces(run, timeout_s: int, *, allow_partial: bool = False) -> tupl
     """
     expected = _expected_cells(run)
     start = time.monotonic()
+    progress, changed_at = None, start
     while True:
         traces = _traces(run)
         ready, seen = _ready_cells(traces)
         if len(ready) >= expected:
             return traces, time.monotonic() - start
-        if time.monotonic() - start >= timeout_s:
+        now = time.monotonic()
+        if (len(ready), len(seen), len(traces)) != progress:
+            progress, changed_at = (len(ready), len(seen), len(traces)), now
+        # A run with a verdict has finished evaluating; once nothing changes for STALL_S, the missing cells
+        # are not coming (seen live: an OK trace whose assessment was never written).
+        stalled = allow_partial and now - changed_at >= STALL_S
+        if stalled or now - start >= timeout_s:
+            waited = int(now - start)
             waiting = sorted(seen - ready)
             detail = (
-                f"{len(ready)} of {expected} cells ready after {timeout_s}s; "
+                f"{len(ready)} of {expected} cells ready after {waited}s; "
                 f"{expected - len(ready)} missing (traces without assessments: {waiting}, "
                 f"cells with no trace: {max(expected - len(seen), 0)})"
             )
@@ -455,7 +475,7 @@ def run_row(run, synced_at: str) -> dict:
         "started_at": _ts(run.info.start_time),
         "ended_at": _ts(run.info.end_time),
         "synced_at": synced_at,
-        "run_author": getattr(run.info, "user_id", None),
+        "run_author": run_author(run),
     }
 
 

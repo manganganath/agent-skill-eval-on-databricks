@@ -95,7 +95,7 @@ class UCSkills:
             "POST",
             "/api/2.1/unity-catalog/skills",
             query={"parent": f"schemas/{schema_fqn}", "skill_id": skill_id},
-            body={"comment": comment} if comment else None,
+            body={"comment": comment} if comment else {},  # an empty skill object; no body is refused
             headers=JSON_HEADERS,
         )
         return _info(res)

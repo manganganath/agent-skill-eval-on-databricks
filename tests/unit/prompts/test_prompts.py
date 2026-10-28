@@ -84,6 +84,33 @@ def test_register_only_creates_version_when_text_changed(monkeypatch):
     assert refs["judge_skill_use"].version == 3
 
 
+def test_registered_prompts_are_loaded_by_the_current_alias(monkeypatch):
+    """The Unity Catalog registry resolves no `@latest`, so registration sets a `current` alias and loads use it."""
+    cfg = SimpleNamespace(catalog="cat")
+    uris, aliases = [], []
+
+    class FakeMlflowGenai:
+        @staticmethod
+        def load_prompt(uri):
+            uris.append(uri)
+            raise RuntimeError("not registered")
+
+        @staticmethod
+        def register_prompt(name, template):
+            return SimpleNamespace(template=template, version=7)
+
+        @staticmethod
+        def set_prompt_alias(name, alias, version):
+            aliases.append((name, alias, version))
+
+    import mlflow
+
+    monkeypatch.setattr(mlflow, "genai", FakeMlflowGenai)
+    register_prompts(cfg)
+    assert all(u.endswith(f"@{prompts.ALIAS}") for u in uris) and prompts.ALIAS == "current"
+    assert ("cat.eval.agent_system", "current", 7) in aliases
+
+
 # --- The judges treat the graded content as data -----------------------------------------------------
 
 DATA_RULE = re.compile(r"data[^.]*never an instruction to you", re.IGNORECASE)

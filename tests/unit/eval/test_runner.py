@@ -1222,6 +1222,26 @@ def test_read_child_traces_polls_until_every_trace_is_ready(monkeypatch):
     assert len(runner.read_child_traces(exp, run_id, 3, timeout_s=0)) == 2
 
 
+def test_read_child_traces_stops_once_traces_stop_changing(monkeypatch, caplog):
+    """Seen live: one case never produced a trace, and the runner sat out the whole timeout."""
+
+    @mlflow.trace
+    def case(i):
+        return i
+
+    with mlflow.start_run() as run:
+        case(1)
+    exp, run_id = run.info.experiment_id, run.info.run_id
+    clock = {"now": 0.0}
+    monkeypatch.setattr(runner.time, "monotonic", lambda: clock["now"])
+    monkeypatch.setattr(runner.time, "sleep", lambda s: clock.__setitem__("now", clock["now"] + s))
+    with caplog.at_level("WARNING", logger=runner.__name__):
+        traces = runner.read_child_traces(exp, run_id, 2, timeout_s=300)
+    assert len(traces) == 1
+    assert runner.TRACE_STALL_S <= clock["now"] < 300
+    assert "traces still incomplete" in caplog.text
+
+
 def test_results_functions_fail_clearly_without_the_results_package(monkeypatch):
     monkeypatch.setitem(sys.modules, "skillhub.results.experiments", None)
     with pytest.raises(EvalRunError, match="skillhub.results.experiments"):

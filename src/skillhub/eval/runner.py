@@ -101,6 +101,7 @@ TRIGGER_SOURCES = ("pr", "merge", "nightly", "hub", "hub-try", "manual")
 EVAL_PROMPT_KEYS = ("agent_system", "judge_criterion", "judge_skill_use")  # the prompts an eval run uses
 TRACE_TIMEOUT_S = 300
 TRACE_POLL_S = 5
+TRACE_STALL_S = 60  # how long the trace count may stay unchanged after the evaluation returns
 ERROR_MAX = 500  # characters kept of an error message on a run tag or in the summary
 SKIP_TRACE_VALIDATION = "MLFLOW_GENAI_EVAL_SKIP_TRACE_VALIDATION"
 MAX_SCORER_WORKERS = "MLFLOW_GENAI_EVAL_MAX_SCORER_WORKERS"
@@ -239,18 +240,25 @@ def read_child_traces(
     `complete(traces)` holds (default: at least `expected` traces). After the timeout it returns what is
     there.
     """
-    deadline = time.monotonic() + timeout_s
+    start = time.monotonic()
+    progress, changed_at = None, start
     while True:
         mlflow.flush_trace_async_logging()
         # Full traces, as sync reads them: assessments come with the loaded trace.
         traces = mlflow.search_traces(locations=[exp_id], run_id=run_id, return_type="list")
         if complete(traces) if complete is not None else len(traces) >= expected:
             return traces
-        if time.monotonic() >= deadline:
+        now = time.monotonic()
+        state = (len(traces), sum(1 for t in traces if t.info.assessments))
+        if state != progress:
+            progress, changed_at = state, now
+        # The evaluation has returned, so traces that stop changing for TRACE_STALL_S are all there is
+        # (seen live: a case whose trace never arrived).
+        if now - start >= timeout_s or now - changed_at >= TRACE_STALL_S:
             log.warning(
                 "run %s: traces still incomplete after %ss (%d of %d)",
                 run_id,
-                timeout_s,
+                int(now - start),
                 len(traces),
                 expected,
             )

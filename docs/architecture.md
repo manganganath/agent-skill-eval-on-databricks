@@ -88,7 +88,7 @@ Naming rules:
 - The app is open to the group `users` (`CAN_USE`). Reviewers get `CAN_RUN` on the dashboard.
 - A quarantined department (`quarantine: true`) is granted to reviewers and the two CI principals only. Moving a skill out of it needs an operator; CI refuses the change.
 - Experiment permissions are derived from the grants on `<d>_evals`. The experiment folder `<workspace_root>/<catalog>` has its own access list: `CAN_MANAGE` for `skillhub-ci`, `CAN_EDIT` for `skillhub-ci-eval` and the app (Try traces), `CAN_READ` for reviewers, nothing for `users`. The workspace root is the home folder of `skillhub-ci` (`/Users/<ci principal>/skill-hub`), because every folder under `/Workspace/Shared` inherits `CAN_MANAGE` for `users`. A nightly check reports drift.
-- Results are trusted by author. Sync and every gate read only MLflow runs written by `skillhub-ci-eval`, the deployer or the running identity. The app service principal is not trusted; it never writes eval runs. `eval_runs.run_author` records the author.
+- Results are trusted by author. Sync and every gate read only MLflow runs written by `skillhub-ci-eval`, the deployer or the running identity. The app service principal is not trusted; it never writes eval runs. `eval_runs.run_author` records the author. Databricks does not return a server-side author for a run, so the author comes from the MLflow `mlflow.user` tag, which the client sets. The tag is only as trustworthy as write access to the experiments, which bootstrap limits to the CI and app principals.
 - Results are also trusted by where each field is written. Sync reads runner tags only from tags and runner params only from params, and skips a run where a runner field appears in the other place.
 
 ## Versions and switch

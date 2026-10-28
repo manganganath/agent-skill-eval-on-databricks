@@ -18,6 +18,7 @@ def test_create_posts_json_to_the_parent_schema():
     assert args == ("POST", "/api/2.1/unity-catalog/skills")
     assert kw["query"] == {"parent": "schemas/cat.sch", "skill_id": "demo"}
     assert kw["headers"]["Content-Type"] == "application/json"
+    assert kw["body"] == {}  # the API refuses a create with no body ("skill is required")
     assert (info.fqn, info.name, info.etag) == ("cat.sch.demo", "demo", "e1")
 
 

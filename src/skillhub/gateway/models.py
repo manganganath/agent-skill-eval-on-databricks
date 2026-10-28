@@ -56,6 +56,13 @@ class ModelClient(Protocol):
     ) -> ChatResult: ...
 
 
+# Output budget for a trigger decision. Thinking models (Claude, Gemini Flash) spend output tokens before they
+# answer, and their thinking cannot be turned off portably; at 64 tokens most calls ended with
+# finish_reason=length before any tool call. The model still stops at its first tool call, so a decision
+# costs a few dozen tokens plus thinking.
+TRIGGER_MAX_TOKENS = 1024
+
+
 def adapt_request(
     profile: ModelProfile,
     messages: list[dict],
@@ -79,7 +86,7 @@ def adapt_request(
             for t in tools
         ]
     if trigger:
-        body["max_tokens"] = 64
+        body["max_tokens"] = TRIGGER_MAX_TOKENS
         if tools:
             body["tool_choice"] = "auto"
     elif max_tokens is not None:

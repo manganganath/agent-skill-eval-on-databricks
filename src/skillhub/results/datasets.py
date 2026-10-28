@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 import mlflow.genai.datasets as ds_api
+from databricks.sdk.errors import NotFound
 from mlflow.exceptions import MlflowException
 
 from skillhub.config import HubConfig
@@ -38,11 +39,22 @@ def case_record(case: EvalCase, skill: str) -> dict[str, Any]:
     }
 
 
+def _is_missing(exc: Exception) -> bool:
+    text = str(exc)
+    return "RESOURCE_DOES_NOT_EXIST" in text or any(
+        m in text.lower() for m in ("not found", "does not exist")
+    )
+
+
 def _get_or_create(name: str, experiment_id: str):
+    """The Databricks dataset backend reports a missing table as the SDK's NotFound ("Table ... does not
+    exist"); MLflow's own store raises MlflowException. Both mean: create it."""
     try:
         return ds_api.get_dataset(name=name)
+    except NotFound:
+        pass
     except MlflowException as exc:
-        if "RESOURCE_DOES_NOT_EXIST" not in str(exc) and "not found" not in str(exc).lower():
+        if not _is_missing(exc):
             raise
     return ds_api.create_dataset(name=name, experiment_id=experiment_id)
 

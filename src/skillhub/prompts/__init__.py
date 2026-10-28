@@ -33,17 +33,24 @@ def _prompt_name(cfg, key: str) -> str:
     return f"{eval_schema(cfg)}.{key}"
 
 
+# The alias registration points at the newest packaged text. The Unity Catalog prompt registry resolves no
+# `@latest`, so loads use this alias instead.
+ALIAS = "current"
+
+
 def _registry_load(name: str, version: int | None = None):
     import mlflow
 
-    uri = f"prompts:/{name}/{version}" if version else f"prompts:/{name}@latest"
+    uri = f"prompts:/{name}/{version}" if version else f"prompts:/{name}@{ALIAS}"
     return mlflow.genai.load_prompt(uri)
 
 
 def _registry_register(name: str, template: str):
     import mlflow
 
-    return mlflow.genai.register_prompt(name=name, template=template)
+    created = mlflow.genai.register_prompt(name=name, template=template)
+    mlflow.genai.set_prompt_alias(name, alias=ALIAS, version=int(created.version))
+    return created
 
 
 def load_prompt(cfg, key: str) -> PromptRef:

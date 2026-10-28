@@ -1,6 +1,10 @@
 import copy
 from types import SimpleNamespace as NS
 
+import pytest
+from databricks.sdk.errors import NotFound
+from mlflow.exceptions import MlflowException
+
 from skillhub.evalspec import EvalCase, EvalFile
 from skillhub.naming import dataset_table
 from skillhub.results import datasets as ds_mod
@@ -109,6 +113,47 @@ def test_creates_without_tags_argument_when_missing(monkeypatch):
     monkeypatch.setattr(ds_mod, "ds_api", fake_api(store, created))
     ds_mod.sync_dataset(make_cfg(), "common", "earnings-preview", ef_fixture(), "42")
     assert created == [{"name": TABLE, "experiment_id": "42"}]
+
+
+@pytest.mark.parametrize(
+    "missing",
+    [
+        NotFound("Table 'cat.sch.ds_x' does not exist."),  # what the Databricks dataset backend raises
+        MlflowException("Table 'cat.sch.ds_x' does not exist."),
+    ],
+)
+def test_creates_when_the_backend_reports_the_table_missing(monkeypatch, missing):
+    created = []
+
+    class Ds:
+        digest = "d1"
+
+        def merge_records(self, records):
+            pass
+
+    def get_dataset(name):
+        if not created:
+            raise missing
+        return Ds()
+
+    def create_dataset(**kwargs):
+        created.append(kwargs)
+        return Ds()
+
+    monkeypatch.setattr(ds_mod, "ds_api", NS(get_dataset=get_dataset, create_dataset=create_dataset))
+    ef = EvalFile(skill_name="x", evals=[EvalCase(id=1, prompt="p", should_trigger=True)])
+    _, digest = ds_mod.sync_dataset(make_cfg(), "common", "x", ef, "exp-1")
+    assert len(created) == 1 and digest == "d1"
+
+
+def test_other_errors_are_not_mistaken_for_a_missing_dataset(monkeypatch):
+    def get_dataset(name):
+        raise MlflowException("PERMISSION_DENIED: no access")
+
+    monkeypatch.setattr(ds_mod, "ds_api", NS(get_dataset=get_dataset, create_dataset=lambda **k: None))
+    ef = EvalFile(skill_name="x", evals=[EvalCase(id=1, prompt="p", should_trigger=True)])
+    with pytest.raises(MlflowException, match="PERMISSION_DENIED"):
+        ds_mod.sync_dataset(make_cfg(), "common", "x", ef, "exp-1")
 
 
 def test_returns_digest_of_refetched_dataset(monkeypatch):

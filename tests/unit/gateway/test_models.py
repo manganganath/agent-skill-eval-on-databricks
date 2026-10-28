@@ -57,9 +57,13 @@ def test_gpt_reasoning_effort_forced_to_none_when_tools_present():
     assert adapt(CLAUDE, [TOOL], reasoning_effort="low")["reasoning_effort"] == "low"
 
 
-def test_trigger_calls_use_max_tokens_64_and_tool_choice_auto():
+def test_trigger_calls_leave_room_for_thinking_and_use_tool_choice_auto():
+    """Thinking models spend output tokens before they decide; at 64 tokens Gemini Flash and Claude were cut
+    off (finish_reason=length) before calling any tool, so most positives scored as missed."""
+    from skillhub.gateway.models import TRIGGER_MAX_TOKENS
+
     body = adapt(CLAUDE, [TOOL], trigger=True)
-    assert body["max_tokens"] == 64
+    assert body["max_tokens"] == TRIGGER_MAX_TOKENS >= 1024
     assert body["tool_choice"] == "auto"
 
 
@@ -160,7 +164,9 @@ def test_gpt_max_tokens_error_retries_with_max_completion_tokens():
     )
     make_client(wire, GPT).chat(MSGS, [TOOL], max_tokens=64, trigger=True)
     second = wire.bodies[1]
-    assert second["max_completion_tokens"] == 64
+    from skillhub.gateway.models import TRIGGER_MAX_TOKENS
+
+    assert second["max_completion_tokens"] == TRIGGER_MAX_TOKENS
     assert "max_tokens" not in second
 
 
