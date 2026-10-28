@@ -1,0 +1,80 @@
+{
+  "workbook": "model.xlsx",
+  "note": "Synthetic test data. Northwind Robotics is a fictional company. Every planted defect is listed; all other formulas are intended to be correct.",
+  "bugs": [
+    {
+      "id": "bs_imbalance",
+      "match": [
+        "balance sheet does not balance",
+        "out of balance",
+        "bs!d8",
+        "12.5"
+      ],
+      "sheet": "BS",
+      "cell": "D8",
+      "kind": "balance_sheet_imbalance",
+      "amount": 12.5,
+      "description": "FY26E other assets is typed as 1,012.5; the roll-forward needs 1,000.0. The FY26E check at BS!D15 reads 12.5."
+    },
+    {
+      "id": "hardcode_calc",
+      "match": [
+        "hard-coded",
+        "hardcoded",
+        "hard coded",
+        "is!e8"
+      ],
+      "sheet": "IS",
+      "cell": "E8",
+      "kind": "hardcoded_in_calc_row",
+      "value": 350.0,
+      "correct_formula": "=E5*Inputs!E6",
+      "description": "FY27E SG&A is a typed number in a calculation row. The formula gives 344.4."
+    },
+    {
+      "id": "broken_link",
+      "match": [
+        "#ref",
+        "broken link",
+        "broken reference",
+        "is!d15"
+      ],
+      "sheet": "IS",
+      "cell": "D15",
+      "kind": "broken_cross_sheet_link",
+      "formula": "=Inputs!#REF!",
+      "description": "Memo cell refers to a deleted cell on the Inputs sheet. Nothing depends on it."
+    },
+    {
+      "id": "inconsistent_formula",
+      "match": [
+        "inconsistent formula",
+        "is!e6",
+        "breaks the pattern"
+      ],
+      "sheet": "IS",
+      "cell": "E6",
+      "kind": "inconsistent_formula",
+      "formula": "=E5*Inputs!E5",
+      "neighbour_cell": "D6",
+      "neighbour_formula": "=D5*(1-Inputs!D5)",
+      "description": "FY27E COGS multiplies by the gross margin instead of one minus the gross margin. The rest of row 6 uses the D6 pattern."
+    },
+    {
+      "id": "wc_sign",
+      "match": [
+        "wrong sign",
+        "sign error",
+        "cf!e7",
+        "working capital"
+      ],
+      "sheet": "CF",
+      "cell": "E7",
+      "kind": "wrong_sign_working_capital",
+      "formula": "=(BS!E6-BS!D6)",
+      "correct_formula": "=-(BS!E6-BS!D6)",
+      "amount": 20.0,
+      "description": "FY27E change in receivables has the wrong sign. An increase in receivables should reduce cash. Cash is overstated by 20.0, so the FY27E check at BS!E15 reads 20.0."
+    }
+  ]
+}

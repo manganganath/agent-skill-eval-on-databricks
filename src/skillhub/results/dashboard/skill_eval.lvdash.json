@@ -1,0 +1,1497 @@
+{
+  "datasets": [
+    {
+      "displayName": "matrix",
+      "name": "matrix",
+      "queryLines": [
+        "SELECT dept, skill, skill_version, model_profile, harness, model_class, mode, verdict, pass_rate, spread, error_rate, unreviewed_cases, experiment_id FROM eval.matrix_all"
+      ]
+    },
+    {
+      "displayName": "verdicts",
+      "name": "verdicts",
+      "queryLines": [
+        "SELECT model_profile, verdict, COUNT(*) AS n FROM eval.matrix_all GROUP BY model_profile, verdict"
+      ]
+    },
+    {
+      "displayName": "uplift",
+      "name": "uplift",
+      "queryLines": [
+        "SELECT skill, skill_version, model_profile, pass_rate_without, pass_rate, uplift_task_quality, uplift_skill_format FROM eval.matrix_all WHERE mode = 'with_skill'"
+      ]
+    },
+    {
+      "displayName": "confusion",
+      "name": "confusion",
+      "queryLines": [
+        "SELECT expected_skill, invoked_skill, trigger_outcome, COUNT(*) AS n FROM eval.cases_all ",
+        "WHERE assessment_name = 'skill_trigger' GROUP BY expected_skill, invoked_skill, trigger_outcome"
+      ]
+    },
+    {
+      "displayName": "trend_trigger",
+      "name": "trend_trigger",
+      "queryLines": [
+        "SELECT skill, skill_version, model_profile, started_at, accuracy FROM eval.runs_all ",
+        "WHERE parent_run_id IS NOT NULL AND mode = 'trigger'"
+      ]
+    },
+    {
+      "displayName": "trend_skill",
+      "name": "trend_skill",
+      "queryLines": [
+        "SELECT skill, skill_version, model_profile, started_at, pass_rate FROM eval.runs_all ",
+        "WHERE parent_run_id IS NOT NULL AND mode = 'with_skill'"
+      ]
+    },
+    {
+      "displayName": "health",
+      "name": "health",
+      "queryLines": [
+        "SELECT model_profile, AVG(error_rate) AS error_rate, ",
+        "AVG(CASE WHEN verdict = 'inconclusive' THEN 1.0 ELSE 0.0 END) AS inconclusive_rate, ",
+        "COUNT(*) AS runs FROM eval.matrix_all GROUP BY model_profile"
+      ]
+    },
+    {
+      "displayName": "cost",
+      "name": "cost",
+      "queryLines": [
+        "WITH latest AS (SELECT served_entity_id, endpoint_name FROM system.serving.served_entities ",
+        "QUALIFY ROW_NUMBER() OVER (PARTITION BY served_entity_id ORDER BY change_time DESC) = 1) ",
+        "SELECT l.endpoint_name, CAST(u.request_time AS DATE) AS day, ",
+        "SUM(u.input_token_count) AS input_tokens, SUM(u.output_token_count) AS output_tokens ",
+        "FROM system.serving.endpoint_usage AS u LEFT JOIN latest AS l ",
+        "ON u.served_entity_id = l.served_entity_id GROUP BY l.endpoint_name, CAST(u.request_time AS DATE)"
+      ]
+    }
+  ],
+  "pages": [
+    {
+      "displayName": "Verdicts",
+      "layout": [
+        {
+          "position": {
+            "height": 5,
+            "width": 6,
+            "x": 0,
+            "y": 0
+          },
+          "widget": {
+            "name": "matrix",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "matrix",
+                  "disaggregated": true,
+                  "fields": [
+                    {
+                      "expression": "`dept`",
+                      "name": "dept"
+                    },
+                    {
+                      "expression": "`skill`",
+                      "name": "skill"
+                    },
+                    {
+                      "expression": "`skill_version`",
+                      "name": "skill_version"
+                    },
+                    {
+                      "expression": "`model_profile`",
+                      "name": "model_profile"
+                    },
+                    {
+                      "expression": "`harness`",
+                      "name": "harness"
+                    },
+                    {
+                      "expression": "`model_class`",
+                      "name": "model_class"
+                    },
+                    {
+                      "expression": "`mode`",
+                      "name": "mode"
+                    },
+                    {
+                      "expression": "`verdict`",
+                      "name": "verdict"
+                    },
+                    {
+                      "expression": "`pass_rate`",
+                      "name": "pass_rate"
+                    },
+                    {
+                      "expression": "`spread`",
+                      "name": "spread"
+                    },
+                    {
+                      "expression": "`error_rate`",
+                      "name": "error_rate"
+                    },
+                    {
+                      "expression": "`unreviewed_cases`",
+                      "name": "unreviewed_cases"
+                    },
+                    {
+                      "expression": "`experiment_id`",
+                      "name": "experiment_id"
+                    }
+                  ]
+                }
+              }
+            ],
+            "spec": {
+              "encodings": {
+                "columns": [
+                  {
+                    "alignContent": "left",
+                    "displayAs": "string",
+                    "displayName": "dept",
+                    "fieldName": "dept",
+                    "order": 100000,
+                    "title": "dept",
+                    "type": "string"
+                  },
+                  {
+                    "alignContent": "left",
+                    "displayAs": "string",
+                    "displayName": "skill",
+                    "fieldName": "skill",
+                    "order": 100001,
+                    "title": "skill",
+                    "type": "string"
+                  },
+                  {
+                    "alignContent": "right",
+                    "displayAs": "number",
+                    "displayName": "skill_version",
+                    "fieldName": "skill_version",
+                    "order": 100002,
+                    "title": "skill_version",
+                    "type": "integer"
+                  },
+                  {
+                    "alignContent": "left",
+                    "displayAs": "string",
+                    "displayName": "model_profile",
+                    "fieldName": "model_profile",
+                    "order": 100003,
+                    "title": "model_profile",
+                    "type": "string"
+                  },
+                  {
+                    "alignContent": "left",
+                    "displayAs": "string",
+                    "displayName": "harness",
+                    "fieldName": "harness",
+                    "order": 100004,
+                    "title": "harness",
+                    "type": "string"
+                  },
+                  {
+                    "alignContent": "left",
+                    "displayAs": "string",
+                    "displayName": "model_class",
+                    "fieldName": "model_class",
+                    "order": 100005,
+                    "title": "model_class",
+                    "type": "string"
+                  },
+                  {
+                    "alignContent": "left",
+                    "displayAs": "string",
+                    "displayName": "mode",
+                    "fieldName": "mode",
+                    "order": 100006,
+                    "title": "mode",
+                    "type": "string"
+                  },
+                  {
+                    "alignContent": "left",
+                    "displayAs": "string",
+                    "displayName": "verdict",
+                    "fieldName": "verdict",
+                    "order": 100007,
+                    "title": "verdict",
+                    "type": "string"
+                  },
+                  {
+                    "alignContent": "right",
+                    "displayAs": "number",
+                    "displayName": "pass_rate",
+                    "fieldName": "pass_rate",
+                    "order": 100008,
+                    "title": "pass_rate",
+                    "type": "float"
+                  },
+                  {
+                    "alignContent": "right",
+                    "displayAs": "number",
+                    "displayName": "spread",
+                    "fieldName": "spread",
+                    "order": 100009,
+                    "title": "spread",
+                    "type": "float"
+                  },
+                  {
+                    "alignContent": "right",
+                    "displayAs": "number",
+                    "displayName": "error_rate",
+                    "fieldName": "error_rate",
+                    "order": 100010,
+                    "title": "error_rate",
+                    "type": "float"
+                  },
+                  {
+                    "alignContent": "right",
+                    "displayAs": "number",
+                    "displayName": "unreviewed_cases",
+                    "fieldName": "unreviewed_cases",
+                    "order": 100011,
+                    "title": "unreviewed_cases",
+                    "type": "integer"
+                  },
+                  {
+                    "alignContent": "left",
+                    "displayAs": "string",
+                    "displayName": "experiment_id",
+                    "fieldName": "experiment_id",
+                    "order": 100012,
+                    "title": "experiment_id",
+                    "type": "string"
+                  }
+                ]
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Verdict matrix"
+              },
+              "version": 1,
+              "widgetType": "table"
+            }
+          }
+        },
+        {
+          "position": {
+            "height": 4,
+            "width": 6,
+            "x": 0,
+            "y": 5
+          },
+          "widget": {
+            "name": "verdict_counts",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "verdicts",
+                  "disaggregated": false,
+                  "fields": [
+                    {
+                      "expression": "`model_profile`",
+                      "name": "model_profile"
+                    },
+                    {
+                      "expression": "SUM(`n`)",
+                      "name": "sum(n)"
+                    },
+                    {
+                      "expression": "`verdict`",
+                      "name": "verdict"
+                    }
+                  ]
+                }
+              }
+            ],
+            "spec": {
+              "encodings": {
+                "color": {
+                  "displayName": "verdict",
+                  "fieldName": "verdict",
+                  "scale": {
+                    "type": "categorical"
+                  }
+                },
+                "x": {
+                  "displayName": "model_profile",
+                  "fieldName": "model_profile",
+                  "scale": {
+                    "type": "categorical"
+                  }
+                },
+                "y": {
+                  "displayName": "SUM of n",
+                  "fieldName": "sum(n)",
+                  "scale": {
+                    "type": "quantitative"
+                  }
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Verdicts by model"
+              },
+              "version": 3,
+              "widgetType": "bar"
+            }
+          }
+        }
+      ],
+      "name": "verdicts",
+      "pageType": "PAGE_TYPE_CANVAS"
+    },
+    {
+      "displayName": "Uplift",
+      "layout": [
+        {
+          "position": {
+            "height": 5,
+            "width": 6,
+            "x": 0,
+            "y": 0
+          },
+          "widget": {
+            "name": "uplift",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "uplift",
+                  "disaggregated": true,
+                  "fields": [
+                    {
+                      "expression": "`skill`",
+                      "name": "skill"
+                    },
+                    {
+                      "expression": "`skill_version`",
+                      "name": "skill_version"
+                    },
+                    {
+                      "expression": "`model_profile`",
+                      "name": "model_profile"
+                    },
+                    {
+                      "expression": "`pass_rate_without`",
+                      "name": "pass_rate_without"
+                    },
+                    {
+                      "expression": "`pass_rate`",
+                      "name": "pass_rate"
+                    },
+                    {
+                      "expression": "`uplift_task_quality`",
+                      "name": "uplift_task_quality"
+                    },
+                    {
+                      "expression": "`uplift_skill_format`",
+                      "name": "uplift_skill_format"
+                    }
+                  ]
+                }
+              }
+            ],
+            "spec": {
+              "encodings": {
+                "columns": [
+                  {
+                    "alignContent": "left",
+                    "displayAs": "string",
+                    "displayName": "skill",
+                    "fieldName": "skill",
+                    "order": 100000,
+                    "title": "skill",
+                    "type": "string"
+                  },
+                  {
+                    "alignContent": "right",
+                    "displayAs": "number",
+                    "displayName": "skill_version",
+                    "fieldName": "skill_version",
+                    "order": 100001,
+                    "title": "skill_version",
+                    "type": "integer"
+                  },
+                  {
+                    "alignContent": "left",
+                    "displayAs": "string",
+                    "displayName": "model_profile",
+                    "fieldName": "model_profile",
+                    "order": 100002,
+                    "title": "model_profile",
+                    "type": "string"
+                  },
+                  {
+                    "alignContent": "right",
+                    "displayAs": "number",
+                    "displayName": "pass_rate_without",
+                    "fieldName": "pass_rate_without",
+                    "order": 100003,
+                    "title": "pass_rate_without",
+                    "type": "float"
+                  },
+                  {
+                    "alignContent": "right",
+                    "displayAs": "number",
+                    "displayName": "pass_rate",
+                    "fieldName": "pass_rate",
+                    "order": 100004,
+                    "title": "pass_rate",
+                    "type": "float"
+                  },
+                  {
+                    "alignContent": "right",
+                    "displayAs": "number",
+                    "displayName": "uplift_task_quality",
+                    "fieldName": "uplift_task_quality",
+                    "order": 100005,
+                    "title": "uplift_task_quality",
+                    "type": "float"
+                  },
+                  {
+                    "alignContent": "right",
+                    "displayAs": "number",
+                    "displayName": "uplift_skill_format",
+                    "fieldName": "uplift_skill_format",
+                    "order": 100006,
+                    "title": "uplift_skill_format",
+                    "type": "float"
+                  }
+                ]
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Uplift with and without the skill"
+              },
+              "version": 1,
+              "widgetType": "table"
+            }
+          }
+        },
+        {
+          "position": {
+            "height": 4,
+            "width": 6,
+            "x": 0,
+            "y": 5
+          },
+          "widget": {
+            "name": "uplift_quality",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "uplift",
+                  "disaggregated": false,
+                  "fields": [
+                    {
+                      "expression": "`skill`",
+                      "name": "skill"
+                    },
+                    {
+                      "expression": "AVG(`uplift_task_quality`)",
+                      "name": "avg(uplift_task_quality)"
+                    },
+                    {
+                      "expression": "`model_profile`",
+                      "name": "model_profile"
+                    }
+                  ]
+                }
+              }
+            ],
+            "spec": {
+              "encodings": {
+                "color": {
+                  "displayName": "model_profile",
+                  "fieldName": "model_profile",
+                  "scale": {
+                    "type": "categorical"
+                  }
+                },
+                "x": {
+                  "displayName": "skill",
+                  "fieldName": "skill",
+                  "scale": {
+                    "type": "categorical"
+                  }
+                },
+                "y": {
+                  "displayName": "AVG of uplift_task_quality",
+                  "fieldName": "avg(uplift_task_quality)",
+                  "scale": {
+                    "type": "quantitative"
+                  }
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Task-quality uplift by skill"
+              },
+              "version": 3,
+              "widgetType": "bar"
+            }
+          }
+        },
+        {
+          "position": {
+            "height": 4,
+            "width": 6,
+            "x": 0,
+            "y": 9
+          },
+          "widget": {
+            "name": "uplift_format",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "uplift",
+                  "disaggregated": false,
+                  "fields": [
+                    {
+                      "expression": "`skill`",
+                      "name": "skill"
+                    },
+                    {
+                      "expression": "AVG(`uplift_skill_format`)",
+                      "name": "avg(uplift_skill_format)"
+                    },
+                    {
+                      "expression": "`model_profile`",
+                      "name": "model_profile"
+                    }
+                  ]
+                }
+              }
+            ],
+            "spec": {
+              "encodings": {
+                "color": {
+                  "displayName": "model_profile",
+                  "fieldName": "model_profile",
+                  "scale": {
+                    "type": "categorical"
+                  }
+                },
+                "x": {
+                  "displayName": "skill",
+                  "fieldName": "skill",
+                  "scale": {
+                    "type": "categorical"
+                  }
+                },
+                "y": {
+                  "displayName": "AVG of uplift_skill_format",
+                  "fieldName": "avg(uplift_skill_format)",
+                  "scale": {
+                    "type": "quantitative"
+                  }
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Skill-format uplift by skill"
+              },
+              "version": 3,
+              "widgetType": "bar"
+            }
+          }
+        }
+      ],
+      "name": "uplift",
+      "pageType": "PAGE_TYPE_CANVAS"
+    },
+    {
+      "displayName": "Trigger",
+      "layout": [
+        {
+          "position": {
+            "height": 5,
+            "width": 6,
+            "x": 0,
+            "y": 0
+          },
+          "widget": {
+            "name": "confusion",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "confusion",
+                  "disaggregated": true,
+                  "fields": [
+                    {
+                      "expression": "`expected_skill`",
+                      "name": "expected_skill"
+                    },
+                    {
+                      "expression": "`invoked_skill`",
+                      "name": "invoked_skill"
+                    },
+                    {
+                      "expression": "`trigger_outcome`",
+                      "name": "trigger_outcome"
+                    },
+                    {
+                      "expression": "`n`",
+                      "name": "n"
+                    }
+                  ]
+                }
+              }
+            ],
+            "spec": {
+              "encodings": {
+                "columns": [
+                  {
+                    "alignContent": "left",
+                    "displayAs": "string",
+                    "displayName": "expected_skill",
+                    "fieldName": "expected_skill",
+                    "order": 100000,
+                    "title": "expected_skill",
+                    "type": "string"
+                  },
+                  {
+                    "alignContent": "left",
+                    "displayAs": "string",
+                    "displayName": "invoked_skill",
+                    "fieldName": "invoked_skill",
+                    "order": 100001,
+                    "title": "invoked_skill",
+                    "type": "string"
+                  },
+                  {
+                    "alignContent": "left",
+                    "displayAs": "string",
+                    "displayName": "trigger_outcome",
+                    "fieldName": "trigger_outcome",
+                    "order": 100002,
+                    "title": "trigger_outcome",
+                    "type": "string"
+                  },
+                  {
+                    "alignContent": "right",
+                    "displayAs": "number",
+                    "displayName": "n",
+                    "fieldName": "n",
+                    "order": 100003,
+                    "title": "n",
+                    "type": "integer"
+                  }
+                ]
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Trigger confusion"
+              },
+              "version": 1,
+              "widgetType": "table"
+            }
+          }
+        },
+        {
+          "position": {
+            "height": 4,
+            "width": 6,
+            "x": 0,
+            "y": 5
+          },
+          "widget": {
+            "name": "outcomes",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "confusion",
+                  "disaggregated": false,
+                  "fields": [
+                    {
+                      "expression": "`expected_skill`",
+                      "name": "expected_skill"
+                    },
+                    {
+                      "expression": "SUM(`n`)",
+                      "name": "sum(n)"
+                    },
+                    {
+                      "expression": "`trigger_outcome`",
+                      "name": "trigger_outcome"
+                    }
+                  ]
+                }
+              }
+            ],
+            "spec": {
+              "encodings": {
+                "color": {
+                  "displayName": "trigger_outcome",
+                  "fieldName": "trigger_outcome",
+                  "scale": {
+                    "type": "categorical"
+                  }
+                },
+                "x": {
+                  "displayName": "expected_skill",
+                  "fieldName": "expected_skill",
+                  "scale": {
+                    "type": "categorical"
+                  }
+                },
+                "y": {
+                  "displayName": "SUM of n",
+                  "fieldName": "sum(n)",
+                  "scale": {
+                    "type": "quantitative"
+                  }
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Trigger outcomes by expected skill"
+              },
+              "version": 3,
+              "widgetType": "bar"
+            }
+          }
+        }
+      ],
+      "name": "trigger",
+      "pageType": "PAGE_TYPE_CANVAS"
+    },
+    {
+      "displayName": "Trends",
+      "layout": [
+        {
+          "position": {
+            "height": 2,
+            "width": 2,
+            "x": 0,
+            "y": 0
+          },
+          "widget": {
+            "name": "trigger_skill_filter",
+            "queries": [
+              {
+                "name": "filter_trigger_skill_filter_skill",
+                "query": {
+                  "datasetName": "trend_trigger",
+                  "disaggregated": false,
+                  "fields": [
+                    {
+                      "expression": "`skill`",
+                      "name": "skill"
+                    },
+                    {
+                      "expression": "COUNT_IF(`associative_filter_predicate_group`)",
+                      "name": "skill_associativity"
+                    }
+                  ]
+                }
+              }
+            ],
+            "spec": {
+              "encodings": {
+                "fields": [
+                  {
+                    "displayName": "skill",
+                    "fieldName": "skill",
+                    "queryName": "filter_trigger_skill_filter_skill"
+                  }
+                ]
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Trigger: skill"
+              },
+              "version": 2,
+              "widgetType": "filter-multi-select"
+            }
+          }
+        },
+        {
+          "position": {
+            "height": 2,
+            "width": 2,
+            "x": 2,
+            "y": 0
+          },
+          "widget": {
+            "name": "trigger_model_filter",
+            "queries": [
+              {
+                "name": "filter_trigger_model_filter_model_profile",
+                "query": {
+                  "datasetName": "trend_trigger",
+                  "disaggregated": false,
+                  "fields": [
+                    {
+                      "expression": "`model_profile`",
+                      "name": "model_profile"
+                    },
+                    {
+                      "expression": "COUNT_IF(`associative_filter_predicate_group`)",
+                      "name": "model_profile_associativity"
+                    }
+                  ]
+                }
+              }
+            ],
+            "spec": {
+              "encodings": {
+                "fields": [
+                  {
+                    "displayName": "model_profile",
+                    "fieldName": "model_profile",
+                    "queryName": "filter_trigger_model_filter_model_profile"
+                  }
+                ]
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Trigger: model"
+              },
+              "version": 2,
+              "widgetType": "filter-multi-select"
+            }
+          }
+        },
+        {
+          "position": {
+            "height": 2,
+            "width": 2,
+            "x": 4,
+            "y": 0
+          },
+          "widget": {
+            "name": "trigger_version_filter",
+            "queries": [
+              {
+                "name": "filter_trigger_version_filter_skill_version",
+                "query": {
+                  "datasetName": "trend_trigger",
+                  "disaggregated": false,
+                  "fields": [
+                    {
+                      "expression": "`skill_version`",
+                      "name": "skill_version"
+                    },
+                    {
+                      "expression": "COUNT_IF(`associative_filter_predicate_group`)",
+                      "name": "skill_version_associativity"
+                    }
+                  ]
+                }
+              }
+            ],
+            "spec": {
+              "encodings": {
+                "fields": [
+                  {
+                    "displayName": "skill_version",
+                    "fieldName": "skill_version",
+                    "queryName": "filter_trigger_version_filter_skill_version"
+                  }
+                ]
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Trigger: version"
+              },
+              "version": 2,
+              "widgetType": "filter-multi-select"
+            }
+          }
+        },
+        {
+          "position": {
+            "height": 4,
+            "width": 6,
+            "x": 0,
+            "y": 2
+          },
+          "widget": {
+            "name": "trigger_accuracy_trend",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "trend_trigger",
+                  "disaggregated": false,
+                  "fields": [
+                    {
+                      "expression": "DATE_TRUNC(\"DAY\", `started_at`)",
+                      "name": "day(started_at)"
+                    },
+                    {
+                      "expression": "AVG(`accuracy`)",
+                      "name": "avg(accuracy)"
+                    },
+                    {
+                      "expression": "`skill`",
+                      "name": "skill"
+                    }
+                  ]
+                }
+              }
+            ],
+            "spec": {
+              "encodings": {
+                "color": {
+                  "displayName": "skill",
+                  "fieldName": "skill",
+                  "scale": {
+                    "type": "categorical"
+                  }
+                },
+                "x": {
+                  "displayName": "started_at",
+                  "fieldName": "day(started_at)",
+                  "scale": {
+                    "type": "temporal"
+                  }
+                },
+                "y": {
+                  "displayName": "AVG of accuracy",
+                  "fieldName": "avg(accuracy)",
+                  "scale": {
+                    "type": "quantitative"
+                  }
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Trigger accuracy over time"
+              },
+              "version": 3,
+              "widgetType": "line"
+            }
+          }
+        },
+        {
+          "position": {
+            "height": 2,
+            "width": 2,
+            "x": 0,
+            "y": 6
+          },
+          "widget": {
+            "name": "skill_skill_filter",
+            "queries": [
+              {
+                "name": "filter_skill_skill_filter_skill",
+                "query": {
+                  "datasetName": "trend_skill",
+                  "disaggregated": false,
+                  "fields": [
+                    {
+                      "expression": "`skill`",
+                      "name": "skill"
+                    },
+                    {
+                      "expression": "COUNT_IF(`associative_filter_predicate_group`)",
+                      "name": "skill_associativity"
+                    }
+                  ]
+                }
+              }
+            ],
+            "spec": {
+              "encodings": {
+                "fields": [
+                  {
+                    "displayName": "skill",
+                    "fieldName": "skill",
+                    "queryName": "filter_skill_skill_filter_skill"
+                  }
+                ]
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "With skill: skill"
+              },
+              "version": 2,
+              "widgetType": "filter-multi-select"
+            }
+          }
+        },
+        {
+          "position": {
+            "height": 2,
+            "width": 2,
+            "x": 2,
+            "y": 6
+          },
+          "widget": {
+            "name": "skill_model_filter",
+            "queries": [
+              {
+                "name": "filter_skill_model_filter_model_profile",
+                "query": {
+                  "datasetName": "trend_skill",
+                  "disaggregated": false,
+                  "fields": [
+                    {
+                      "expression": "`model_profile`",
+                      "name": "model_profile"
+                    },
+                    {
+                      "expression": "COUNT_IF(`associative_filter_predicate_group`)",
+                      "name": "model_profile_associativity"
+                    }
+                  ]
+                }
+              }
+            ],
+            "spec": {
+              "encodings": {
+                "fields": [
+                  {
+                    "displayName": "model_profile",
+                    "fieldName": "model_profile",
+                    "queryName": "filter_skill_model_filter_model_profile"
+                  }
+                ]
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "With skill: model"
+              },
+              "version": 2,
+              "widgetType": "filter-multi-select"
+            }
+          }
+        },
+        {
+          "position": {
+            "height": 2,
+            "width": 2,
+            "x": 4,
+            "y": 6
+          },
+          "widget": {
+            "name": "skill_version_filter",
+            "queries": [
+              {
+                "name": "filter_skill_version_filter_skill_version",
+                "query": {
+                  "datasetName": "trend_skill",
+                  "disaggregated": false,
+                  "fields": [
+                    {
+                      "expression": "`skill_version`",
+                      "name": "skill_version"
+                    },
+                    {
+                      "expression": "COUNT_IF(`associative_filter_predicate_group`)",
+                      "name": "skill_version_associativity"
+                    }
+                  ]
+                }
+              }
+            ],
+            "spec": {
+              "encodings": {
+                "fields": [
+                  {
+                    "displayName": "skill_version",
+                    "fieldName": "skill_version",
+                    "queryName": "filter_skill_version_filter_skill_version"
+                  }
+                ]
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "With skill: version"
+              },
+              "version": 2,
+              "widgetType": "filter-multi-select"
+            }
+          }
+        },
+        {
+          "position": {
+            "height": 4,
+            "width": 6,
+            "x": 0,
+            "y": 8
+          },
+          "widget": {
+            "name": "skill_pass_rate_trend",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "trend_skill",
+                  "disaggregated": false,
+                  "fields": [
+                    {
+                      "expression": "DATE_TRUNC(\"DAY\", `started_at`)",
+                      "name": "day(started_at)"
+                    },
+                    {
+                      "expression": "AVG(`pass_rate`)",
+                      "name": "avg(pass_rate)"
+                    },
+                    {
+                      "expression": "`skill`",
+                      "name": "skill"
+                    }
+                  ]
+                }
+              }
+            ],
+            "spec": {
+              "encodings": {
+                "color": {
+                  "displayName": "skill",
+                  "fieldName": "skill",
+                  "scale": {
+                    "type": "categorical"
+                  }
+                },
+                "x": {
+                  "displayName": "started_at",
+                  "fieldName": "day(started_at)",
+                  "scale": {
+                    "type": "temporal"
+                  }
+                },
+                "y": {
+                  "displayName": "AVG of pass_rate",
+                  "fieldName": "avg(pass_rate)",
+                  "scale": {
+                    "type": "quantitative"
+                  }
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Pass rate with the skill over time"
+              },
+              "version": 3,
+              "widgetType": "line"
+            }
+          }
+        }
+      ],
+      "name": "trends",
+      "pageType": "PAGE_TYPE_CANVAS"
+    },
+    {
+      "displayName": "Health",
+      "layout": [
+        {
+          "position": {
+            "height": 4,
+            "width": 6,
+            "x": 0,
+            "y": 0
+          },
+          "widget": {
+            "name": "error_rate",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "health",
+                  "disaggregated": false,
+                  "fields": [
+                    {
+                      "expression": "`model_profile`",
+                      "name": "model_profile"
+                    },
+                    {
+                      "expression": "AVG(`error_rate`)",
+                      "name": "avg(error_rate)"
+                    }
+                  ]
+                }
+              }
+            ],
+            "spec": {
+              "encodings": {
+                "x": {
+                  "displayName": "model_profile",
+                  "fieldName": "model_profile",
+                  "scale": {
+                    "type": "categorical"
+                  }
+                },
+                "y": {
+                  "displayName": "AVG of error_rate",
+                  "fieldName": "avg(error_rate)",
+                  "scale": {
+                    "type": "quantitative"
+                  }
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Error rate by model"
+              },
+              "version": 3,
+              "widgetType": "bar"
+            }
+          }
+        },
+        {
+          "position": {
+            "height": 5,
+            "width": 6,
+            "x": 0,
+            "y": 4
+          },
+          "widget": {
+            "name": "health_table",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "health",
+                  "disaggregated": true,
+                  "fields": [
+                    {
+                      "expression": "`model_profile`",
+                      "name": "model_profile"
+                    },
+                    {
+                      "expression": "`error_rate`",
+                      "name": "error_rate"
+                    },
+                    {
+                      "expression": "`inconclusive_rate`",
+                      "name": "inconclusive_rate"
+                    },
+                    {
+                      "expression": "`runs`",
+                      "name": "runs"
+                    }
+                  ]
+                }
+              }
+            ],
+            "spec": {
+              "encodings": {
+                "columns": [
+                  {
+                    "alignContent": "left",
+                    "displayAs": "string",
+                    "displayName": "model_profile",
+                    "fieldName": "model_profile",
+                    "order": 100000,
+                    "title": "model_profile",
+                    "type": "string"
+                  },
+                  {
+                    "alignContent": "right",
+                    "displayAs": "number",
+                    "displayName": "error_rate",
+                    "fieldName": "error_rate",
+                    "order": 100001,
+                    "title": "error_rate",
+                    "type": "float"
+                  },
+                  {
+                    "alignContent": "right",
+                    "displayAs": "number",
+                    "displayName": "inconclusive_rate",
+                    "fieldName": "inconclusive_rate",
+                    "order": 100002,
+                    "title": "inconclusive_rate",
+                    "type": "float"
+                  },
+                  {
+                    "alignContent": "right",
+                    "displayAs": "number",
+                    "displayName": "runs",
+                    "fieldName": "runs",
+                    "order": 100003,
+                    "title": "runs",
+                    "type": "integer"
+                  }
+                ]
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Error and inconclusive rates"
+              },
+              "version": 1,
+              "widgetType": "table"
+            }
+          }
+        }
+      ],
+      "name": "health",
+      "pageType": "PAGE_TYPE_CANVAS"
+    },
+    {
+      "displayName": "Cost",
+      "layout": [
+        {
+          "position": {
+            "height": 4,
+            "width": 6,
+            "x": 0,
+            "y": 0
+          },
+          "widget": {
+            "name": "tokens_by_day",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "cost",
+                  "disaggregated": false,
+                  "fields": [
+                    {
+                      "expression": "`day`",
+                      "name": "day"
+                    },
+                    {
+                      "expression": "SUM(`input_tokens`)",
+                      "name": "sum(input_tokens)"
+                    },
+                    {
+                      "expression": "`endpoint_name`",
+                      "name": "endpoint_name"
+                    }
+                  ]
+                }
+              }
+            ],
+            "spec": {
+              "encodings": {
+                "color": {
+                  "displayName": "endpoint_name",
+                  "fieldName": "endpoint_name",
+                  "scale": {
+                    "type": "categorical"
+                  }
+                },
+                "x": {
+                  "displayName": "day",
+                  "fieldName": "day",
+                  "scale": {
+                    "type": "temporal"
+                  }
+                },
+                "y": {
+                  "displayName": "SUM of input_tokens",
+                  "fieldName": "sum(input_tokens)",
+                  "scale": {
+                    "type": "quantitative"
+                  }
+                }
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Input tokens per day"
+              },
+              "version": 3,
+              "widgetType": "line"
+            }
+          }
+        },
+        {
+          "position": {
+            "height": 5,
+            "width": 6,
+            "x": 0,
+            "y": 4
+          },
+          "widget": {
+            "name": "cost_table",
+            "queries": [
+              {
+                "name": "main_query",
+                "query": {
+                  "datasetName": "cost",
+                  "disaggregated": true,
+                  "fields": [
+                    {
+                      "expression": "`endpoint_name`",
+                      "name": "endpoint_name"
+                    },
+                    {
+                      "expression": "`day`",
+                      "name": "day"
+                    },
+                    {
+                      "expression": "`input_tokens`",
+                      "name": "input_tokens"
+                    },
+                    {
+                      "expression": "`output_tokens`",
+                      "name": "output_tokens"
+                    }
+                  ]
+                }
+              }
+            ],
+            "spec": {
+              "encodings": {
+                "columns": [
+                  {
+                    "alignContent": "left",
+                    "displayAs": "string",
+                    "displayName": "endpoint_name",
+                    "fieldName": "endpoint_name",
+                    "order": 100000,
+                    "title": "endpoint_name",
+                    "type": "string"
+                  },
+                  {
+                    "alignContent": "right",
+                    "displayAs": "datetime",
+                    "displayName": "day",
+                    "fieldName": "day",
+                    "order": 100001,
+                    "title": "day",
+                    "type": "datetime"
+                  },
+                  {
+                    "alignContent": "right",
+                    "displayAs": "number",
+                    "displayName": "input_tokens",
+                    "fieldName": "input_tokens",
+                    "order": 100002,
+                    "title": "input_tokens",
+                    "type": "integer"
+                  },
+                  {
+                    "alignContent": "right",
+                    "displayAs": "number",
+                    "displayName": "output_tokens",
+                    "fieldName": "output_tokens",
+                    "order": 100003,
+                    "title": "output_tokens",
+                    "type": "integer"
+                  }
+                ]
+              },
+              "frame": {
+                "showTitle": true,
+                "title": "Token usage"
+              },
+              "version": 1,
+              "widgetType": "table"
+            }
+          }
+        }
+      ],
+      "name": "cost",
+      "pageType": "PAGE_TYPE_CANVAS"
+    }
+  ],
+  "uiSettings": {
+    "applyModeEnabled": false,
+    "theme": {
+      "widgetHeaderAlignment": "ALIGNMENT_UNSPECIFIED"
+    }
+  }
+}

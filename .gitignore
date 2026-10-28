@@ -11,3 +11,13 @@ internal/
 notes/
 .worktrees/
 .superpowers/
+.ruff_cache/
+.pytest_cache/
+mlruns/
+mlflow.db
+build/
+app/requirements.txt
+app/backend/static/
+app/skillhub/
+app/config/
+app/frontend/node_modules/

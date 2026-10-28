@@ -1,0 +1,13 @@
+{
+  "note": "Synthetic test data. Northwind Robotics is a fictional company. House estimates before the Q3 print.",
+  "as_of": "2026-10-15",
+  "rating": "Overweight",
+  "price_target_usd": 56.0,
+  "quarters": {
+    "Q3 FY26": {"revenue_usd_m": 408.0, "eps_non_gaap_usd": 0.81, "gross_margin_pct": 41.0}
+  },
+  "fiscal_years": {
+    "FY26": {"revenue_usd_m": 1650.0},
+    "FY27": {"revenue_usd_m": 1720.0}
+  }
+}

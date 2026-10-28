@@ -1,0 +1,251 @@
+# Serverless Jobs for the Skill Hub. Every task runs the skillhub CLI.
+# Environment variables come from the job-level `environment_variables` entry (Beta in CLI v1.20.0).
+# The environment and environment-variable blocks are defined once (anchors) in skillhub_bootstrap
+# and reused by the other Jobs.
+#
+# Run identities are set per Job under `targets.prod.resources.jobs` in databricks.yml:
+# skill-eval and skillhub-nightly run as ci_eval, skill-switch runs as ci, bootstrap runs as the deployer.
+# In dev every Job runs as the deployer, so nothing here may assume a CI principal is the run identity.
+resources:
+  jobs:
+    # Single Python task. The register_scorers notebook is not part of this release.
+    skillhub_bootstrap:
+      name: skillhub-bootstrap
+      environment_variables: &environment_variables
+        - environment_variables_key: skillhub_env
+          spec:
+            variables:
+              SKILLHUB_CATALOG: ${var.catalog}${var.catalog_suffix}
+              SQL_WAREHOUSE_ID: ${var.warehouse_id}
+              SKILLHUB_CONFIG: ${workspace.file_path}/config/hub.yaml
+              SKILLHUB_FIXTURES: ${workspace.file_path}/fixtures
+              SKILLHUB_SKILLS: ${workspace.file_path}/skills
+              # Experiments and CI candidates live under this folder (config/hub.yaml workspace_root).
+              SKILLHUB_WORKSPACE_ROOT: ${var.workspace_root}
+              SKILLHUB_ALERT_DESTINATION_ID: ${var.alert_destination_id}
+              DATABRICKS_HOST: ${workspace.host}
+              # Sync trusts only runs by ci_eval and the deployer (not the app), bootstrap sets
+              # the experiment folder ACL from these IDs, check-permissions compares the folder ACL with
+              # them, and job-switch publishes only in a run that SKILLHUB_CI_PRINCIPAL started.
+              SKILLHUB_CI_PRINCIPAL: ${var.ci_principal}
+              SKILLHUB_CI_EVAL_PRINCIPAL: ${var.ci_eval_principal}
+              SKILLHUB_APP_PRINCIPAL: ${var.app_principal}
+              SKILLHUB_DEPLOYER: ${workspace.current_user.userName}
+      environments: &environments
+        - environment_key: default
+          spec:
+            environment_version: "5"
+            dependencies:
+              - ../dist/*.whl
+      tasks:
+        - task_key: bootstrap
+          environment_key: default
+          environment_variables_key: skillhub_env
+          python_wheel_task:
+            package_name: skillhub
+            entry_point: skillhub
+            parameters: ["bootstrap", "--no-create-identities"]
+
+    skill_eval:
+      name: skill-eval
+      max_concurrent_runs: 4
+      parameters:
+        - {name: run_key, default: ""}
+        - {name: skills, default: ""}
+        - {name: models, default: default}
+        - {name: modes, default: "trigger,effectiveness"}
+        - {name: source, default: ""}
+        - {name: trigger_source, default: manual}
+        - {name: requested_by, default: ""}
+        - {name: versions, default: ""}
+        # Candidate content uploaded by CI. "" means use SKILLHUB_SKILLS / SKILLHUB_FIXTURES.
+        - {name: skills_root, default: ""}
+        - {name: fixtures_root, default: ""}
+      # ci_eval starts evals in CI; the app principal starts them from the Skill Hub.
+      permissions:
+        - service_principal_name: ${var.ci_eval_principal}
+          level: CAN_MANAGE_RUN
+        - service_principal_name: ${var.app_principal}
+          level: CAN_MANAGE_RUN
+      environment_variables: *environment_variables
+      environments: *environments
+      tasks:
+        - task_key: eval
+          environment_key: default
+          environment_variables_key: skillhub_env
+          python_wheel_task:
+            package_name: skillhub
+            entry_point: skillhub
+            parameters:
+              - eval
+              - --run-key
+              - "{{job.parameters.run_key}}"
+              - --skills
+              - "{{job.parameters.skills}}"
+              - --models
+              - "{{job.parameters.models}}"
+              - --modes
+              - "{{job.parameters.modes}}"
+              - --source
+              - "{{job.parameters.source}}"
+              - --trigger-source
+              - "{{job.parameters.trigger_source}}"
+              - --requested-by
+              - "{{job.parameters.requested_by}}"
+              - --versions
+              - "{{job.parameters.versions}}"
+              - --skills-root
+              - "{{job.parameters.skills_root}}"
+              - --fixtures-root
+              - "{{job.parameters.fixtures_root}}"
+        - task_key: sync
+          depends_on:
+            - task_key: eval
+          environment_key: default
+          environment_variables_key: skillhub_env
+          python_wheel_task:
+            package_name: skillhub
+            entry_point: skillhub
+            parameters: ["sync", "--run-key", "{{job.parameters.run_key}}"]
+
+    skill_switch:
+      name: skill-switch
+      max_concurrent_runs: 1
+      # A failed switch notifies the alert destination when the prod deploy sets one.
+      webhook_notifications: ${var.job_failure_notifications}
+      queue:
+        enabled: true
+      parameters:
+        - {name: action, default: ""}
+        - {name: dept, default: ""}
+        - {name: skill, default: ""}
+        - {name: version, default: ""}
+        - {name: git_sha, default: ""}
+        - {name: eval_run_id, default: ""}
+        - {name: actor, default: ""}
+        - {name: skills_root, default: ""}
+        - {name: expect_hash, default: ""}
+        # The merge eval's run key. publish refuses unless that run's trusted rows evaluated this content.
+        - {name: run_key, default: ""}
+        # The merge plan's eval-input digests. publish refuses unless the rows evaluated exactly these.
+        - {name: expect_rubric_hash, default: ""}
+        - {name: expect_dataset_digest, default: ""}
+        # The merge plan's gating cells (model/mode,...). publish refuses unless each has a trusted row.
+        - {name: expect_cells, default: ""}
+      # ci publishes and switches in CI; the app principal switches from the Skill Hub.
+      permissions:
+        - service_principal_name: ${var.ci_principal}
+          level: CAN_MANAGE_RUN
+        - service_principal_name: ${var.app_principal}
+          level: CAN_MANAGE_RUN
+      environment_variables: *environment_variables
+      environments: *environments
+      tasks:
+        - task_key: switch
+          environment_key: default
+          environment_variables_key: skillhub_env
+          python_wheel_task:
+            package_name: skillhub
+            entry_point: skillhub
+            parameters:
+              - job-switch
+              - --action
+              - "{{job.parameters.action}}"
+              - --dept
+              - "{{job.parameters.dept}}"
+              - --skill
+              - "{{job.parameters.skill}}"
+              - --version
+              - "{{job.parameters.version}}"
+              - --git-sha
+              - "{{job.parameters.git_sha}}"
+              - --eval-run-id
+              - "{{job.parameters.eval_run_id}}"
+              - --actor
+              - "{{job.parameters.actor}}"
+              - --skills-root
+              - "{{job.parameters.skills_root}}"
+              - --expect-hash
+              - "{{job.parameters.expect_hash}}"
+              - --run-key
+              - "{{job.parameters.run_key}}"
+              - --expect-rubric-hash
+              - "{{job.parameters.expect_rubric_hash}}"
+              - --expect-dataset-digest
+              - "{{job.parameters.expect_dataset_digest}}"
+              - --expect-cells
+              - "{{job.parameters.expect_cells}}"
+              - --job-run-id
+              - "{{job.run_id}}"
+
+    skillhub_nightly:
+      name: skillhub-nightly
+      max_concurrent_runs: 1
+      # A failed eval, reconcile or permission check notifies the alert destination when one is set.
+      webhook_notifications: ${var.job_failure_notifications}
+      # pause_status is left unset: prod runs the schedule, and development mode pauses it (D1).
+      schedule:
+        quartz_cron_expression: "0 0 2 * * ?"
+        timezone_id: UTC
+      environment_variables: *environment_variables
+      environments: *environments
+      tasks:
+        - task_key: eval_live
+          environment_key: default
+          environment_variables_key: skillhub_env
+          python_wheel_task:
+            package_name: skillhub
+            entry_point: skillhub
+            parameters:
+              - eval
+              - --run-key
+              - "nightly-{{job.run_id}}"
+              - --skills
+              - all
+              - --models
+              - default
+              - --modes
+              - trigger,effectiveness
+              - --source
+              - live
+              - --trigger-source
+              - nightly
+              - --requested-by
+              - nightly-schedule
+        - task_key: sync_live
+          depends_on:
+            - task_key: eval_live
+          environment_key: default
+          environment_variables_key: skillhub_env
+          python_wheel_task:
+            package_name: skillhub
+            entry_point: skillhub
+            parameters: ["sync", "--run-key", "nightly-{{job.run_id}}"]
+        - task_key: reconcile
+          depends_on:
+            - task_key: sync_live
+          environment_key: default
+          environment_variables_key: skillhub_env
+          python_wheel_task:
+            package_name: skillhub
+            entry_point: skillhub
+            parameters: ["reconcile"]
+        - task_key: check_permissions
+          depends_on:
+            - task_key: reconcile
+          environment_key: default
+          environment_variables_key: skillhub_env
+          python_wheel_task:
+            package_name: skillhub
+            entry_point: skillhub
+            parameters: ["check-permissions"]
+        - task_key: cleanup
+          depends_on:
+            - task_key: check_permissions
+          run_if: ALL_DONE
+          environment_key: default
+          environment_variables_key: skillhub_env
+          python_wheel_task:
+            package_name: skillhub
+            entry_point: skillhub
+            parameters: ["cleanup", "--older-than-hours", "24"]

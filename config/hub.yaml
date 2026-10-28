@@ -1,0 +1,54 @@
+# Customer-specific settings. ${VARS} come from the environment. Nothing in this file is secret.
+workspace:
+  host: ${DATABRICKS_HOST}
+  sql_warehouse_id: ${SQL_WAREHOUSE_ID}
+
+catalog: ${SKILLHUB_CATALOG}        # an existing catalog the deployer owns
+# Experiments live in <workspace_root>/<catalog>/<dept>/<skill>, CI candidates in <workspace_root>/<catalog>/candidates.
+# The bundle sets SKILLHUB_WORKSPACE_ROOT to the ci principal's home folder, which `users` cannot reach.
+workspace_root: ${SKILLHUB_WORKSPACE_ROOT:-/Shared/skill-hub}
+
+departments:                        # key = folder under skills/
+  common:            {readers: [skillhub-users]}
+  equity_research:   {readers: [dept-equity-research]}
+  investment_banking: {readers: [dept-investment-banking]}
+  private_equity:    {readers: [dept-private-equity]}
+  fund_admin:        {readers: [dept-fund-admin]}
+  operations:        {readers: [dept-operations]}
+  wealth_management: {readers: [dept-wealth-management]}
+  external:          {readers: [skillhub-reviewers], quarantine: true}
+
+roles: {authors: skillhub-authors, reviewers: skillhub-reviewers, ci: skillhub-ci, ci_eval: skillhub-ci-eval}
+
+models:                             # model profiles
+  claude-sonnet: {route: serving, endpoint: databricks-claude-sonnet-5-5, class: frontier}
+  claude-opus:   {route: serving, endpoint: databricks-claude-opus-5-5,   class: frontier}
+  gpt:           {route: serving, endpoint: databricks-gpt-5-5,           class: frontier}
+  gemini-flash:  {route: serving, endpoint: databricks-gemini-3-8-flash,  class: fast}
+
+judges: [gpt, claude-opus, gemini-flash]   # the first is the registered judge
+judges_pr: [gpt]                    # PR runs use one judge; full and nightly runs use the panel
+generator: claude-opus              # writes test cases and rubrics; not the registered judge
+
+defaults:
+  models: [claude-sonnet, gpt, gemini-flash]
+  repeats: 3
+  pass_score: 0.7
+  fail_rate: 0.5
+  warn_rate: 0.8
+  max_error_rate: 0.1
+  concurrency_per_endpoint: 8
+  min_reviewed_cases: 5             # per mode, needed for a gating verdict
+
+import:
+  source: github.com/anthropics/financial-services@574ed3624aebd0418c7e96cd101262f30210ab26
+  map:
+    plugins/vertical-plugins/financial-analysis: common
+    plugins/vertical-plugins/equity-research: equity_research
+    plugins/vertical-plugins/investment-banking: investment_banking
+    plugins/vertical-plugins/private-equity: private_equity
+    plugins/vertical-plugins/fund-admin: fund_admin
+    plugins/vertical-plugins/operations: operations
+    plugins/agent-plugins/meeting-prep-agent: wealth_management   # only skills not found elsewhere
+    plugins/partner-built/*: external
+  exclude: [verify]

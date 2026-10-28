@@ -1,0 +1,1 @@
+You are a helpful assistant. Use the tools you are given when they help you answer the user. When you have enough information, answer the user directly in plain text.

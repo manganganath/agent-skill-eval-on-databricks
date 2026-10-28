@@ -1,0 +1,52 @@
+import { describe, expect, it, vi, afterEach } from "vitest";
+import { api, ApiError } from "./client";
+
+afterEach(() => {
+  vi.restoreAllMocks();
+});
+
+describe("api client", () => {
+  it("maps a 403 reason from the error body", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({ detail: { reason: "skill_not_readable" } }), { status: 403 }),
+    );
+    const err = await api.skill("skill_hub.common.a").catch((e) => e);
+    expect(err).toBeInstanceOf(ApiError);
+    expect(err.status).toBe(403);
+    expect(err.reason).toBe("skill_not_readable");
+  });
+
+  it("falls back to http_<status> when the body is not JSON", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response("oops", { status: 502 }));
+    const err = await api.me().catch((e) => e);
+    expect(err.reason).toBe("http_502");
+  });
+
+  it("encodes the FQN in the path", async () => {
+    const spy = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({}), { status: 200 }),
+    );
+    await api.skill("skill_hub.common.a b");
+    expect(spy.mock.calls[0][0]).toBe("/api/skills/skill_hub.common.a%20b");
+  });
+
+  it("wraps an unparseable OK response in ApiError bad_response", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response("<html>", { status: 200 }));
+    const err = await api.me().catch((e) => e);
+    expect(err).toBeInstanceOf(ApiError);
+    expect(err.reason).toBe("bad_response");
+  });
+
+  it("reads the denied-departments and truncation headers for matrix and cases", async () => {
+    const headers = { "X-Eval-Denied-Departments": "equity_research,external", "X-Result-Truncated": "true" };
+    vi.spyOn(globalThis, "fetch").mockImplementation(async () => new Response("[]", { status: 200, headers }));
+    for (const call of [() => api.matrix({}), () => api.cases("r1")]) {
+      expect(await call()).toEqual({ rows: [], deniedDepartments: ["equity_research", "external"], truncated: true });
+    }
+  });
+
+  it("reports no denied departments when the header is absent", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response("[]", { status: 200 }));
+    expect(await api.matrix({})).toEqual({ rows: [], deniedDepartments: [], truncated: false });
+  });
+});

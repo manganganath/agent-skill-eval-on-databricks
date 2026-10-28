@@ -1,0 +1,105 @@
+bundle:
+  name: skill-hub
+
+include:
+  - resources/*.yml
+
+# Build outputs of scripts/build_app.sh are git-ignored; bundle sync skips ignored files unless listed here.
+sync:
+  include:
+    - app/skillhub/**
+    - app/config/**
+    - app/requirements.txt
+    - app/backend/static/**
+
+artifacts:
+  skillhub_wheel:
+    type: whl
+    build: uv build --wheel
+    path: .
+
+variables:
+  catalog:
+    description: Base Unity Catalog catalog for skills, versions and evals
+    default: skill_hub
+  catalog_suffix:
+    description: Appended to the base catalog. Empty in prod, _dev in dev
+    default: ""
+  app_name:
+    description: Databricks App name for the Skill Hub
+    default: skill-hub
+  warehouse_id:
+    description: SQL warehouse ID. Set per environment through BUNDLE_VAR_warehouse_id, never committed
+  ci_principal:
+    description: Application ID of the skillhub-ci service principal (prod bundle run_as; skill-switch run_as and run permission)
+  ci_eval_principal:
+    description: Application ID of the skillhub-ci-eval service principal (skill-eval and nightly run_as; skill-eval run permission)
+  app_principal:
+    description: >-
+      Application ID of the Skill Hub app service principal for the target being deployed.
+      The dev and prod apps have different principals, so set it per environment through
+      BUNDLE_VAR_app_principal (one GitHub Environment value each), never committed
+  workspace_root:
+    description: >-
+      Workspace folder for the skill experiments and the CI candidates (SKILLHUB_WORKSPACE_ROOT). The default
+      is the ci principal's home folder, which `users` cannot reach; every folder under /Workspace/Shared inherits
+      users CAN_MANAGE. CI sets it with BUNDLE_VAR_workspace_root from vars.SKILLHUB_WORKSPACE_ROOT
+    default: /Users/${var.ci_principal}/skill-hub
+  alert_destination_id:
+    description: >-
+      Notification destination ID for the SQL alerts (SKILLHUB_ALERT_DESTINATION_ID). CI sets it with
+      BUNDLE_VAR_alert_destination_id from vars.SKILLHUB_ALERT_DESTINATION_ID. Empty: alerts notify nobody
+    default: ""
+  app_users_group:
+    description: >-
+      Group given CAN_USE on the Skill Hub app. The app enforces Unity Catalog permissions per user
+      (on-behalf-of), so a wide group is safe
+    default: users
+  reviewers_group:
+    description: Group given CAN_RUN on the results dashboard. Must match roles.reviewers in config/hub.yaml
+    default: skillhub-reviewers
+  job_failure_notifications:
+    description: >-
+      webhook_notifications of the skill-switch and nightly Jobs. Empty unless the prod deploy sets it,
+      in .databricks/bundle/prod/variable-overrides.json, to on_failure for the alert destination
+    type: complex
+    default: {}
+
+targets:
+  dev:
+    mode: development
+    default: true
+    variables:
+      catalog_suffix: _dev
+      app_name: skill-hub-dev
+  prod:
+    mode: production
+    workspace:
+      root_path: ~/.bundle/${bundle.name}/${bundle.target}
+    run_as:
+      service_principal_name: ${var.ci_principal}
+    permissions:
+      - service_principal_name: ${var.ci_principal}
+        level: CAN_MANAGE
+      # Load-bearing: skill-eval and nightly run as ci_eval and read the wheel, config, skills and fixtures
+      # from ci's bundle root folder. Side effect: bundle-level permissions also give ci_eval CAN_VIEW on
+      # every bundle resource (view only).
+      - service_principal_name: ${var.ci_eval_principal}
+        level: CAN_VIEW
+    # Per-Job identities. Bootstrap inherits the bundle-level run_as (ci).
+    # The deployer (ci) needs the Service Principal User role on ci_eval.
+    # Dev keeps the deployer identity for every Job, so a dev deploy needs no role on either principal.
+    resources:
+      jobs:
+        skill_eval:
+          run_as:
+            service_principal_name: ${var.ci_eval_principal}
+        skill_switch:
+          run_as:
+            service_principal_name: ${var.ci_principal}
+        skillhub_nightly:
+          run_as:
+            service_principal_name: ${var.ci_eval_principal}
+    variables:
+      catalog_suffix: ""
+      app_name: skill-hub

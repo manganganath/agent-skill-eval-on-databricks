@@ -1,0 +1,80 @@
+name: skills-switch
+
+# Manual: make an already published version live. Runs in the `production` environment, so a reviewer
+# approves before the job starts and before the environment secrets are available.
+# Only an explicit version number is allowed. Moving to the newest content and retiring go through skills-publish.yml.
+on:
+  workflow_dispatch:
+    inputs:
+      skill:
+        description: Skill as dept/name
+        required: true
+        type: string
+      version:
+        description: Published version number to make live
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+# Shared with skills-publish.yml and the prod deploy in platform.yml: one at a time. An unapproved release blocks
+# this run. A pending member of the group can be replaced by another one. A replaced release is picked up on the
+# next skills push through the skillhub/released tag; a replaced deploy is redone on the next main push.
+concurrency:
+  group: skillhub-release
+  cancel-in-progress: false
+
+jobs:
+  switch:
+    name: switch (production)
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    environment: production
+    env:
+      SKILL_REF: ${{ inputs.skill }}
+      VERSION: ${{ inputs.version }}
+    steps:
+      - name: Validate inputs
+        run: |
+          # Inputs are checked before any use. Nothing from them is echoed back.
+          fail() { echo "::error::Invalid input: $1"; exit 1; }
+          [[ "$SKILL_REF" =~ ^[a-z][a-z0-9_]*/[a-z0-9]+(-[a-z0-9]+)*$ ]] || fail "skill must be dept/name"
+          [[ "$VERSION" =~ ^[1-9][0-9]{0,5}$ ]] || fail "version must be a positive integer"
+
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Install Databricks CLI
+        uses: databricks/setup-cli@9b64c94a6d2b2e830592d80e9f14c26d32b42ad7 # v1.20.0
+        with:
+          version: 1.20.0
+
+      - name: Run skill-switch Job
+        env:
+          DATABRICKS_HOST: ${{ secrets.DATABRICKS_HOST }}
+          DATABRICKS_CLIENT_ID: ${{ secrets.DATABRICKS_CLIENT_ID }}
+          DATABRICKS_CLIENT_SECRET: ${{ secrets.DATABRICKS_CLIENT_SECRET }}
+          JOB_ID: ${{ vars.SKILLHUB_JOB_ID_SWITCH }}
+          ACTOR: ${{ github.actor }}
+          DISPATCH_SHA: ${{ github.sha }}
+        run: |
+          run_job() {
+            if ! databricks jobs run-now "$JOB_ID" --timeout 30m --json "$1" -o json > "$RUNNER_TEMP/run.json" </dev/null; then
+              url=$(jq -r '.run_page_url // empty' "$RUNNER_TEMP/run.json" 2>/dev/null || true)
+              echo "::error::run-now failed. ${url:-Job: $DATABRICKS_HOST/jobs/$JOB_ID}"
+              exit 1
+            fi
+            echo "Job run: $(jq -r '.run_page_url // "unknown"' "$RUNNER_TEMP/run.json")"
+            jq -e '.state.result_state == "SUCCESS"' "$RUNNER_TEMP/run.json" > /dev/null
+          }
+          dept="${SKILL_REF%%/*}"
+          skill="${SKILL_REF#*/}"
+          [[ "$JOB_ID" =~ ^[0-9]+$ ]] || { echo "::error::The SKILLHUB_JOB_ID_SWITCH variable must be a numeric Job ID."; exit 1; }
+          params=$(jq -n --arg dept "$dept" --arg skill "$skill" --arg version "$VERSION" \
+            --arg sha "$DISPATCH_SHA" --arg actor "$ACTOR" \
+            '{job_parameters: {action: "switch", dept: $dept, skill: $skill, version: $version,
+              git_sha: $sha, eval_run_id: "", actor: $actor}}')
+          run_job "$params"
