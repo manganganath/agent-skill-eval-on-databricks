@@ -1408,6 +1408,76 @@ def test_publish_passes_the_planned_cells_as_one_comma_separated_job_parameter(t
     assert params["expect_rubric_hash"] == HASH and params["expect_dataset_digest"] == HASH
 
 
+def _switch_task_argv(params: dict[str, str], job_run_id: str) -> list[str]:
+    """The argv the skill-switch Job's wheel task gets for these job parameters, as resources/jobs.yml maps them."""
+    job = yaml.safe_load((ROOT / "resources" / "jobs.yml").read_text())["resources"]["jobs"]["skill_switch"]
+    declared = {p["name"]: p["default"] for p in job["parameters"]}
+    assert set(params) <= set(declared), sorted(set(params) - set(declared))  # only declared parameters
+    values = declared | params
+    argv = []
+    for arg in job["tasks"][0]["python_wheel_task"]["parameters"]:
+        arg = re.sub(r"\{\{job\.parameters\.(\w+)\}\}", lambda m: values[m.group(1)], arg)
+        argv.append(arg.replace("{{job.run_id}}", job_run_id))
+    return argv
+
+
+def test_release_steps_publish_and_switch_what_the_merge_eval_recorded(reg, cfg, monkeypatch, tmp_path):
+    """The whole hand-off, which no unit test of one piece covers: the plan's eval digests, the merge eval's rows
+    under the plan's run key, the release steps' run-now bodies, the Job's task argv from jobs.yml, and job-switch
+    with its publish gate. Then the live skill is the evaluated content."""
+    import sys
+
+    from typer.testing import CliRunner
+
+    from skillhub import cli
+    from skillhub.naming import make_run_key
+    from tests.unit.eval_rows import add_rows, trust_ci_eval
+
+    skill = tmp_path / "candidate" / "skills" / "common" / "alpha"  # the folder eval-merge uploaded
+    (skill / "evals").mkdir(parents=True)
+    (skill / "SKILL.md").write_text("---\nname: alpha\ndescription: Does alpha.\n---\nUse it.\n")
+    cases = [{"id": 1, "prompt": "do it", "should_trigger": True}]
+    (skill / "evals" / "evals.json").write_text(json.dumps({"skill_name": "alpha", "evals": cases}))
+    digests = CliRunner().invoke(
+        cli.app,
+        ["--config", str(ROOT / "config" / "hub.yaml"), "eval-digests", "--skills", "common/alpha"]
+        + ["--skills-root", str(skill.parents[1]), "--fixtures-root", str(ROOT / "fixtures")],
+    )
+    assert digests.exit_code == 0, digests.output
+    [row] = json.loads(digests.stdout)
+    key = make_run_key("merge-abc1234-a1")  # the plan's run_key; the eval got the label
+    for cell in row["cells"]:  # what the merge eval records: one trusted, passing row per planned cell
+        model, mode = cell.split("/")
+        add_rows(reg.sql, cfg, "common", "alpha", key, row["hash"], ((mode, "pass"),), model=model,
+                 rubric=row["rubric_hash"], dataset=row["dataset_digest"])  # fmt: skip
+    trust_ci_eval(monkeypatch)
+    monkeypatch.setenv("SKILLHUB_CI_PRINCIPAL", "ci-app")
+    monkeypatch.setenv("SKILLHUB_CONFIG", str(ROOT / "config" / "hub.yaml"))
+    monkeypatch.setattr(cli, "_job_run_creator", lambda w, run_id: "ci-app")
+    monkeypatch.setattr(cli, "_services", lambda c: (None, reg.uc, reg.sql, reg.journal))
+    saved = tmp_path / "bodies"
+    stub = (
+        'databricks() { while [ $# -gt 0 ]; do if [ "$1" = --json ]; then printf "%s\\n" "$2" >> "$SAVED"; fi; '
+        """shift; done; echo '{"state": {"result_state": "SUCCESS"}}'; }\n"""
+    )
+    env = {"PATH": "/usr/bin:/bin:/usr/local/bin:/opt/homebrew/bin", "RUNNER_TEMP": str(tmp_path)}
+    env |= {"ROWS": digests.stdout.strip(), "JOB_ID": "42", "SKILLS_ROOT": str(skill.parents[1])}
+    env |= {"MERGE_SHA": "f" * 40, "EVAL_RUN_ID": key, "ACTOR": "a", "SAVED": str(saved)}
+    env["DATABRICKS_HOST"] = "https://ws.example"
+    for prefix in ("Publish", "Switch"):
+        saved.unlink(missing_ok=True)
+        proc = subprocess.run(["bash", "-e", "-c", stub + release_step(prefix)["run"]], env=env, text=True)
+        assert proc.returncode == 0
+        [body] = saved.read_text().splitlines()
+        argv = _switch_task_argv(json.loads(body)["job_parameters"], job_run_id="77")
+        monkeypatch.setattr(sys, "argv", ["skillhub-job", *argv])
+        assert cli.job_main() is None, prefix  # a refused publish or switch raises SystemExit
+    state = reg.journal.live_state("common", "alpha")
+    assert (state.action, state.to_version) == ("switched", 1)
+    published = [r for r in reg.journal.history("common", "alpha") if r.action == "published"]
+    assert [(r.content_hash, r.eval_run_id) for r in published] == [(row["hash"], key)]
+
+
 # --- The runner is configurable: a workspace with an IP access list needs a runner on an allowed network ------
 
 RUNNER_DEFAULT = "${{ vars.SKILLHUB_RUNNER || 'ubuntu-latest' }}"
