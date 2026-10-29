@@ -113,12 +113,49 @@ class FakeTree:
         raise NotFound(p)
 
 
+class FakeSchemas:
+    """Stands in for WorkspaceClient.schemas. `listed` is what list() returns; delete() records the name."""
+
+    def __init__(self, listed=()):
+        self.listed = list(listed)
+        self.deleted: list[str] = []
+        self.delete_raises: dict = {}  # full name -> exception the delete raises
+
+    def list(self, catalog_name=None, **_):
+        return list(self.listed)
+
+    def delete(self, full_name, force=False):
+        if full_name in self.delete_raises:
+            raise self.delete_raises[full_name]
+        self.deleted.append(full_name)
+
+
+class FakeGrants:
+    """Stands in for WorkspaceClient.grants. Records each update(securable_type, full_name, changes=...)."""
+
+    def __init__(self):
+        self.updates: list[tuple[str, str, list]] = []
+
+    def update(self, securable_type, full_name, *, changes=None, **_):
+        self.updates.append((securable_type, full_name, list(changes or [])))
+
+
 class FakeWorkspace:
-    def __init__(self, api: FakeApi | None = None, jobs=None, statements=None, workspace=None):
+    def __init__(
+        self,
+        api: FakeApi | None = None,
+        jobs=None,
+        statements=None,
+        workspace=None,
+        schemas=None,
+        grants=None,
+    ):
         self.api_client = api or FakeApi()
         self.jobs = jobs
         self.statement_execution = statements
         self.workspace = workspace
+        self.schemas = schemas or FakeSchemas()
+        self.grants = grants or FakeGrants()
         self.current_user = SimpleNamespace(me=lambda: SimpleNamespace(user_name="ana@example.com"))
 
 

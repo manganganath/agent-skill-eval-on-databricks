@@ -83,6 +83,7 @@ function SummaryVerdicts({ skill }: { skill: SkillDetailT }) {
               : "No results yet"}
         </p>
       )}
+      <p className="hint">Verdicts count the modes that gate a release. The Eval matrix shows every mode, effectiveness included.</p>
     </section>
   );
 }
@@ -124,6 +125,9 @@ export default function SkillDetail() {
           {me.data?.is_reviewer && (
             <Link className="btn" to={`/skills/${encodeURIComponent(s.fqn)}/switch`}>Switch version (reviewers)</Link>
           )}
+          {me.data && !me.data.is_reviewer && (
+            <p className="hint">Only reviewers can switch versions. <Link to="/access">Who can do what</Link></p>
+          )}
         </div>
         <SummaryVerdicts skill={s} />
       </header>
@@ -132,7 +136,7 @@ export default function SkillDetail() {
       <FilesSection files={s.files} />
 
       <div className="panel">
-        <TryPanel fqn={s.fqn} evalAccess={s.eval_access} />
+        <TryPanel target={{ fqn: s.fqn }} evalAccess={s.eval_access} />
       </div>
 
       <VersionHistory fqn={fqn} />

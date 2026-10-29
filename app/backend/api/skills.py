@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import logging
 from collections import Counter
+from collections.abc import Iterable
 from concurrent.futures import Future, ThreadPoolExecutor
 from typing import Annotated
 
@@ -64,7 +65,7 @@ def _start_live_reads(
     )
 
 
-def _live_state(reads: LiveReads) -> LiveState:
+def _live_state(reads: LiveReads, gating_modes: Iterable[str]) -> LiveState:
     """({skill: live version}, {skill: {model_profile: verdict}}, access) from the two reads.
 
     The catalog and the skill page both use this, so they always agree.
@@ -74,7 +75,7 @@ def _live_state(reads: LiveReads) -> LiveState:
     for r in journal:
         by_skill.setdefault(r["skill"], []).append(r)
     live = {k: skill_ref.live_version(v) for k, v in by_skill.items()}
-    return live, skill_ref.live_verdicts(matrix, live), worst_access(access, matrix_access)
+    return live, skill_ref.live_verdicts(matrix, live, gating_modes), worst_access(access, matrix_access)
 
 
 @router.get("/skills", response_model=list[SkillSummary])
@@ -106,7 +107,7 @@ def list_skills(
                 continue
             if reads is None:
                 continue
-            live, verdicts, access = _live_state(reads)
+            live, verdicts, access = _live_state(reads, cfg.defaults.gating_modes)
             for info in infos:
                 name = info.fqn.rsplit(".", 1)[1]
                 if needle and needle not in name.lower() and needle not in (info.description or "").lower():
@@ -262,7 +263,7 @@ def skill_detail(
             raise problem(502, Reason.UC_FAILED) from None
         evals, evals_access = cases_read.result()
         rubric, rubric_access = rubric_read.result()
-        live, verdicts, live_access = _live_state(live_reads)
+        live, verdicts, live_access = _live_state(live_reads, cfg.defaults.gating_modes)
     return SkillDetail(
         fqn=fqn,
         dept=dept,

@@ -1,4 +1,4 @@
-import { NavLink, Outlet, useLocation } from "react-router-dom";
+import { Link, NavLink, Outlet, useLocation } from "react-router-dom";
 import { api } from "../api/client";
 import type { Me } from "../api/types";
 import { useAsync } from "../hooks/useAsync";
@@ -19,12 +19,14 @@ function BrandMark() {
 function SignedInUser() {
   const me = useAsync<Me>(() => api.me(), []);
   if (!me.data) return null;
-  const { user, is_reviewer } = me.data;
+  const { user, is_reviewer, is_author } = me.data;
   return (
     <div className="app-user">
       <span className="avatar" aria-hidden="true">{user.charAt(0).toUpperCase()}</span>
       <span className="app-user-name" title={user}><span className="visually-hidden">Signed in as </span>{user}</span>
-      {is_reviewer && <span className="badge badge-accent">Reviewer</span>}
+      {(is_reviewer || is_author) && (
+        <Link to="/access" className="badge badge-accent" title="Who can do what">{is_reviewer ? "Reviewer" : "Author"}</Link>
+      )}
     </div>
   );
 }
@@ -43,8 +45,10 @@ export function Layout() {
             <NavLink to="/" end className={({ isActive }) => (isActive || inCatalog ? "active" : undefined)}>
               Catalog
             </NavLink>
+            <NavLink to="/dashboard">Dashboard</NavLink>
             <NavLink to="/matrix">Eval matrix</NavLink>
             <NavLink to="/run">Run eval</NavLink>
+            <NavLink to="/access">Access</NavLink>
           </nav>
           <SignedInUser />
         </div>

@@ -68,4 +68,20 @@ describe("api client", () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response("[]", { status: 200 }));
     expect(await api.matrix({})).toEqual({ rows: [], deniedDepartments: [], truncated: false });
   });
+  it("posts a candidate try to the candidate's own path", async () => {
+    const spy = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify([]), { status: 200 }));
+    await api.tryCandidate("pr5_c7ecd3e_a1", "common", "new-skill", { prompt: "p", models: ["m"] });
+    expect(spy.mock.calls[0][0]).toBe("/api/candidates/pr5_c7ecd3e_a1/common/new-skill/try");
+    expect((spy.mock.calls[0][1] as RequestInit).method).toBe("POST");
+  });
+
+  it("reads the dashboard body and the denied departments from the header", async () => {
+    const body = { summary: { skills: 0 }, verdicts: [], tokens: null };
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify(body), { status: 200, headers: { "X-Eval-Denied-Departments": "external, equity_research" } }),
+    );
+    const d = await api.dashboard();
+    expect(d.deniedDepartments).toEqual(["external", "equity_research"]);
+    expect(d.tokens).toBeNull();
+  });
 });

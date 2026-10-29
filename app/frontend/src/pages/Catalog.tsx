@@ -24,12 +24,13 @@ const VERDICT_OPTIONS: { value: VerdictFilter; label: string }[] = [
   { value: "none", label: "No results yet" },
 ];
 
-// Live skills, skills under review (candidates), or both. Only authors and reviewers see candidates.
+// Live skills, skills under review (pull request candidates and drafts), or both. Only authors and reviewers see
+// skills under review, so only they get this filter.
 type StatusFilter = "all" | "live" | "candidate";
 const STATUS_OPTIONS: { value: StatusFilter; label: string }[] = [
   { value: "all", label: "All" },
   { value: "live", label: "Live" },
-  { value: "candidate", label: "Candidates" },
+  { value: "candidate", label: "Under review" },
 ];
 
 function matchesVerdict(s: { verdicts: Record<string, Verdict> }, verdict: VerdictFilter): boolean {
@@ -38,9 +39,18 @@ function matchesVerdict(s: { verdicts: Record<string, Verdict> }, verdict: Verdi
   return verdict === "none" ? values.length === 0 : values.includes(verdict);
 }
 
-function groupByDept(skills: SkillSummary[]): Map<string, SkillSummary[]> {
-  const groups = new Map<string, SkillSummary[]>();
-  for (const s of skills) groups.set(s.dept, [...(groups.get(s.dept) ?? []), s]);
+type DeptGroup = { live: SkillSummary[]; review: CandidateSummary[] };
+
+// One section per department, live skills first and skills under review after them. Departments with live skills
+// keep the order they loaded in; departments with only skills under review follow.
+function groupByDept(skills: SkillSummary[], candidates: CandidateSummary[]): Map<string, DeptGroup> {
+  const groups = new Map<string, DeptGroup>();
+  const group = (dept: string) => {
+    if (!groups.has(dept)) groups.set(dept, { live: [], review: [] });
+    return groups.get(dept) as DeptGroup;
+  };
+  for (const s of skills) group(s.dept).live.push(s);
+  for (const c of candidates) group(c.dept).review.push(c);
   return groups;
 }
 
@@ -96,14 +106,14 @@ export function SkillCard({ s, showDept = true }: { s: SkillSummary; showDept?: 
 }
 
 // The live card's shape, marked as unreleased: the badge names the pull request, and a dashed edge sets it apart.
-export function CandidateCard({ c }: { c: CandidateSummary }) {
+export function CandidateCard({ c, showDept = true }: { c: CandidateSummary; showDept?: boolean }) {
   return (
     <li className="skill-card skill-card-candidate">
       <div className="skill-card-head">
         <h3><Link className="card-link" to={candidatePath(c)}>{c.name}</Link></h3>
         <CandidateBadge kind={c.kind} pr={c.pr_number} />
       </div>
-      <p className="skill-card-dept">{c.dept}</p>
+      {showDept && <p className="skill-card-dept">{c.dept}</p>}
       {c.description && <p className="skill-card-desc">{c.description}</p>}
       <Scorecard
         label={`Latest verdicts for ${c.name}, ${c.kind === "draft" ? "draft" : `in PR #${c.pr_number}`}`}
@@ -153,7 +163,7 @@ export default function Catalog() {
   const visibleCandidates = showCandidates
     ? candidates.filter((c) => matchesText(c, q) && (dept === "" || c.dept === dept) && matchesVerdict(c, verdict))
     : [];
-  const groups = groupByDept(visible);
+  const groups = groupByDept(visible, visibleCandidates);
   const filtering = q !== "" || dept !== "" || verdict !== "";
   const settled = !loading && !error && data !== undefined;
   const candidatesSettled = showCandidates && !cands.loading && !cands.error;
@@ -214,7 +224,9 @@ export default function Catalog() {
           </select>
         </div>
         <p className="result-count" aria-live="polite">
-          {showLive && settled && filtering && !noMatches ? `Showing ${visible.length} of ${total ?? all.length}` : ""}
+          {showLive && settled && filtering && !noMatches
+            ? `Showing ${visible.length + visibleCandidates.length} of ${(total ?? all.length) + (showCandidates ? candidates.length : 0)}`
+            : ""}
         </p>
       </div>
       {showLive && loading && <Loading label="Loading skills" />}
@@ -233,34 +245,22 @@ export default function Catalog() {
           <button type="button" onClick={clearFilters}>Clear filters</button>
         </EmptyState>
       )}
-      {!error && [...groups.entries()].map(([d, items]) => (
+      {showCandidates && cands.loading && <Loading label="Loading skills under review" />}
+      {showCandidates && cands.error ? <ErrorState error={cands.error} onRetry={cands.reload} /> : null}
+      {!error && [...groups.entries()].map(([d, { live, review }]) => (
         <section key={d} aria-labelledby={`dept-${d}`} className="dept-group">
           <div className="group-head">
             <h2 id={`dept-${d}`}>{d}</h2>
-            <span>{plural(items.length, "skill")}</span>
+            <span>
+              {review.length > 0 ? `${live.length} live, ${review.length} under review` : plural(live.length, "skill")}
+            </span>
           </div>
           <ul className="cards">
-            {items.map((s) => <SkillCard key={s.fqn} s={s} showDept={false} />)}
+            {live.map((s) => <SkillCard key={s.fqn} s={s} showDept={false} />)}
+            {review.map((c) => <CandidateCard key={`${c.run_key}/${c.dept}/${c.name}`} c={c} showDept={false} />)}
           </ul>
         </section>
       ))}
-      {/* Live skills first; skills under review after them. */}
-      {showCandidates && cands.loading && <Loading label="Loading candidates" />}
-      {showCandidates && cands.error ? <ErrorState error={cands.error} onRetry={cands.reload} /> : null}
-      {visibleCandidates.length > 0 && (
-        <section aria-labelledby="under-review" className="dept-group review-group">
-          <div className="group-head">
-            <h2 id="under-review">Under review</h2>
-            <span>{plural(visibleCandidates.length, "skill")}</span>
-          </div>
-          <p className="group-note">
-            Not released yet: skills in pull requests, and drafts uploaded here. Open one to see its test cases and results.
-          </p>
-          <ul className="cards">
-            {visibleCandidates.map((c) => <CandidateCard key={`${c.run_key}/${c.dept}/${c.name}`} c={c} />)}
-          </ul>
-        </section>
-      )}
       {status === "candidate" && candidatesSettled && candidates.length === 0 && (
         <EmptyState title="No skills are under review">
           <p>A skill appears here when a pull request adds or changes it and CI uploads it for evaluation.</p>

@@ -2,7 +2,7 @@ import logging
 
 import pytest
 from app_fakes import FakeSqlClient
-from backend import deps, queries, skill_ref
+from backend import candidates, deps, queries, skill_ref
 from backend.data import SqlDenied, SqlError, UserSql
 from conftest import make_cfg
 from databricks.sdk.errors import DatabricksError, NotFound, PermissionDenied
@@ -196,6 +196,30 @@ def test_worst_verdicts_use_live_version_only_and_skip_baseline_and_null():
         _row("b", 1, "m", "with_skill", "fail"),  # no live version
     ]
     assert skill_ref.live_verdicts(rows, {"a": 3, "b": None}) == {"a": {"m": "pass"}}
+
+
+def test_catalog_verdict_counts_only_the_gating_modes():
+    # gating_modes [trigger]: effectiveness is advisory, so its fail does not reach the card. An unknown mode
+    # still counts (fail closed), as in the release gate.
+    rows = [
+        _row("a", 3, "m", "trigger", "pass"),
+        _row("a", 3, "m", "with_skill", "fail"),
+        _row("b", 3, "m", "trigger", "pass"),
+        _row("b", 3, "m", "mystery", "fail"),
+    ]
+    got = skill_ref.live_verdicts(rows, {"a": 3, "b": 3}, ["trigger"])
+    assert got == {"a": {"m": "pass"}, "b": {"m": "fail"}}
+    assert skill_ref.live_verdicts(rows, {"a": 3}, ["trigger", "effectiveness"]) == {"a": {"m": "fail"}}
+
+
+def test_candidate_verdicts_count_only_the_gating_modes():
+    rows = [
+        {"model_profile": "m", "mode": "trigger", "verdict": "pass"},
+        {"model_profile": "m", "mode": "with_skill", "verdict": "fail"},
+        {"model_profile": "m", "mode": "without_skill", "verdict": "fail"},
+    ]
+    assert candidates.verdicts(rows, ["trigger"]) == {"m": "pass"}
+    assert candidates.verdicts(rows) == {"m": "fail"}
 
 
 def test_null_verdict_counts_as_inconclusive():

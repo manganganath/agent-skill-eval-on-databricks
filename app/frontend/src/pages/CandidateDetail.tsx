@@ -7,6 +7,7 @@ import { EmptyState } from "../components/EmptyState";
 import { ErrorState } from "../components/ErrorState";
 import { Loading } from "../components/Loading";
 import { EvalEmpty, FilesSection, RubricSection, SkillMdSection, TestCasesSection } from "../components/SkillParts";
+import { TryPanel } from "../components/TryPanel";
 import { VerdictChip } from "../components/VerdictChip";
 import { useAsync } from "../hooks/useAsync";
 
@@ -74,7 +75,12 @@ export default function CandidateDetail() {
     // Any 404 means "not found, or no access", whatever reason code the server gave.
     const error = candidate.error instanceof ApiError && candidate.error.status === 404
       ? new ApiError(404, "candidate_not_found") : candidate.error;
-    return <ErrorState error={error} onRetry={candidate.reload} />;
+    return (
+      <>
+        <ErrorState error={error} onRetry={candidate.reload} />
+        <p className="hint">Skills under review are visible to authors and reviewers. <Link to="/access">Who can do what</Link></p>
+      </>
+    );
   }
   const s = candidate.data;
   if (!s) return <EmptyState title="No candidate to show" />;
@@ -135,11 +141,15 @@ export default function CandidateDetail() {
                 : s.eval_access === "unavailable" ? "Eval results are temporarily unavailable" : "No results yet"}
             </p>
           )}
+          <p className="hint">Verdicts count the modes that gate a release. The Eval matrix shows every mode, effectiveness included.</p>
         </section>
       </header>
 
       <SkillMdSection source={s.files["SKILL.md"]} />
       <FilesSection files={s.files} />
+      <div className="panel">
+        <TryPanel target={{ runKey: key, dept: s.dept, skill: s.name }} evalAccess={s.eval_access} />
+      </div>
       <Results s={s} />
       <TestCasesSection evals={s.evals} name={s.name} access="ok" note={draft ? FROM_DRAFT : FROM_PR}
         empty="This upload has no evals/evals.json" />

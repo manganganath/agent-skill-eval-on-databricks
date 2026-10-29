@@ -861,7 +861,9 @@ def test_app_grant_plan_reads_skills_and_writes_traces_but_never_manages(cfg):
         for schema in (live_schema(cfg, dept), versions_schema(cfg, dept)):
             assert f"GRANT READ VOLUME ON SCHEMA {schema} TO `app-9`" in stmts
         assert f"GRANT USE SCHEMA ON SCHEMA {evals_schema(cfg, dept)} TO `app-9`" in stmts
-    assert not any("MANAGE" in s or "MODIFY" in s or "CREATE" in s for s in stmts)
+    assert not any("MANAGE" in s or "MODIFY" in s for s in stmts)
+    # Try's private run schemas: the app creates them, and CREATE SCHEMA is the only create it gets.
+    assert [s for s in stmts if "CREATE" in s] == [f"GRANT CREATE SCHEMA ON CATALOG {cfg.catalog} TO `app-9`"]
 
 
 def test_bootstrap_grants_the_app_principal_when_it_is_set(cfg, tmp_path, monkeypatch):

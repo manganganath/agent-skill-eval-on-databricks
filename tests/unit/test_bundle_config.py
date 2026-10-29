@@ -260,17 +260,12 @@ def test_switch_and_nightly_failures_notify_the_alert_destination():
         assert "webhook_notifications" not in jobs[name], name
 
 
-def test_app_and_dashboard_grant_access_to_their_audiences():
-    """Without these, prod users get 'no access', and grants made by hand are reset on every deploy."""
+def test_app_grants_access_to_its_audience():
+    """Without this, prod users get 'no access', and grants made by hand are reset on every deploy."""
     b = load_bundle()
-    hub = yaml.safe_load((ROOT / "config" / "hub.yaml").read_text())
     assert b["variables"]["app_users_group"]["default"] == "users"
-    assert b["variables"]["reviewers_group"]["default"] == hub["roles"]["reviewers"]
     app = b["resources"]["apps"]["skill_hub"]
     assert app["permissions"] == [{"group_name": "${var.app_users_group}", "level": "CAN_USE"}]
-    dashboard = b["resources"]["dashboards"]["skill_eval_dashboard"]
-    assert dashboard["permissions"] == [{"group_name": "${var.reviewers_group}", "level": "CAN_RUN"}]
-    assert dashboard["embed_credentials"] is False  # viewers still read with their own UC permissions
 
 
 def test_every_job_task_passes_only_options_its_cli_command_has():

@@ -52,7 +52,7 @@ from backend.deps import problem
 from skillhub.bundle import BundleError, is_ignored, parse_frontmatter
 from skillhub.config import HubConfig
 from skillhub.lint import MAX_BUNDLE_BYTES, NAME_RE
-from skillhub.naming import candidates_root, drafts_root, live_schema, make_run_key
+from skillhub.naming import SKILL_RE, candidates_root, drafts_root, live_schema, make_run_key
 from skillhub.registry.stage import CANDIDATE_MARKER, CANDIDATE_MAX_AGE_HOURS
 
 log = logging.getLogger("skillhub.app.candidates")
@@ -152,7 +152,9 @@ def owns_run_key(key: str, run_key: str) -> bool:
 
 
 def valid_skill_name(name: object) -> bool:
-    return isinstance(name, str) and bool(NAME_RE.fullmatch(name))
+    # The lint rule, and the Unity Catalog name rule (SKILL_RE, which also bounds the length), so a name that
+    # passes here never fails later in live_fqn.
+    return isinstance(name, str) and bool(NAME_RE.fullmatch(name)) and bool(SKILL_RE.fullmatch(name))
 
 
 # --- who sees candidates ----------------------------------------------------------------------------------
@@ -481,11 +483,15 @@ def latest_rows(rows: Iterable[Mapping[str, object]], key: str) -> list[dict]:
     return list(cells.values())
 
 
-def verdicts(latest: Iterable[Mapping[str, object]]) -> dict[str, str]:
-    """{model profile: worst verdict across modes} for one skill. The baseline (without_skill) never counts."""
+def verdicts(
+    latest: Iterable[Mapping[str, object]], gating_modes: Iterable[str] = skill_ref.REQUEST_MODES
+) -> dict[str, str]:
+    """{model profile: worst verdict across the gating modes} for one skill, by the release gate's rule
+    (skill_ref.counts_toward_verdict). The baseline (without_skill) never counts."""
+    gating_modes = tuple(gating_modes)
     by_model: dict[str, list[str | None]] = {}
     for r in latest:
-        if r.get("mode") == skill_ref.BASELINE_MODE:
+        if not skill_ref.counts_toward_verdict(r.get("mode"), gating_modes):
             continue
         by_model.setdefault(str(r.get("model_profile")), []).append(r.get("verdict"))  # type: ignore[arg-type]
     return {m: skill_ref.worst_verdict(v) for m, v in sorted(by_model.items())}

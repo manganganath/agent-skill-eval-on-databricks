@@ -108,7 +108,7 @@ def list_candidates(
                 dept=dept,
                 name=name,
                 content_hash=candidates.content_hash(latest),
-                verdicts=candidates.verdicts(latest),
+                verdicts=candidates.verdicts(latest, cfg.defaults.gating_modes),
                 eval_access=access,
                 **fields,
             )
@@ -182,7 +182,7 @@ def candidate_detail(
         name=skill,
         description=candidates.description(files["SKILL.md"]),
         content_hash=content_hash(files),  # evals/ is not part of the content, as in the eval
-        verdicts=candidates.verdicts(latest),
+        verdicts=candidates.verdicts(latest, cfg.defaults.gating_modes),
         files=decode_text(files),
         evals=_parse(EvalFile, files.get("evals/evals.json"), "evals.json"),
         rubric=_parse(Rubric, files.get("evals/rubric.json"), "rubric.json"),

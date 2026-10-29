@@ -1,6 +1,6 @@
 """Verdicts, uplift, trigger metrics and child-run logging.
 
-The CI gate, PR comment, Skill Hub and dashboards read these values, and `sync` copies them unchanged.
+The CI gate, PR comment and Skill Hub read these values, and `sync` copies them unchanged.
 Three kinds of result are kept apart on purpose:
 - a fail: the judges answered and the case did not pass
 - an error: no usable answer (judge or infrastructure failure, `Feedback(error=...)`, a criterion no judge answered)

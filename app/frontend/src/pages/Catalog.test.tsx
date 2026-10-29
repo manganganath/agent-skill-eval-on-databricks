@@ -195,33 +195,43 @@ describe("Catalog", () => {
   });
 });
 
-describe("Catalog candidates", () => {
-  it("lists live skills first and skills under review after them", async () => {
+describe("Catalog skills under review", () => {
+  it("lists skills under review in their department, after the live skills, with no separate section", async () => {
     vi.mocked(api.me).mockResolvedValue(author);
     vi.mocked(api.skills).mockResolvedValue(skills);
     vi.mocked(api.candidates).mockResolvedValue([candidate]);
     renderCatalog();
-    const review = await screen.findByRole("region", { name: /under review/i });
-    const live = screen.getByRole("region", { name: "common" });
-    // DOCUMENT_POSITION_FOLLOWING: the review section comes after the live section in the page.
+    const common = await screen.findByRole("region", { name: "common" });
+    const review = await within(common).findByRole("link", { name: "new-skill" });
+    const live = within(common).getByRole("link", { name: "audit-xls" });
+    // DOCUMENT_POSITION_FOLLOWING: the candidate card comes after the live card.
     expect(live.compareDocumentPosition(review) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(screen.queryByRole("region", { name: /under review/i })).toBeNull();
+    expect(within(common).getByText("1 live, 1 under review")).toBeTruthy();
   });
 
-  it("lists candidates for an author, badged with their pull request, in the live card shape", async () => {
+  it("badges a candidate with its pull request, in the live card shape", async () => {
     vi.mocked(api.me).mockResolvedValue(author);
     vi.mocked(api.skills).mockResolvedValue(skills);
     vi.mocked(api.candidates).mockResolvedValue([candidate]);
     renderCatalog();
-    const review = await screen.findByRole("region", { name: /under review/i });
-    const link = within(review).getByRole("link", { name: "new-skill" });
+    const common = await screen.findByRole("region", { name: "common" });
+    const link = await within(common).findByRole("link", { name: "new-skill" });
     expect(link).toHaveAttribute("href", "/candidates/pr5_c7ecd3e_a1/common/new-skill");
     const card = link.closest(".skill-card") as HTMLElement;
     expect(within(card).getByText("Candidate · PR #5")).toBeTruthy();
-    expect(within(card).getByText("common")).toBeTruthy(); // the section spans departments
+    expect(within(card).queryByText("common")).toBeNull(); // the section heading names the department
     expect(within(card).getByText("Pass")).toBeTruthy();
     expect(screen.getByText("1 under review")).toBeTruthy();
-    // The live catalog is still there.
-    expect(screen.getByRole("region", { name: "common" })).toBeTruthy();
+  });
+
+  it("gives a department that has only skills under review its own section", async () => {
+    vi.mocked(api.me).mockResolvedValue(author);
+    vi.mocked(api.skills).mockResolvedValue(skills);
+    vi.mocked(api.candidates).mockResolvedValue([{ ...candidate, dept: "private_equity" }]);
+    renderCatalog();
+    const pe = await screen.findByRole("region", { name: "private_equity" });
+    expect(within(pe).getByRole("link", { name: "new-skill" })).toBeTruthy();
   });
 
   it("does not ask for candidates for a reader, and offers no status filter", async () => {
@@ -230,33 +240,34 @@ describe("Catalog candidates", () => {
     expect(await screen.findByRole("region", { name: "common" })).toBeTruthy();
     expect(api.candidates).not.toHaveBeenCalled();
     expect(screen.queryByRole("combobox", { name: /status/i })).toBeNull();
-    expect(screen.queryByRole("region", { name: /under review/i })).toBeNull();
+    expect(screen.queryByText("Candidate · PR #5")).toBeNull();
   });
 
-  it("filters by status: live skills only, or candidates only", async () => {
+  it("filters by status: live skills only, or skills under review only", async () => {
     vi.mocked(api.me).mockResolvedValue(author);
     vi.mocked(api.skills).mockResolvedValue(skills);
     vi.mocked(api.candidates).mockResolvedValue([candidate]);
     renderCatalog();
     const status = await screen.findByRole("combobox", { name: /status/i });
-    await screen.findByRole("region", { name: /under review/i });
-    expect(within(status).getAllByRole("option").map((o) => o.textContent)).toEqual(["All", "Live", "Candidates"]);
+    await screen.findByRole("link", { name: "new-skill" });
+    expect(within(status).getAllByRole("option").map((o) => o.textContent)).toEqual(["All", "Live", "Under review"]);
     fireEvent.change(status, { target: { value: "live" } });
-    expect(screen.queryByRole("region", { name: /under review/i })).toBeNull();
-    expect(screen.getByRole("region", { name: "common" })).toBeTruthy();
+    expect(screen.queryByRole("link", { name: "new-skill" })).toBeNull();
+    expect(screen.getByRole("link", { name: "audit-xls" })).toBeTruthy();
     fireEvent.change(status, { target: { value: "candidate" } });
-    expect(screen.getByRole("region", { name: /under review/i })).toBeTruthy();
-    expect(screen.queryByRole("region", { name: "common" })).toBeNull();
+    expect(within(screen.getByRole("region", { name: "common" })).getByRole("link", { name: "new-skill" })).toBeTruthy();
+    expect(screen.queryByRole("link", { name: "audit-xls" })).toBeNull();
+    expect(screen.queryByRole("region", { name: "equity_research" })).toBeNull();
   });
 
-  it("applies the search and department filters to candidates too", async () => {
+  it("applies the search and department filters to skills under review too", async () => {
     vi.mocked(api.me).mockResolvedValue(author);
     vi.mocked(api.skills).mockResolvedValue(more);
     vi.mocked(api.candidates).mockResolvedValue([candidate]);
     renderCatalog();
-    await screen.findByRole("region", { name: /under review/i });
+    await screen.findByRole("link", { name: "new-skill" });
     fireEvent.change(screen.getByRole("combobox", { name: /department/i }), { target: { value: "equity_research" } });
-    expect(screen.queryByRole("region", { name: /under review/i })).toBeNull();
+    expect(screen.queryByRole("link", { name: "new-skill" })).toBeNull();
     fireEvent.change(screen.getByRole("combobox", { name: /department/i }), { target: { value: "" } });
     fireEvent.change(screen.getByRole("searchbox", { name: /search skills/i }), { target: { value: "quarterly" } });
     vi.mocked(api.skills).mockResolvedValue([]);
@@ -264,7 +275,7 @@ describe("Catalog candidates", () => {
     expect(screen.queryByRole("heading", { name: /no skills match/i })).toBeNull();
   });
 
-  it("explains an empty candidates view", async () => {
+  it("explains an empty under-review view", async () => {
     vi.mocked(api.me).mockResolvedValue(author);
     vi.mocked(api.skills).mockResolvedValue(skills);
     renderCatalog();
@@ -293,8 +304,8 @@ describe("Catalog drafts", () => {
     vi.mocked(api.skills).mockResolvedValue(skills);
     vi.mocked(api.candidates).mockResolvedValue([draft]);
     renderCatalog();
-    const review = await screen.findByRole("region", { name: /under review/i });
-    const link = within(review).getByRole("link", { name: "draft-skill" });
+    const common = await screen.findByRole("region", { name: "common" });
+    const link = await within(common).findByRole("link", { name: "draft-skill" });
     expect(link).toHaveAttribute("href", "/candidates/draft_6720a1b2c3d4e5f6a7b8c9d0/common/draft-skill");
     expect(within(link.closest(".skill-card") as HTMLElement).getByText("Draft")).toBeTruthy();
   });

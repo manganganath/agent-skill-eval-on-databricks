@@ -4,11 +4,20 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
+from databricks.sdk.errors import NotFound
 from typer.testing import CliRunner
 
 from skillhub import cli
 from skillhub.lint import LintRefused
-from skillhub.registry.stage import StageError, cleanup_stale, drop_run_schemas, stage
+from skillhub.registry.stage import (
+    StageError,
+    cleanup_stale,
+    cleanup_try_schemas,
+    drop_run_schema,
+    drop_run_schemas,
+    stage,
+    stage_candidate,
+)
 from skillhub.registry.versions import publish
 
 CONFIG = Path(__file__).resolve().parents[2] / "config" / "hub.yaml"
@@ -535,3 +544,85 @@ def test_cleanup_removes_stale_drafts_by_the_same_age_rule(cfg):
 def test_cleanup_without_a_drafts_folder_still_cleans_the_candidates(cfg):
     ws = _TwoRoots({ROOT: {"pr1_old": str(_ago_ms(200) // 1000)}})
     assert cleanup_stale(cfg, _cleanup_w(ws), 24) == [f"{ROOT}/pr1_old"]
+
+
+# --- Try: a candidate staged into its own run schema ---------------------------------------------------------------
+
+TRY_SCHEMA = "skill_hub.run_try_0123456789_common"
+
+
+def test_stage_candidate_stages_the_upload_without_its_evals(reg):
+    reg.uc.ensure_schema(TRY_SCHEMA)
+    files = {"SKILL.md": b"---\nname: new-skill\ndescription: d\n---\nbody\n", "evals/evals.json": b"{}"}
+    staged = stage_candidate(reg.cfg, reg.uc, TRY_SCHEMA, "new-skill", "common", files)
+    assert (staged.staged_fqn, staged.production_fqn, staged.origin) == (
+        f"{TRY_SCHEMA}.new-skill",
+        "skill_hub.common.new-skill",
+        "candidate",
+    )
+    assert sorted(reg.uc.read_files(staged.staged_fqn)) == ["SKILL.md"]
+
+
+def test_stage_candidate_checks_before_each_upload_and_stops_when_the_check_raises(reg):
+    reg.uc.ensure_schema(TRY_SCHEMA)
+    files = {"SKILL.md": b"---\nname: new-skill\ndescription: d\n---\nbody\n", "a.md": b"a", "b.md": b"b"}
+    calls = []
+
+    def check():
+        calls.append(1)
+        if len(calls) == 2:
+            raise TimeoutError("the request timed out")
+
+    with pytest.raises(TimeoutError):
+        stage_candidate(reg.cfg, reg.uc, TRY_SCHEMA, "new-skill", "common", files, check=check)
+    assert len(reg.uc.read_files(f"{TRY_SCHEMA}.new-skill")) == 1  # one upload, then the check stopped it
+
+
+def test_stage_candidate_refuses_a_schema_that_is_not_a_run_schema(reg):
+    files = {"SKILL.md": b"x"}
+    with pytest.raises(StageError):
+        stage_candidate(reg.cfg, reg.uc, "skill_hub.common", "new-skill", "common", files)
+    with pytest.raises(StageError):
+        stage_candidate(
+            reg.cfg, reg.uc, "other_catalog.run_try_0123456789_common", "new-skill", "common", files
+        )
+    assert reg.uc.schemas == set()
+
+
+def test_drop_run_schema_drops_a_run_schema_and_refuses_anything_else(cfg):
+    w = MagicMock()
+    drop_run_schema(cfg, w, TRY_SCHEMA)
+    w.schemas.delete.assert_called_once_with(TRY_SCHEMA, force=True)
+    with pytest.raises(StageError):
+        drop_run_schema(cfg, w, "skill_hub.common")
+    with pytest.raises(StageError):
+        drop_run_schema(cfg, w, "skill_hub.dept_equity_research")
+    assert w.schemas.delete.call_count == 1
+
+
+def test_cleanup_try_schemas_drops_only_own_try_schemas_older_than_an_hour(cfg):
+    w = _cleanup_w(
+        _Workspace([]),
+        [
+            SimpleNamespace(name="run_try_aaaaaaaaaa_common", created_at=_ago_ms(2), owner=ME),
+            SimpleNamespace(name="run_try_bbbbbbbbbb_common", created_at=_ago_ms(0.5), owner=ME),  # too young
+            SimpleNamespace(name="run_try_cccccccccc_common", created_at=_ago_ms(2), owner="someone-else"),
+            SimpleNamespace(name="run_pr1_ab_common", created_at=_ago_ms(2), owner=ME),  # not a try run
+            SimpleNamespace(name="run_try_dddddddddd_common\n", created_at=_ago_ms(2), owner=ME),
+            SimpleNamespace(name="common", created_at=_ago_ms(2), owner=ME),
+            SimpleNamespace(name="run_try_eeeeeeeeee_common", created_at=None, owner=ME),  # no age: kept
+        ],
+    )
+    assert cleanup_try_schemas(cfg, w) == ["skill_hub.run_try_aaaaaaaaaa_common"]
+    w.schemas.delete.assert_called_once_with("skill_hub.run_try_aaaaaaaaaa_common", force=True)
+
+
+def test_cleanup_try_schemas_skips_a_schema_that_is_gone_or_refused(cfg):
+    from databricks.sdk.errors import PermissionDenied
+
+    w = _cleanup_w(
+        _Workspace([]),
+        [SimpleNamespace(name=f"run_try_{k}_common", created_at=_ago_ms(2), owner=ME) for k in "abc"],
+    )
+    w.schemas.delete.side_effect = [NotFound("gone"), PermissionDenied("no"), None]
+    assert cleanup_try_schemas(cfg, w) == ["skill_hub.run_try_c_common"]

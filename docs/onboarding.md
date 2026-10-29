@@ -5,10 +5,30 @@ Authors write skills, reviewers mark cases as reviewed and switch versions, and 
 | Role | Group | Can do |
 |---|---|---|
 | Author | `skillhub-authors` | Open pull requests with skills and cases. Upload drafts, and see and evaluate candidates (skills under review) in the Skill Hub, in the departments they can read |
-| Reviewer | `skillhub-reviewers` | Mark generated cases and rubrics as reviewed, switch versions in the Skill Hub, upload drafts, see and evaluate the candidates of every department, and read the cross-department results and the dashboard |
+| Reviewer | `skillhub-reviewers` | Mark generated cases and rubrics as reviewed, switch versions in the Skill Hub, upload drafts, see and evaluate the candidates of every department, and read the cross-department results and the Dashboard tab |
 | Reader | The department group named in `config/hub.yaml` (for example `dept-equity-research`), or `skillhub-users` | Load skills through agents and browse them in the Skill Hub |
 
 The customer's administrator grants group membership.
+
+## Roles in the Skill Hub
+
+The Skill Hub shows the same table on its Access page, with your own roles marked. Each role adds to the one before it.
+
+| Action | Everyone signed in | Authors | Reviewers |
+|---|---|---|---|
+| Browse live skills | Own departments | Own departments | All departments |
+| Try a live skill | Yes | Yes | Yes |
+| Run an eval on live skills | Yes | Yes | Yes |
+| See skills under review | No | Own departments | All departments |
+| Upload a draft | No | Yes | Yes |
+| Try a skill under review | No | Own departments | All departments |
+| Run an eval on a candidate or draft | No | Yes | Yes |
+| Switch the live version | No | No | Yes |
+| Add or edit a skill | No | Through a pull request | Through a pull request |
+| Approve a release | In GitHub: the required reviewers of the `production` environment, not a Skill Hub role | | |
+| Publish a version | No one: CI publishes after approval | | |
+
+Nobody publishes a version from the app, and skills are not edited in it. To change a skill, open a pull request that changes `skills/<department>/<skill>/`. The pull request's evaluation runs by itself, and a failed trigger eval blocks the merge. After the merge, the required reviewers of the GitHub `production` environment approve the release, and CI publishes the new version and makes it live.
 
 ## Add a skill
 
@@ -31,11 +51,13 @@ A new or changed skill can be evaluated before it is released: in its pull reque
 
 **In the Skill Hub.** Authors and reviewers see the same upload as a candidate:
 
-1. In the catalog, the **Under review** section lists each skill that a pull request adds or changes, with a **Candidate · PR #N** badge. Use the **Status** filter to show live skills, candidates, or both. Only the newest upload of each pull request is listed.
+1. In the catalog, each skill that a pull request adds or changes is listed in its department, after the live skills, with a **Candidate · PR #N** badge. Set the **Status** filter to **Under review** to see only these, or to **Live** to hide them. Only the newest upload of each pull request is listed.
 2. Open a candidate. The banner says **Not released. Under review in PR #N.** The page shows `SKILL.md` and the other files, the test cases and rubric from the pull request's `evals/` folder, and the eval results of this upload.
 3. Select **Run eval**. The run page opens with the candidate selected. Choose models and modes, then start the evaluation. One run evaluates live skills, or candidates from one upload, not both, and a candidate run cannot pin versions.
 
 A Skill Hub run gets its own run key (`<candidate run key>_h<8 hex digits>`) and `trigger_source` `manual`, so it never changes the pull request's gate. Its results appear on the candidate's page next to the pull request's own eval. To change the skill or its cases, push to the pull request; the next upload replaces the candidate.
+
+**Try it.** On a candidate's or draft's page, **Try this skill** runs the upload as you, in place of the live version, and nobody else can load it.
 
 Who sees a candidate: reviewers see every department. An author sees a candidate only in a department whose live skills they can read, and always sees their own drafts. Everyone else sees no candidates. The nightly cleanup removes a candidate or draft folder 7 days after its upload.
 

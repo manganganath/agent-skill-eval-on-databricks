@@ -8,6 +8,11 @@ const LABEL: Record<Verdict, { text: string; icon: string }> = {
   advisory: { text: "Advisory", icon: "i" },
 };
 
+// The word for a verdict, as the chip shows it. Charts use it for their legends.
+export function verdictText(verdict: Verdict): string {
+  return LABEL[verdict].text;
+}
+
 // Colour is never the only signal: the text and icon carry the verdict.
 export function VerdictChip({ verdict }: { verdict: Verdict | undefined }) {
   if (!verdict) return <span className="chip chip-none">No result</span>;

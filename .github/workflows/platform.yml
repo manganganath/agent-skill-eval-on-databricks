@@ -98,7 +98,7 @@ jobs:
           BUNDLE_VAR_workspace_root: ${{ vars.SKILLHUB_WORKSPACE_ROOT }}
           BUNDLE_VAR_alert_destination_id: ${{ vars.SKILLHUB_ALERT_DESTINATION_ID }}
         run: |
-          # The Jobs, the app and the dashboard use the catalog CI reads; never the bundle default.
+          # The Jobs and the app use the catalog CI reads; never the bundle default.
           [ -n "$BUNDLE_VAR_catalog" ] || { echo "::error::Set the SKILLHUB_CATALOG variable in the production environment."; exit 1; }
           # The Jobs and the app use the folder the workflows upload candidates to; never the bundle default.
           [ -n "$BUNDLE_VAR_workspace_root" ] || { echo "::error::Set the SKILLHUB_WORKSPACE_ROOT variable in the production environment (scripts/configure_github.sh)."; exit 1; }
@@ -117,7 +117,7 @@ jobs:
           BUNDLE_VAR_workspace_root: ${{ vars.SKILLHUB_WORKSPACE_ROOT }}
           BUNDLE_VAR_alert_destination_id: ${{ vars.SKILLHUB_ALERT_DESTINATION_ID }}
         run: |
-          # The Jobs, the app and the dashboard use the catalog CI reads; never the bundle default.
+          # The Jobs and the app use the catalog CI reads; never the bundle default.
           [ -n "$BUNDLE_VAR_catalog" ] || { echo "::error::Set the SKILLHUB_CATALOG variable in the production environment."; exit 1; }
           # The Jobs and the app use the folder the workflows upload candidates to; never the bundle default.
           [ -n "$BUNDLE_VAR_workspace_root" ] || { echo "::error::Set the SKILLHUB_WORKSPACE_ROOT variable in the production environment (scripts/configure_github.sh)."; exit 1; }
@@ -190,7 +190,7 @@ jobs:
           BUNDLE_VAR_workspace_root: ${{ vars.SKILLHUB_WORKSPACE_ROOT }}
           BUNDLE_VAR_alert_destination_id: ${{ vars.SKILLHUB_ALERT_DESTINATION_ID }}
         run: |
-          # The Jobs, the app and the dashboard use the catalog CI reads; never the bundle default.
+          # The Jobs and the app use the catalog CI reads; never the bundle default.
           [ -n "$BUNDLE_VAR_catalog" ] || { echo "::error::Set the SKILLHUB_CATALOG variable in the production environment."; exit 1; }
           # The Jobs and the app use the folder the workflows upload candidates to; never the bundle default.
           [ -n "$BUNDLE_VAR_workspace_root" ] || { echo "::error::Set the SKILLHUB_WORKSPACE_ROOT variable in the production environment (scripts/configure_github.sh)."; exit 1; }
@@ -213,7 +213,7 @@ jobs:
           BUNDLE_VAR_alert_destination_id: ${{ vars.SKILLHUB_ALERT_DESTINATION_ID }}
           SWITCH_JOB_ID: ${{ vars.SKILLHUB_JOB_ID_SWITCH }}
         run: |
-          # The Jobs, the app and the dashboard use the catalog CI reads; never the bundle default.
+          # The Jobs and the app use the catalog CI reads; never the bundle default.
           [ -n "$BUNDLE_VAR_catalog" ] || { echo "::error::Set the SKILLHUB_CATALOG variable in the production environment."; exit 1; }
           # The Jobs and the app use the folder the workflows upload candidates to; never the bundle default.
           [ -n "$BUNDLE_VAR_workspace_root" ] || { echo "::error::Set the SKILLHUB_WORKSPACE_ROOT variable in the production environment (scripts/configure_github.sh)."; exit 1; }
