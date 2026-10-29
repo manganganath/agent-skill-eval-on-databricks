@@ -36,7 +36,8 @@ function groupByDept(skills: SkillSummary[]): Map<string, SkillSummary[]> {
 
 const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;
 
-function SkillCard({ s }: { s: SkillSummary }) {
+// `showDept` is off inside a department section, whose heading already names the department.
+export function SkillCard({ s, showDept = true }: { s: SkillSummary; showDept?: boolean }) {
   const entries = Object.entries(s.verdicts);
   return (
     <li className="skill-card">
@@ -51,7 +52,7 @@ function SkillCard({ s }: { s: SkillSummary }) {
           </span>
         )}
       </div>
-      <p className="skill-card-dept">{s.dept}</p>
+      {showDept && <p className="skill-card-dept">{s.dept}</p>}
       {s.description && <p className="skill-card-desc">{s.description}</p>}
       {s.eval_access !== "ok" && (
         <p className="card-note" role="note">
@@ -169,7 +170,7 @@ export default function Catalog() {
             <span>{plural(items.length, "skill")}</span>
           </div>
           <ul className="cards">
-            {items.map((s) => <SkillCard key={s.fqn} s={s} />)}
+            {items.map((s) => <SkillCard key={s.fqn} s={s} showDept={false} />)}
           </ul>
         </section>
       ))}
