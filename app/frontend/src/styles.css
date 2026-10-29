@@ -296,8 +296,6 @@ fieldset { border: 0; margin: 0; padding: 0; min-width: 0; }
 }
 .card-note { margin: 0; font-size: 0.8125rem; color: var(--slate); }
 .count-pill-review { background: var(--review-tint); color: var(--review); }
-.group-note { margin: -0.4rem 0 0.75rem; font-size: 0.875rem; color: var(--slate); max-width: 70ch; }
-.review-group .group-head h2 { color: var(--review); }
 .skill-card-candidate { border: 1px dashed var(--review-line); }
 .skill-card-candidate:hover { border-color: var(--review); }
 .skill-card-candidate .badge-review { flex: none; }

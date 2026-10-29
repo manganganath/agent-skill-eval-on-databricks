@@ -31,7 +31,7 @@ A new or changed skill can be evaluated before it is released: in its pull reque
 
 **In the Skill Hub.** Authors and reviewers see the same upload as a candidate:
 
-1. In the catalog, the **Under review** section lists each skill that a pull request adds or changes, with a **Candidate · PR #N** badge. Use the **Status** filter to show live skills, candidates, or both. Only the newest upload of each pull request is listed.
+1. In the catalog, each skill that a pull request adds or changes is listed in its department, after the live skills, with a **Candidate · PR #N** badge. Set the **Status** filter to **Under review** to see only these, or to **Live** to hide them. Only the newest upload of each pull request is listed.
 2. Open a candidate. The banner says **Not released. Under review in PR #N.** The page shows `SKILL.md` and the other files, the test cases and rubric from the pull request's `evals/` folder, and the eval results of this upload.
 3. Select **Run eval**. The run page opens with the candidate selected. Choose models and modes, then start the evaluation. One run evaluates live skills, or candidates from one upload, not both, and a candidate run cannot pin versions.
 
