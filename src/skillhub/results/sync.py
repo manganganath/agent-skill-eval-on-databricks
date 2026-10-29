@@ -369,6 +369,8 @@ def _value(a) -> str | None:
         v = v == "pass"  # the Review App stores pass/fail; judges store booleans
     if isinstance(v, bool):
         return "true" if v else "false"
+    if isinstance(v, (list, dict)):
+        return json.dumps(v, default=str)  # JSON, so readers can parse it; str() would give a Python repr
     return None if v is None else str(v)
 
 

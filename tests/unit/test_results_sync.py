@@ -776,3 +776,12 @@ def test_none_text_invoked_skill_falls_back_to_tool_span():
     )
     row = sync_mod.case_rows("r1", [t])[0]
     assert row["invoked_skill"] == "model-update" and row["expected_skill"] == "x"
+
+
+def test_list_and_dict_assessment_values_are_stored_as_json():
+    """Live check: list values were stored as Python repr (single quotes), which the cases table showed."""
+    a = NS(value=["c1", "c2"], source=None)
+    b = NS(value={"found": 2}, source=None)
+    assert sync_mod._value(a) == '["c1", "c2"]'
+    assert sync_mod._value(b) == '{"found": 2}'
+    assert sync_mod._value(NS(value=0.5, source=None)) == "0.5"
