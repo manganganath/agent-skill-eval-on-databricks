@@ -45,6 +45,25 @@ describe("api client", () => {
     }
   });
 
+  it("shares one /me request between callers, and asks again after a failure", async () => {
+    vi.resetModules(); // a fresh client, so no earlier test's answer is kept
+    const fresh = (await import("./client")).api;
+    const fetchMe = vi.spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(new Response("oops", { status: 502 }))
+      .mockImplementation(async () =>
+        new Response(JSON.stringify({ user: "ana@example.com", groups: [], is_reviewer: false }), { status: 200 }));
+    const [a, b] = await Promise.allSettled([fresh.me(), fresh.me()]);
+    expect(a.status).toBe("rejected");
+    expect(b.status).toBe("rejected");
+    expect(fetchMe).toHaveBeenCalledTimes(1);
+    const [c, d] = await Promise.all([fresh.me(), fresh.me()]);
+    expect(c.user).toBe("ana@example.com");
+    expect(d).toBe(c);
+    expect(await fresh.me()).toBe(c);
+    expect(fetchMe).toHaveBeenCalledTimes(2);
+    expect(fetchMe.mock.calls.every(([url]) => url === "/api/me")).toBe(true);
+  });
+
   it("reports no denied departments when the header is absent", async () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response("[]", { status: 200 }));
     expect(await api.matrix({})).toEqual({ rows: [], deniedDepartments: [], truncated: false });
