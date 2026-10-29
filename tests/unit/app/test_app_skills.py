@@ -307,10 +307,10 @@ def test_catalog_reads_the_departments_side_by_side(make_client, uc):
 
 def test_detail_reads_the_files_and_eval_tables_side_by_side(make_client, uc):
     sql = FakeUserSql()
-    uc.gate = sql.gate = together = Overlap(3)  # the files, the cases and the rubric at once
+    uc.gate = sql.gate = together = Overlap(5)  # the files, cases, rubric, journal and verdicts at once
     c = make_client(user_w=user_w(), app_w=app_w(), cfg=make_cfg(), sql=sql)
     assert c.get("/api/skills/skill_hub.common.audit-xls").status_code == 200
-    assert not together.broken and len(sql.calls) == 2
+    assert not together.broken and len(sql.calls) == 4
 
 
 def test_detail_without_the_skills_scope_reads_files_as_the_app_after_the_fallback(make_client, uc):
@@ -342,7 +342,56 @@ def test_detail_returns_text_files_only(make_client, uc):
     assert body["files"] == {"SKILL.md": "# Audit"}  # logo.png is not UTF-8, and evals/ is always hidden
     assert body["dept"] == "common" and body["name"] == "audit-xls"
     assert body["evals"] is None and body["rubric"] is None  # no dataset rows and no rubric row
+    assert body["live_version"] is None and body["verdicts"] == {}  # never switched live
     assert body["eval_access"] == "ok"
+
+
+AUDIT_JOURNAL = {
+    "common": [
+        {
+            "dept": "common",
+            "skill": "audit-xls",
+            "action": "switched",
+            "version": None,
+            "to_version": 2,
+            "from_version": None,
+            "ts": datetime(2026, 10, 28),
+        }
+    ]
+}
+AUDIT_MATRIX = [
+    {"skill": "audit-xls", "skill_version": 2, "model_profile": "claude-sonnet", "mode": m, "verdict": v}
+    for m, v in (("trigger", "pass"), ("with_skill", "warn"), ("without_skill", "fail"))
+] + [{"skill": "audit-xls", "skill_version": 1, "model_profile": "gpt", "mode": "trigger", "verdict": "fail"}]
+
+
+def test_detail_has_the_live_version_and_verdicts_the_catalog_shows(make_client, uc):
+    sql = FakeUserSql(journal=AUDIT_JOURNAL, matrix=AUDIT_MATRIX)
+    c = make_client(user_w=user_w(), app_w=app_w(), cfg=make_cfg(), sql=sql)
+    detail = c.get("/api/skills/skill_hub.common.audit-xls").json()
+    # The skill page reads only this skill's journal and verdict rows.
+    narrowed = [p for st, p in sql.calls if "skill_versions" in st or "eval_matrix" in st]
+    assert narrowed == [{"dept": "common", "skill": "audit-xls"}, {"skill": "audit-xls"}]
+    # The baseline row and the older version's row do not count.
+    assert (detail["live_version"], detail["verdicts"]) == (2, {"claude-sonnet": "warn"})
+    listed = next(r for r in c.get("/api/skills").json() if r["fqn"] == detail["fqn"])
+    assert (listed["live_version"], listed["verdicts"]) == (2, {"claude-sonnet": "warn"})
+
+
+def test_detail_eval_access_also_covers_the_journal_and_verdict_reads(make_client, uc):
+    from backend.data import SqlError
+
+    class JournalDown(FakeUserSql):
+        def query(self, statement, params=None):
+            if "skill_versions" in statement:
+                raise SqlError("x")
+            return super().query(statement, params)
+
+    sql = JournalDown(matrix=AUDIT_MATRIX)
+    c = make_client(user_w=user_w(), app_w=app_w(), cfg=make_cfg(), sql=sql)
+    body = c.get("/api/skills/skill_hub.common.audit-xls").json()
+    assert body["eval_access"] == "unavailable"
+    assert body["live_version"] is None and body["verdicts"] == {} and "SKILL.md" in body["files"]
 
 
 def test_detail_unreadable_skill_is_404(make_client, uc):

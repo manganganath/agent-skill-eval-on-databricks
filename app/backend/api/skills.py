@@ -54,16 +54,21 @@ LiveReads = tuple[Future, Future]
 LiveState = tuple[dict[str, int | None], dict[str, dict[str, str]], EvalAccess]
 
 
-def _start_live_reads(pool: ThreadPoolExecutor, sql: UserSql, cfg: HubConfig, dept: str) -> LiveReads:
-    """Start the department's journal and verdict reads, side by side."""
+def _start_live_reads(
+    pool: ThreadPoolExecutor, sql: UserSql, cfg: HubConfig, dept: str, skill: str | None = None
+) -> LiveReads:
+    """Start the journal and verdict reads for the department (or one skill in it), side by side."""
     return (
-        pool.submit(_read_dept, sql, queries.journal_sql(cfg, dept), dept),
-        pool.submit(_read_dept, sql, queries.catalog_verdicts_sql(cfg, dept), dept),
+        pool.submit(_read_dept, sql, queries.journal_sql(cfg, dept, skill), dept),
+        pool.submit(_read_dept, sql, queries.catalog_verdicts_sql(cfg, dept, skill), dept),
     )
 
 
 def _live_state(reads: LiveReads) -> LiveState:
-    """({skill: live version}, {skill: {model_profile: verdict}}, access) from the two reads."""
+    """({skill: live version}, {skill: {model_profile: verdict}}, access) from the two reads.
+
+    The catalog and the skill page both use this, so they always agree.
+    """
     (journal, access), (matrix, matrix_access) = (read.result() for read in reads)
     by_skill: dict[str, list[dict]] = {}
     for r in journal:
@@ -243,6 +248,7 @@ def skill_detail(
     info, reader = _authorize_or_404(user_w, app_w, fqn)  # nothing is read before the user may read the skill
     with ThreadPoolExecutor(max_workers=MAX_PARALLEL) as pool:
         # The eval-table reads, as the user, run while the files are read.
+        live_reads = _start_live_reads(pool, sql, cfg, dept, name)
         cases_read = pool.submit(_dataset_cases, sql, cfg, dept, name)  # never from the skill files
         rubric_read = pool.submit(_latest_rubric, sql, cfg, dept, name)
         try:
@@ -256,15 +262,18 @@ def skill_detail(
             raise problem(502, Reason.UC_FAILED) from None
         evals, evals_access = cases_read.result()
         rubric, rubric_access = rubric_read.result()
+        live, verdicts, live_access = _live_state(live_reads)
     return SkillDetail(
         fqn=fqn,
         dept=dept,
         name=name,
         description=info.description,
+        live_version=live.get(name),
+        verdicts=verdicts.get(name, {}),
         files=_decode_text(files),
         evals=evals,
         rubric=rubric,
-        eval_access=_worst(evals_access, rubric_access),
+        eval_access=_worst(evals_access, rubric_access, live_access),
     )
 
 

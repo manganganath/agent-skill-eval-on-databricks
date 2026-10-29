@@ -31,6 +31,7 @@ export interface EvalFile { skill_name: string; evals: EvalCase[] }
 
 export interface SkillDetail {
   fqn: string; dept: string; name: string; description: string | null;
+  live_version: number | null; verdicts: Record<string, Verdict>;
   files: Record<string, string>; evals: EvalFile | null; rubric: Rubric | null;
   eval_access: EvalAccess;
 }

@@ -11,7 +11,7 @@ The Skill Hub REST API serves the app's UI and any custom UI. The OpenAPI schema
 | `GET /api/me` | | `{user, groups, is_reviewer}` | |
 | `GET /api/config` | | `{workspace_url, models, departments}` | `models` maps each model profile to its class |
 | `GET /api/skills?q=` | | List of `{fqn, dept, name, description, live_version, verdicts, eval_access}` | `eval_access` is `ok`, `denied` or `unavailable` |
-| `GET /api/skills/{fqn}` | | `{fqn, dept, name, description, files, evals, rubric, eval_access}` | `files` maps path to text. If the warehouse fails, the answer is still 200, with `eval_access` set to `unavailable`. |
+| `GET /api/skills/{fqn}` | | `{fqn, dept, name, description, live_version, verdicts, files, evals, rubric, eval_access}` | `live_version` and `verdicts` are the same as in the catalog list. `files` maps path to text. If the warehouse fails, the answer is still 200, with `eval_access` set to `unavailable`. |
 | `GET /api/skills/{fqn}/versions` | | JournalRow objects, oldest first | `[]` before any version is published |
 | `GET /api/results/matrix?skill=&dept=&fqn=` | | `eval_matrix` rows, each with `dept` and `harness` | `fqn=<catalog>.<schema>.<skill>` sets both `dept` and `skill`. Departments the user cannot read are left out and named in the `X-Eval-Denied-Departments` header. If the result hit the row cap, `X-Result-Truncated: true` is set. |
 | `GET /api/results/cases?run_id=` | | `eval_cases` rows | `run_id` is a 32-character MLflow run ID. The same two headers apply. |

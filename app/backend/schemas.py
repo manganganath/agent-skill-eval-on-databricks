@@ -28,10 +28,14 @@ class SkillSummary(BaseModel):
 
 
 class SkillDetail(BaseModel):
+    """One skill. live_version and verdicts are worked out as for its SkillSummary in the catalog."""
+
     fqn: str
     dept: str
     name: str
     description: str | None
+    live_version: int | None
+    verdicts: dict[str, str]
     files: dict[str, str]
     evals: EvalFile | None
     rubric: Rubric | None

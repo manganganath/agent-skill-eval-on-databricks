@@ -148,6 +148,15 @@ def test_journal_sql_binds_dept_and_orders_by_time():
     assert "ORDER BY ts" in sql and params == {"dept": "common"}
 
 
+def test_journal_and_verdict_sql_for_one_skill_bind_the_name():
+    for build, want in (
+        (queries.journal_sql, {"dept": "common", "skill": "audit-xls"}),
+        (queries.catalog_verdicts_sql, {"skill": "audit-xls"}),
+    ):
+        sql, params = build(make_cfg(), "common", "audit-xls")
+        assert "skill = :skill" in sql and "audit-xls" not in sql and params == want
+
+
 def _row(skill, version, profile, mode, verdict):
     return {
         "skill": skill,

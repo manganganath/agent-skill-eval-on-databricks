@@ -1,6 +1,6 @@
 import { Link, useParams } from "react-router-dom";
 import { api, ApiError } from "../api/client";
-import type { EvalAccess, JournalRow, Me, SkillDetail as SkillDetailT, SkillSummary } from "../api/types";
+import type { EvalAccess, JournalRow, Me, SkillDetail as SkillDetailT } from "../api/types";
 import { useAsync } from "../hooks/useAsync";
 import { EmptyState } from "../components/EmptyState";
 import { ErrorState } from "../components/ErrorState";
@@ -65,18 +65,10 @@ function VersionHistory({ fqn }: { fqn: string }) {
   );
 }
 
-// The summary line for the header: the catalog's live version and latest verdicts for this skill. It comes from
-// the same list the catalog shows, so both pages agree. If it cannot be read, the header leaves those parts out.
-function useSummary(fqn: string) {
-  const name = fqn.split(".").pop() ?? fqn;
-  return useAsync<SkillSummary | undefined>(
-    async () => (await api.skills(name)).find((x) => x.fqn === fqn),
-    [fqn],
-  );
-}
-
-function SummaryVerdicts({ summary }: { summary: SkillSummary }) {
-  const entries = Object.entries(summary.verdicts);
+// The header's live version and latest verdicts come with the skill. The API works them out as it does for the
+// catalog, so both pages agree.
+function SummaryVerdicts({ skill }: { skill: SkillDetailT }) {
+  const entries = Object.entries(skill.verdicts);
   return (
     <section className="summary-verdicts" aria-labelledby="summary-verdicts">
       <h2 id="summary-verdicts">Latest verdicts on the live version</h2>
@@ -88,9 +80,9 @@ function SummaryVerdicts({ summary }: { summary: SkillSummary }) {
         </ul>
       ) : (
         <p className="muted">
-          {summary.eval_access === "denied"
+          {skill.eval_access === "denied"
             ? "You can't read eval results for this department"
-            : summary.eval_access === "unavailable"
+            : skill.eval_access === "unavailable"
               ? "Eval results are temporarily unavailable"
               : "No results yet"}
         </p>
@@ -102,8 +94,7 @@ function SummaryVerdicts({ summary }: { summary: SkillSummary }) {
 export default function SkillDetail() {
   const { fqn = "" } = useParams(); // react-router has already decoded the param
   const skill = useAsync<SkillDetailT>(() => api.skill(fqn), [fqn]);
-  const me = useAsync<Me>(() => api.me(), []);
-  const summary = useSummary(fqn);
+  const me = useAsync<Me>(() => api.me(), []); // shared with the header: one /api/me request per page load
 
   if (skill.loading) return <Loading label="Loading skill" />;
   if (skill.error) {
@@ -117,7 +108,6 @@ export default function SkillDetail() {
 
   const skillMd = s.files["SKILL.md"];
   const paths = Object.keys(s.files).sort();
-  const sum = summary.data;
 
   return (
     <article>
@@ -129,9 +119,7 @@ export default function SkillDetail() {
           <h1>{s.name}</h1>
           <p className="summary-meta">
             <span className="tag"><span className="visually-hidden">Department: </span>{s.dept}</span>
-            {sum && (
-              <span className="tag">{sum.live_version === null ? "No live version" : `Live version ${sum.live_version}`}</span>
-            )}
+            <span className="tag">{s.live_version === null ? "No live version" : `Live version ${s.live_version}`}</span>
             <code className="fqn">{s.fqn}</code>
           </p>
           {s.description && <p className="summary-desc">{s.description}</p>}
@@ -144,7 +132,7 @@ export default function SkillDetail() {
             <Link className="btn" to={`/skills/${encodeURIComponent(s.fqn)}/switch`}>Switch version (reviewers)</Link>
           )}
         </div>
-        {sum && <SummaryVerdicts summary={sum} />}
+        <SummaryVerdicts skill={s} />
       </header>
 
       <section aria-labelledby="skill-md" className="panel">
