@@ -11,20 +11,28 @@ VERDICTS = ("pass", "warn", "fail", "inconclusive", "advisory")
 
 
 def live_rows(rows: list[dict], journal: list[dict]) -> list[dict]:
-    """The rows of each skill's live version (skill_versions, as in skill_ref.live_version). A skill with no live
-    version keeps its newest tested version, so its results still show. Older versions never count."""
+    """The rows of each skill's live version (skill_versions, as in skill_ref.live_version), by skill_ref.is_live_row,
+    with the newest row of each skill, model and mode (skill_ref.newest_per_key). A skill with no live version keeps
+    its newest tested version, so its results still show. Older versions never count."""
     history: defaultdict[str, list[dict]] = defaultdict(list)
     for r in journal:  # oldest first, as the query orders them
         history[r["skill"]].append(r)
     live = {skill: skill_ref.live_version(rs) for skill, rs in history.items()}
+    hashes = {skill: skill_ref.live_content_hash(rs) for skill, rs in history.items()}
     newest: dict[str, int] = {}
     for r in rows:
         newest[r["skill"]] = max(newest.get(r["skill"], 0), r["skill_version"])
-    return [
+    on_live = [
         r
         for r in rows
-        if r["skill_version"] == (newest[r["skill"]] if live.get(r["skill"]) is None else live[r["skill"]])
+        if skill_ref.is_live_row(
+            r,
+            newest[r["skill"]] if live.get(r["skill"]) is None else live[r["skill"]],
+            hashes.get(r["skill"]),
+        )
     ]
+    # The uplift rows are all with_skill, so their mode is None here.
+    return skill_ref.newest_per_key(on_live, lambda r: (r["skill"], r["model_profile"], r.get("mode")))
 
 
 def _mean(rows: list[dict], total_key: str, count_key: str) -> float | None:

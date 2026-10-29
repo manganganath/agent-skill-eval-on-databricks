@@ -517,6 +517,20 @@ def content_hash(latest: Iterable[Mapping[str, object]]) -> str | None:
     return next((str(r["content_hash"]) for r in latest if r.get("content_hash")), None)
 
 
+def live_hashes(journal: Iterable[Mapping[str, object]]) -> dict[str, str]:
+    """{skill: content hash of its live version} from one department's skill_versions rows, oldest first. A skill
+    with nothing live (never switched, or retired) is left out, as skill_ref.live_content_hash reads it."""
+    by_skill: dict[str, list[dict]] = {}
+    for r in journal:
+        by_skill.setdefault(str(r["skill"]), []).append(dict(r))
+    out = {}
+    for skill, rows in by_skill.items():
+        content = skill_ref.live_content_hash(rows)
+        if content is not None:
+            out[skill] = content
+    return out
+
+
 def workspace_call(fn: Callable[[], object]):
     """Run one Workspace read; a failure other than "not found" is 502 `candidate_unreadable`."""
     try:

@@ -66,7 +66,8 @@ def _start_live_reads(
 
 
 def _live_state(reads: LiveReads, gating_modes: Iterable[str]) -> LiveState:
-    """({skill: live version}, {skill: {model_profile: verdict}}, access) from the two reads.
+    """({skill: live version}, {skill: {model_profile: verdict}}, access) from the two reads. A run recorded before a
+    release counts for the live version through the live content hash (skill_ref.is_live_row).
 
     The catalog and the skill page both use this, so they always agree.
     """
@@ -75,7 +76,9 @@ def _live_state(reads: LiveReads, gating_modes: Iterable[str]) -> LiveState:
     for r in journal:
         by_skill.setdefault(r["skill"], []).append(r)
     live = {k: skill_ref.live_version(v) for k, v in by_skill.items()}
-    return live, skill_ref.live_verdicts(matrix, live, gating_modes), worst_access(access, matrix_access)
+    hashes = {k: skill_ref.live_content_hash(v) for k, v in by_skill.items()}
+    verdicts = skill_ref.live_verdicts(matrix, live, gating_modes, hashes)
+    return live, verdicts, worst_access(access, matrix_access)
 
 
 @router.get("/skills", response_model=list[SkillSummary])
