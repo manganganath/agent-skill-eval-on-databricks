@@ -149,6 +149,32 @@ JOURNAL_TABLE = "skill_versions"
 TRACE_PREFIX = "traces"  # MLflow binds UnityCatalog(table_prefix="traces") on each `<d>_evals`
 
 
+APP_PRINCIPAL_ENV = "SKILLHUB_APP_PRINCIPAL"
+
+
+def app_grant_plan(cfg: HubConfig, app_principal: str) -> list[str]:
+    """What the Skill Hub app's own principal needs in Unity Catalog.
+
+    The app acts with the signed-in user's token and checks that user's permissions first. As itself, it
+    reads skill files only after that check passes (the effective-permissions fallback), and it writes Try
+    traces. So: USE CATALOG; USE SCHEMA and READ VOLUME on each department's live and versions schemas;
+    USE SCHEMA on each `<d>_evals` (the trace tables are granted by `trace_table_grants`). It gets no MANAGE:
+    without it the fallback cannot read another principal's effective permissions, and the app then skips
+    that department (fail closed).
+    """
+    _check_ident("catalog", cfg.catalog)
+    app = _q(app_principal)
+    stmts = [f"GRANT USE CATALOG ON CATALOG {cfg.catalog} TO {app}"]
+    for dept in cfg.departments:
+        for schema in (live_schema(cfg, dept), versions_schema(cfg, dept)):
+            stmts += [
+                f"GRANT USE SCHEMA ON SCHEMA {schema} TO {app}",
+                f"GRANT READ VOLUME ON SCHEMA {schema} TO {app}",
+            ]
+        stmts.append(f"GRANT USE SCHEMA ON SCHEMA {evals_schema(cfg, dept)} TO {app}")
+    return stmts
+
+
 def trace_table_grants(cfg: HubConfig, sql, ci_eval_principal: str) -> list[str]:
     """ci_eval's access to the MLflow trace objects that `ensure_experiment` created.
 
@@ -932,6 +958,21 @@ def bootstrap(
     for stmt in trace_stmts:
         sql.execute(stmt)
     log_lines.append(f"granted ci_eval access to {len(trace_stmts)} trace tables")
+    app_principal = os.environ.get(APP_PRINCIPAL_ENV, "").strip()
+    if not app_principal:
+        log_lines.append(
+            f"warning: {APP_PRINCIPAL_ENV} is not set: the app principal gets no Unity Catalog grants"
+        )
+    elif app_principal in (ci_app_id, ci_eval_app_id):
+        log_lines.append(f"warning: {APP_PRINCIPAL_ENV} names a CI principal; no app grants applied")
+    else:
+        app_stmts = [
+            s for s in app_grant_plan(cfg, app_principal) if catalog_grants or " ON CATALOG " not in s
+        ]
+        app_stmts += trace_table_grants(cfg, sql, app_principal)  # Try writes traces as the app
+        for stmt in app_stmts:
+            sql.execute(stmt)
+        log_lines.append(f"granted the app principal {app_principal} {len(app_stmts)} statements")
     alerts = steps.ensure_alerts(cfg, w)
     log_lines.append(f"alerts ensured: {', '.join(alerts) if alerts else 'none'}")
     space_id = steps.ensure_genie_space(cfg, w)

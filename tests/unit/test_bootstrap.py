@@ -852,6 +852,40 @@ def test_trace_tables_are_granted_to_ci_eval_after_the_hooks(cfg, tmp_path):
     assert f"granted ci_eval access to {2 * len(cfg.departments)} trace tables" in log
 
 
+def test_app_grant_plan_reads_skills_and_writes_traces_but_never_manages(cfg):
+    from skillhub.registry.bootstrap import app_grant_plan
+
+    stmts = app_grant_plan(cfg, "app-9")
+    assert f"GRANT USE CATALOG ON CATALOG {cfg.catalog} TO `app-9`" in stmts
+    for dept in cfg.departments:
+        for schema in (live_schema(cfg, dept), versions_schema(cfg, dept)):
+            assert f"GRANT READ VOLUME ON SCHEMA {schema} TO `app-9`" in stmts
+        assert f"GRANT USE SCHEMA ON SCHEMA {evals_schema(cfg, dept)} TO `app-9`" in stmts
+    assert not any("MANAGE" in s or "MODIFY" in s or "CREATE" in s for s in stmts)
+
+
+def test_bootstrap_grants_the_app_principal_when_it_is_set(cfg, tmp_path, monkeypatch):
+    monkeypatch.setenv("SKILLHUB_APP_PRINCIPAL", "app-9")
+    sql = _TraceSql()
+    w = _w(existing_groups=required_groups(cfg), existing_sps=[cfg.roles.ci, cfg.roles.ci_eval])
+    log = bootstrap(cfg, w, sql, create_identities=False, skills_root=tmp_path, results=_steps())
+    stmts = [c[0] for c in sql.calls]
+    ev = evals_schema(cfg, "equity_research")
+    assert f"GRANT READ VOLUME ON SCHEMA {live_schema(cfg, 'equity_research')} TO `app-9`" in stmts
+    assert f"GRANT MODIFY, SELECT ON TABLE {ev}.traces_otel_spans TO `app-9`" in stmts
+    assert f"GRANT SELECT ON TABLE {ev}.traces_trace_unified TO `app-9`" in stmts
+    assert any(line.startswith("granted the app principal app-9 ") for line in log)
+
+
+def test_bootstrap_warns_and_grants_nothing_to_an_unset_app_principal(cfg, tmp_path, monkeypatch):
+    monkeypatch.delenv("SKILLHUB_APP_PRINCIPAL", raising=False)
+    sql = _TraceSql()
+    w = _w(existing_groups=required_groups(cfg), existing_sps=[cfg.roles.ci, cfg.roles.ci_eval])
+    log = bootstrap(cfg, w, sql, create_identities=False, skills_root=tmp_path, results=_steps())
+    assert not any("TO `app-9`" in c[0] for c in sql.calls)
+    assert any("SKILLHUB_APP_PRINCIPAL is not set" in line for line in log)
+
+
 def test_odd_trace_table_name_is_refused(cfg):
     class Odd(FakeSql):
         def execute(self, statement, params=None):
