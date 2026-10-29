@@ -1,6 +1,6 @@
 # Customer-specific settings. ${VARS} come from the environment. Nothing in this file is secret.
 workspace:
-  host: ${DATABRICKS_HOST}
+  host: ${DATABRICKS_HOST:-}         # empty (as in a Databricks Job): the host the Databricks SDK resolved
   sql_warehouse_id: ${SQL_WAREHOUSE_ID}
 
 catalog: ${SKILLHUB_CATALOG}        # an existing catalog the deployer owns
@@ -37,8 +37,8 @@ defaults:
   fail_rate: 0.5
   warn_rate: 0.8
   max_error_rate: 0.1
-  concurrency_per_endpoint: 15      # agent runs at once per endpoint, per worker process: a cell is up to 15 effectiveness or 45 trigger records
-  skill_workers: 10                 # skills at once, one worker process each; peak worker RSS ~400-500 MB with one evaluate at a time; serverless has ~5.8 GB free
+  concurrency_per_endpoint: 6       # agent runs at once per endpoint, per worker process; sized for pay-per-token rate limits
+  skill_workers: 6                  # skills at once, one worker process each (~400-500 MB each; serverless has ~5.8 GB free); the endpoints' rate limits are the real ceiling
   min_reviewed_cases: 5             # per mode, needed for a gating verdict
   gating_modes: [trigger]           # verdicts that block the gates; effectiveness runs and is reported, add it once its cases are tuned
 

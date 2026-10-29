@@ -29,10 +29,11 @@ def test_config_option_is_honoured(tmp_path, cfg):
 
 
 def test_bad_config_exits_1_with_one_line(tmp_path, monkeypatch):
-    monkeypatch.delenv("DATABRICKS_HOST", raising=False)
+    # DATABRICKS_HOST may be unset (the SDK's host is used), so drop a variable that has no fallback.
+    monkeypatch.delenv("SQL_WAREHOUSE_ID", raising=False)
     r = CliRunner().invoke(app, ["--config", str(SRC), "config-show"])
     assert r.exit_code == 1
-    assert "DATABRICKS_HOST" in r.output
+    assert "SQL_WAREHOUSE_ID" in r.output and len(r.output.strip().splitlines()) == 1
 
 
 def test_tracebacks_never_print_locals():

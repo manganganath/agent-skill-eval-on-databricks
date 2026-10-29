@@ -118,7 +118,7 @@ SKIP_TRACE_VALIDATION = "MLFLOW_GENAI_EVAL_SKIP_TRACE_VALIDATION"
 MAX_WORKERS = "MLFLOW_GENAI_EVAL_MAX_WORKERS"  # the predict pool of one evaluate
 MAX_SCORER_WORKERS = "MLFLOW_GENAI_EVAL_MAX_SCORER_WORKERS"
 # Judges at once per case. It multiplies with the predict workers, so it stays small.
-SCORER_WORKERS = 4
+SCORER_WORKERS = 2
 TRIGGER = "skill_trigger"
 PLANTED = "planted_bugs_found"
 _YES = frozenset({"yes", "true", "pass"})

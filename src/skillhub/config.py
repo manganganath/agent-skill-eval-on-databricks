@@ -189,6 +189,25 @@ def _check_references(cfg: HubConfig) -> None:
         raise ConfigError("defaults.warn_rate must not be below defaults.fail_rate")
 
 
+def _sdk_host() -> str:
+    from skillhub.auth import workspace_client
+
+    return workspace_client().config.host or ""
+
+
+def _resolve_host(host: str) -> str:
+    """The workspace URL. A Databricks Job gets DATABRICKS_HOST="" from the bundle, so an empty value means the host
+    the SDK resolved (the runtime's own). A bare hostname gets https://."""
+    host = (host or "").strip() or _sdk_host().strip()
+    if not host:
+        raise ConfigError(
+            "the workspace host is unknown: set DATABRICKS_HOST (used by hub.yaml workspace.host)"
+        )
+    if "://" not in host:
+        host = f"https://{host}"
+    return host.rstrip("/")
+
+
 def load_config(path: str | Path | None = None) -> HubConfig:
     """Load and validate hub.yaml. The default is $SKILLHUB_CONFIG, else config/hub.yaml."""
     path = path or os.environ.get("SKILLHUB_CONFIG", "config/hub.yaml")
@@ -197,6 +216,7 @@ def load_config(path: str | Path | None = None) -> HubConfig:
         cfg = HubConfig.model_validate(_expand(raw))
     except ValidationError as e:
         raise ConfigError(str(e)) from e
+    cfg.workspace.host = _resolve_host(cfg.workspace.host)
     _check_references(cfg)
     return cfg
 

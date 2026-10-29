@@ -28,7 +28,7 @@ def test_example_config_loads(cfg):
     assert cfg.judges_pr == ["gpt"]
     assert cfg.generator == "claude-opus"
     assert cfg.defaults.min_reviewed_cases == 5
-    assert cfg.defaults.skill_workers == 10 and cfg.defaults.concurrency_per_endpoint == 15
+    assert cfg.defaults.skill_workers == 6 and cfg.defaults.concurrency_per_endpoint == 6
     assert cfg.workspace.host == "https://example.invalid"
     assert cfg.departments["external"].quarantine is True
     assert cfg.models["gpt"].provider == "gpt"
@@ -79,7 +79,7 @@ def test_common_department_is_required(tmp_path):
         ("repeats: 3", "repeats: 0"),
         ("max_error_rate: 0.1", "max_error_rate: 2"),
         ("pass_score: 0.7", "pass_score: 0"),
-        ("skill_workers: 10", "skill_workers: 0"),
+        ("skill_workers: 6", "skill_workers: 0"),
     ],
 )
 def test_defaults_out_of_range_are_rejected(tmp_path, old, new):
@@ -170,3 +170,32 @@ def test_gating_modes_default_to_both_and_reject_unknown_or_empty():
     for bad in ([], ["with_skill"]):
         with pytest.raises(ValidationError):
             Defaults(models=["gpt"], gating_modes=bad)
+
+
+@pytest.mark.parametrize("value", ["", None])
+def test_an_empty_or_unset_host_falls_back_to_the_sdk_host(monkeypatch, value):
+    """A Databricks Job gets DATABRICKS_HOST="" from the bundle, while the runtime knows its own host."""
+    import skillhub.config as config
+
+    if value is None:
+        monkeypatch.delenv("DATABRICKS_HOST", raising=False)
+    else:
+        monkeypatch.setenv("DATABRICKS_HOST", value)
+    monkeypatch.setattr(config, "_sdk_host", lambda: "https://ws.example.com/")
+    assert config.load_config(EXAMPLE).workspace.host == "https://ws.example.com"
+
+
+def test_a_host_without_a_scheme_gets_https(monkeypatch):
+    import skillhub.config as config
+
+    monkeypatch.setenv("DATABRICKS_HOST", "ws.example.com")
+    assert config.load_config(EXAMPLE).workspace.host == "https://ws.example.com"
+
+
+def test_no_host_anywhere_is_a_config_error(monkeypatch):
+    import skillhub.config as config
+
+    monkeypatch.setenv("DATABRICKS_HOST", "")
+    monkeypatch.setattr(config, "_sdk_host", lambda: "")
+    with pytest.raises(ConfigError, match="workspace host"):
+        config.load_config(EXAMPLE)
