@@ -1,0 +1,160 @@
+{
+  "skill_name": "catalyst-calendar",
+  "criteria": {},
+  "evals": [
+    {
+      "id": 1,
+      "kind": "trigger",
+      "prompt": "Can you put together a calendar of everything coming up for my coverage list over the next month? Tickers: CRM, NOW, WDAY, ADBE, SNOW. Include earnings dates with pre/post market timing and any investor days.",
+      "should_trigger": true,
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": false
+    },
+    {
+      "id": 2,
+      "kind": "trigger",
+      "prompt": "I cover mid-cap biotech. I need a tracker of upcoming PDUFA dates, adcomm meetings, and data readouts for Q3, with an H/M/L impact rating for each.",
+      "should_trigger": true,
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": false
+    },
+    {
+      "id": 3,
+      "kind": "trigger",
+      "prompt": "what's on deck next week that could move my book? I'm long NVDA, AMD, short INTC. Throw in FOMC and CPI too",
+      "should_trigger": true,
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": false
+    },
+    {
+      "id": 4,
+      "kind": "trigger",
+      "prompt": "Build me an Excel workbook listing upcoming events for the consumer staples names I follow — earnings, shareholder meetings, CAGNY presentations — sortable by date and color-coded red/yellow/green by impact.",
+      "should_trigger": true,
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": false
+    },
+    {
+      "id": 5,
+      "kind": "trigger",
+      "prompt": "Write the weekly forward-looking events note for the team: this week's key dates, an early heads-up for next week, and which positions we should de-risk ahead of binary outcomes.",
+      "should_trigger": true,
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": false
+    },
+    {
+      "id": 6,
+      "kind": "trigger",
+      "prompt": "Can you track lockup expirations, debt maturities, and pending M&A close dates for these recent IPOs and deal targets over the next 90 days? ARM, CART, BIRK, plus the HES/CVX deal.",
+      "should_trigger": true,
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": false
+    },
+    {
+      "id": 7,
+      "kind": "trigger",
+      "prompt": "Update our event tracker: add last week's actual outcomes to the archive and roll forward the monthly auto sales and airline traffic releases for the next quarter.",
+      "should_trigger": true,
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": false
+    },
+    {
+      "id": 8,
+      "kind": "trigger",
+      "prompt": "Which of my semis names are presenting at the upcoming JPMorgan and Bernstein conferences, and who's notably missing? Lay it out alongside their earnings dates and the ECB/BOJ meetings.",
+      "should_trigger": true,
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": false
+    },
+    {
+      "id": 9,
+      "kind": "trigger",
+      "prompt": "MSFT reports Tuesday after the close. Give me a preview: consensus vs. our numbers, the key metrics to watch on Azure, and what the setup looks like going into the print.",
+      "should_trigger": false,
+      "expected_skill": "earnings-preview",
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": false
+    },
+    {
+      "id": 10,
+      "kind": "trigger",
+      "prompt": "Netflix just reported Q2. Walk me through the results vs. expectations, the guide, and the key takeaways from the call.",
+      "should_trigger": false,
+      "expected_skill": "earnings-analysis",
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": false
+    },
+    {
+      "id": 11,
+      "kind": "trigger",
+      "prompt": "Draft this morning's note for the desk summarizing overnight news, what happened to our names pre-market, and any quick calls.",
+      "should_trigger": false,
+      "expected_skill": "morning-note",
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": false
+    },
+    {
+      "id": 12,
+      "kind": "trigger",
+      "prompt": "I want to revisit my long thesis on UBER. Check the key pillars against recent developments and tell me whether it's playing out or breaking.",
+      "should_trigger": false,
+      "expected_skill": "thesis-tracker",
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": false
+    },
+    {
+      "id": 13,
+      "kind": "trigger",
+      "prompt": "Help me write a Python script that dedupes a list of email addresses and sorts them alphabetically.",
+      "should_trigger": false,
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": false
+    },
+    {
+      "id": 14,
+      "kind": "trigger",
+      "prompt": "Plan a 5-day itinerary for a family trip to Lisbon in October with kid-friendly activities.",
+      "should_trigger": false,
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": false
+    },
+    {
+      "id": 15,
+      "kind": "trigger",
+      "prompt": "Set up a shared Google Calendar for my book club with monthly meeting reminders on the first Thursday.",
+      "should_trigger": false,
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": false
+    }
+  ]
+}

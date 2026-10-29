@@ -1,0 +1,160 @@
+{
+  "skill_name": "dcf-model",
+  "criteria": {},
+  "evals": [
+    {
+      "id": 1,
+      "kind": "trigger",
+      "prompt": "Can you build me a discounted cash flow valuation for Costco? Pull the last few years of financials from their 10-Ks, project out 5 years, and give me an Excel file with WACC and a sensitivity grid.",
+      "should_trigger": true,
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": false
+    },
+    {
+      "id": 2,
+      "kind": "trigger",
+      "prompt": "I want to know what NVDA is actually worth on an intrinsic basis. Do a full cash flow projection with terminal value and tell me the implied share price vs where it trades today.",
+      "should_trigger": true,
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": false
+    },
+    {
+      "id": 3,
+      "kind": "trigger",
+      "prompt": "Value Snowflake using free cash flow projections — bear/base/bull cases with a case selector, 7-year forecast since it's high growth, perpetuity growth terminal value. Output as xlsx.",
+      "should_trigger": true,
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": false
+    },
+    {
+      "id": 4,
+      "kind": "trigger",
+      "prompt": "I'm in Excel right now with a blank workbook open. Build an intrinsic value model for Adobe directly in this sheet: revenue build, unlevered FCF, WACC tab, PV of terminal value, and a WACC vs terminal growth table.",
+      "should_trigger": true,
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": false
+    },
+    {
+      "id": 5,
+      "kind": "trigger",
+      "prompt": "Here are Datadog's historical revenue, EBIT, D&A, capex and NWC numbers (pasted below). Use consensus growth for the next five years and discount the cash flows back with mid-year convention. What's the equity value per share?\n\nFY21 rev 1029, FY22 1675, FY23 2128, FY24 2684...",
+      "should_trigger": true,
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": false
+    },
+    {
+      "id": 6,
+      "kind": "trigger",
+      "prompt": "my PM wants a quick-ish UFCF valuation on Chipotle by tomorrow, with beta vs risk free rate and rev growth vs margin sensitivities. can you put that together in a spreadsheet",
+      "should_trigger": true,
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": false
+    },
+    {
+      "id": 7,
+      "kind": "trigger",
+      "prompt": "Is Ford undervalued? Run a discounted cash flow analysis with exit multiple as a cross-check on the terminal value and show me the EV to equity bridge.",
+      "should_trigger": true,
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": false
+    },
+    {
+      "id": 8,
+      "kind": "trigger",
+      "prompt": "Build a sum-of-the-parts discounted cash flow for Alphabet — separate projections for Search, Cloud, and YouTube, each with its own growth and margins, then roll up to a per-share value.",
+      "should_trigger": true,
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": false
+    },
+    {
+      "id": 9,
+      "kind": "trigger",
+      "prompt": "Put together a trading comps table for Shopify versus BigCommerce, Wix, and Squarespace — EV/Revenue, EV/EBITDA, and growth-adjusted multiples.",
+      "should_trigger": false,
+      "expected_skill": "comps-analysis",
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": false
+    },
+    {
+      "id": 10,
+      "kind": "trigger",
+      "prompt": "We're looking at a take-private of Zendesk with 6x leverage. Model the sources and uses, debt paydown schedule, and sponsor IRR over a 5-year hold.",
+      "should_trigger": false,
+      "expected_skill": "lbo-model",
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": false
+    },
+    {
+      "id": 11,
+      "kind": "trigger",
+      "prompt": "Build an integrated income statement, balance sheet, and cash flow statement for Target with the balance sheet balancing and a revolver plug.",
+      "should_trigger": false,
+      "expected_skill": "3-statement-model",
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": false
+    },
+    {
+      "id": 12,
+      "kind": "trigger",
+      "prompt": "I inherited this valuation workbook from a colleague and some formulas look off — can you go through it and flag hardcodes, broken links, and #REF errors?",
+      "should_trigger": false,
+      "expected_skill": "audit-xls",
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": false
+    },
+    {
+      "id": 13,
+      "kind": "trigger",
+      "prompt": "Write me a Python script that renames all the PDFs in a folder based on the date in their filename.",
+      "should_trigger": false,
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": false
+    },
+    {
+      "id": 14,
+      "kind": "trigger",
+      "prompt": "What's a good itinerary for four days in Lisbon in October?",
+      "should_trigger": false,
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": false
+    },
+    {
+      "id": 15,
+      "kind": "trigger",
+      "prompt": "Explain the difference between a Roth IRA and a traditional IRA for someone in their 20s.",
+      "should_trigger": false,
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": false
+    }
+  ]
+}

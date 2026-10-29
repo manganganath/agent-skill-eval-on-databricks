@@ -1,0 +1,79 @@
+{
+  "skill_name": "earnings-preview",
+  "source_hash": "sha256:4ba2771a831d45c80f24624603c328cd9412b76c3dd83f70d634d169c0b32a4e",
+  "generated_by": "claude-opus",
+  "pass_score": 0.7,
+  "reviewed": true,
+  "criteria": [
+    {
+      "id": "c1",
+      "text": "The response identifies the specific company, the reporting quarter, and the earnings date. It also says whether the report comes pre-market or after-hours, or explicitly notes that the timing is unknown.",
+      "type": "task_quality",
+      "weight": 4,
+      "source": "Step 1: Gather Context; Step 5: Output"
+    },
+    {
+      "id": "c2",
+      "text": "The response includes a consensus estimates table covering at least revenue and EPS. The table states the source and as-of date of the estimates, or clearly flags them as unverified or illustrative.",
+      "type": "task_quality",
+      "weight": 5,
+      "source": "Step 5 Output; Important Notes: always note the source and date of estimates"
+    },
+    {
+      "id": "c3",
+      "text": "The key metrics to watch include sector-appropriate operational metrics for the company's industry, not only generic financial metrics. Examples are ARR or net retention for SaaS, same-store sales for retail, NIM or credit quality for banks, and backlog or book-to-bill for industrials.",
+      "type": "task_quality",
+      "weight": 4,
+      "source": "Step 2: Operational Metrics (sector-specific)"
+    },
+    {
+      "id": "c4",
+      "text": "The key metrics are presented in an explicit ranked or prioritized order of importance, not as an unordered list.",
+      "type": "task_quality",
+      "weight": 3,
+      "source": "Step 5: Key metrics to watch (ranked by importance)"
+    },
+    {
+      "id": "c5",
+      "text": "The response contains a Bull/Base/Bear scenario table. Each scenario fills in revenue, EPS, a key driver, and an expected stock reaction.",
+      "type": "skill_format",
+      "weight": 5,
+      "source": "Step 3: Scenario Analysis table"
+    },
+    {
+      "id": "c6",
+      "text": "For each scenario, the response explains what would need to happen operationally and what management commentary would signal it.",
+      "type": "task_quality",
+      "weight": 3,
+      "source": "Step 3: For each scenario bullets"
+    },
+    {
+      "id": "c7",
+      "text": "The response provides a catalyst checklist of 3-5 items. Each item ties a specific metric, guidance item, or narrative shift to why it matters for the stock reaction, including a comparison to consensus or buy-side expectations.",
+      "type": "task_quality",
+      "weight": 4,
+      "source": "Step 4: Catalyst Checklist"
+    },
+    {
+      "id": "c8",
+      "text": "The response includes a trading setup section covering recent stock performance and the options-implied move. It compares the implied move to the scenario stock reactions.",
+      "type": "task_quality",
+      "weight": 4,
+      "source": "Step 5 Trading setup; Important Notes on options-implied move"
+    },
+    {
+      "id": "c9",
+      "text": "The response references historical earnings reactions, meaning how the stock has moved on prior prints, to calibrate the scenario price implications.",
+      "type": "task_quality",
+      "weight": 3,
+      "source": "Step 3 Historical context; Important Notes"
+    },
+    {
+      "id": "c10",
+      "text": "The output is a concise one-page-style preview with clear section headings for each required component, not a lengthy unstructured report.",
+      "type": "skill_format",
+      "weight": 2,
+      "source": "Step 5: One-page earnings preview"
+    }
+  ]
+}

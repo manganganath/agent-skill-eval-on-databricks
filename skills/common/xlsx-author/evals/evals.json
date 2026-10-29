@@ -1,0 +1,251 @@
+{
+  "skill_name": "xlsx-author",
+  "criteria": {},
+  "evals": [
+    {
+      "id": 101,
+      "kind": "effectiveness",
+      "prompt": "Build the Northwind Q3 FY26 variance workbook: actuals and consensus on an Inputs tab, a Variance tab with formulas, and a Checks tab. Put the openpyxl script in your reply, I'll run it myself.",
+      "should_trigger": true,
+      "assertions": [
+        "Writes the workbook to ./out/ with an .xlsx name and returns the relative path, as the output contract requires",
+        "Every calculated cell on the Variance tab is a formula referencing the Inputs tab, with no typed numbers in calculation cells",
+        "Uses blue font for hard-coded inputs and black for formulas, as the skill's conventions require",
+        "Includes a Checks tab that returns TRUE or FALSE for the variance tie-out"
+      ],
+      "fixtures": [
+        "northwind/press_release_q3.md",
+        "northwind/consensus_q3.json"
+      ],
+      "expected_tool_calls": [
+        {
+          "name": "read_file",
+          "arguments": {
+            "path": "northwind/press_release_q3.md"
+          }
+        }
+      ],
+      "origin": "human",
+      "reviewed": true
+    },
+    {
+      "id": 102,
+      "kind": "effectiveness",
+      "prompt": "For the IC deck, build a Northwind FY26 scenario workbook with low, mid and high revenue from the new guidance. Name the scenario inputs so the deck can reference them. Put the script in the reply.",
+      "should_trigger": true,
+      "assertions": [
+        "Defines named ranges, for example Rev_Low, Rev_Mid and Rev_High, for each scenario input the deck will reference",
+        "Uses $1,640M and $1,680M for low and high, and computes the mid case as a formula rather than a typed number",
+        "Writes one self-contained openpyxl script that saves the workbook under ./out/ with an .xlsx filename"
+      ],
+      "fixtures": [
+        "northwind/press_release_q3.md"
+      ],
+      "origin": "human",
+      "reviewed": true
+    },
+    {
+      "id": 103,
+      "kind": "effectiveness",
+      "prompt": "Put the gross margin bridge from Q2 guidance to Q3 actual in its own new workbook, not in my model. Script in the reply please.",
+      "should_trigger": true,
+      "assertions": [
+        "Saves the new workbook under ./out/ with an .xlsx filename and returns the relative path",
+        "Computes the bridge with formulas (guidance midpoint, actual, difference) from blue hard-coded inputs on an Inputs tab, with no typed difference values",
+        "Includes a Checks tab that returns TRUE or FALSE for whether the guidance midpoint plus the difference ties to the actual"
+      ],
+      "fixtures": [
+        "northwind/prior_q2_call.md",
+        "northwind/press_release_q3.md"
+      ],
+      "origin": "human",
+      "reviewed": true
+    },
+    {
+      "id": 104,
+      "kind": "effectiveness",
+      "prompt": "Write an openpyxl script that creates a Checks workbook in ./out/ testing whether assets equal liabilities plus equity for FY26, using the balance sheet totals from model.xlsx as typed inputs. FY26E total assets are 2,676.96 and total liabilities and equity are 2,664.46.",
+      "should_trigger": true,
+      "assertions": [
+        "The check is a formula that returns TRUE or FALSE, not a typed result",
+        "The typed balance sheet totals sit on an Inputs tab in blue, and the check references them by cell",
+        "Saves the workbook under ./out/ with an .xlsx filename and returns the relative path"
+      ],
+      "fixtures": [
+        "northwind/model.xlsx"
+      ],
+      "origin": "human",
+      "reviewed": true
+    },
+    {
+      "id": 105,
+      "kind": "effectiveness",
+      "prompt": "Give me the consensus table as a workbook. Each row needs a source and an as-of date, and I need the script in the reply.",
+      "should_trigger": true,
+      "assertions": [
+        "Every data row has source and as-of date columns filled from the consensus file (Consensus Hub, 2026-10-20)",
+        "Keeps the consensus values as blue hard-coded inputs and computes any derived column, such as the Q4 change from Q3, as a formula",
+        "Writes the output under ./out/ and returns the relative path in the reply"
+      ],
+      "fixtures": [
+        "northwind/consensus_q3.json"
+      ],
+      "origin": "human",
+      "reviewed": true
+    },
+    {
+      "id": 1,
+      "kind": "trigger",
+      "prompt": "No Excel instance is running in this session. Please create a workbook at ./out/budget.xlsx with an Inputs sheet and a Projections sheet. Every projection cell should be a formula that references the inputs.",
+      "should_trigger": true,
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": true
+    },
+    {
+      "id": 2,
+      "kind": "trigger",
+      "prompt": "I'm running this as a background batch job and there's no Office app attached. Build me a spreadsheet file with quarterly revenue assumptions and a summary tab, and tell me the path when it's saved.",
+      "should_trigger": true,
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": true
+    },
+    {
+      "id": 3,
+      "kind": "trigger",
+      "prompt": "Write a python script using openpyxl that produces a .xlsx deliverable for the orchestration layer to collect. It needs a Checks tab that shows TRUE/FALSE for whether the balance sheet balances.",
+      "should_trigger": true,
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": true
+    },
+    {
+      "id": 4,
+      "kind": "trigger",
+      "prompt": "We're headless here. Generate an Excel file artifact containing a simple DCF. Put blue font on the hardcoded inputs and use formulas everywhere else. Save it under the out folder.",
+      "should_trigger": true,
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": true
+    },
+    {
+      "id": 5,
+      "kind": "trigger",
+      "prompt": "There aren't any Excel tools available in this environment. Can you just produce a new .xlsx file on disk with named ranges for EBITDA and net debt? Our memo pulls those figures.",
+      "should_trigger": true,
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": true
+    },
+    {
+      "id": 6,
+      "kind": "trigger",
+      "prompt": "managed agent run: output a fresh workbook file called pricing_matrix.xlsx with an inputs tab and a calc tab, then return the relative path so the pipeline can pick it up",
+      "should_trigger": true,
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": true
+    },
+    {
+      "id": 7,
+      "kind": "trigger",
+      "prompt": "Nobody has a workbook open, and this runs unattended overnight. Please save a standalone Excel file that lays out the headcount plan by department. Follow standard color coding: blue for inputs, black for formulas, green for cross-sheet links.",
+      "should_trigger": true,
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": true
+    },
+    {
+      "id": 8,
+      "kind": "trigger",
+      "prompt": "Since there's no live Excel connection, write the sensitivity table out to an xlsx file instead. Make it a new file and don't touch any existing workbook.",
+      "should_trigger": true,
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": true
+    },
+    {
+      "id": 9,
+      "kind": "trigger",
+      "prompt": "Review the model I have open in Excel and flag any hardcoded numbers in calc cells, broken links, or color-coding violations.",
+      "should_trigger": false,
+      "expected_skill": "audit-xls",
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": true
+    },
+    {
+      "id": 10,
+      "kind": "trigger",
+      "prompt": "No PowerPoint is open in this headless run. Please generate a .pptx file summarizing the deal and save it to ./out/.",
+      "should_trigger": false,
+      "expected_skill": "pptx-author",
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": true
+    },
+    {
+      "id": 11,
+      "kind": "trigger",
+      "prompt": "This spreadsheet has inconsistent date formats, duplicate rows, and trailing whitespace in the company names. Can you clean it up?",
+      "should_trigger": false,
+      "expected_skill": "clean-data-xls",
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": true
+    },
+    {
+      "id": 12,
+      "kind": "trigger",
+      "prompt": "Build a leveraged buyout model in my open workbook. Include sources & uses, a debt schedule, and IRR/MOIC returns at exit.",
+      "should_trigger": false,
+      "expected_skill": "lbo-model",
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": true
+    },
+    {
+      "id": 13,
+      "kind": "trigger",
+      "prompt": "What's a good way to explain the difference between enterprise value and equity value to a new analyst?",
+      "should_trigger": false,
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": true
+    },
+    {
+      "id": 14,
+      "kind": "trigger",
+      "prompt": "Draft a polite email that declines a meeting invite for next Tuesday and suggests Thursday afternoon.",
+      "should_trigger": false,
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": true
+    },
+    {
+      "id": 15,
+      "kind": "trigger",
+      "prompt": "Write a bash one-liner that counts the lines in every .log file in a directory.",
+      "should_trigger": false,
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": true
+    }
+  ]
+}

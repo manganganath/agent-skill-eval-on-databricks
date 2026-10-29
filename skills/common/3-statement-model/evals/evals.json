@@ -1,0 +1,160 @@
+{
+  "skill_name": "3-statement-model",
+  "criteria": {},
+  "evals": [
+    {
+      "id": 1,
+      "kind": "trigger",
+      "prompt": "I've got an Excel template with IS, BS, and CF tabs already laid out but the projection columns are empty. Can you fill in FY2025E-FY2029E using the drivers on the Assumptions tab and make sure everything links?",
+      "should_trigger": true,
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": false
+    },
+    {
+      "id": 2,
+      "kind": "trigger",
+      "prompt": "Here's a partially built financial model for a SaaS company. The historicals are in, but the balance sheet doesn't tie to the cash flow statement. Please complete the remaining linkages so cash ties out.",
+      "should_trigger": true,
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": false
+    },
+    {
+      "id": 3,
+      "kind": "trigger",
+      "prompt": "Populate this model framework with Acme Corp's last three years of income statement, balance sheet and cash flow data from their 10-K, then build out 5 years of projections.",
+      "should_trigger": true,
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": false
+    },
+    {
+      "id": 4,
+      "kind": "trigger",
+      "prompt": "I'm working in Excel right now. The P&L, balance sheet and cash flow sheets are stubbed out with line items. Fill them in with formulas, not hardcodes, and add a working capital and D&A schedule feeding into them.",
+      "should_trigger": true,
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": false
+    },
+    {
+      "id": 5,
+      "kind": "trigger",
+      "prompt": "Can you complete my integrated financial statements template? It has a scenario toggle for base/upside/downside on the Drivers tab that needs to flow through all three statements.",
+      "should_trigger": true,
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": false
+    },
+    {
+      "id": 6,
+      "kind": "trigger",
+      "prompt": "The template has a Debt schedule and NOL tab that aren't hooked up to the income statement or balance sheet yet. Wire them in, handle the interest circularity, and fill out the rest of the projections.",
+      "should_trigger": true,
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": false
+    },
+    {
+      "id": 7,
+      "kind": "trigger",
+      "prompt": "fill out the IS/BS/CF in the attached xlsx. margins under each profit line too please, and credit metrics on the BS tab",
+      "should_trigger": true,
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": false
+    },
+    {
+      "id": 8,
+      "kind": "trigger",
+      "prompt": "My boss gave me a blank three-statement template for a manufacturing client. Enter the historical actuals I've pasted below and project out the forecast years with retained earnings rolling forward properly.",
+      "should_trigger": true,
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": false
+    },
+    {
+      "id": 9,
+      "kind": "trigger",
+      "prompt": "Build a DCF valuation from these free cash flow projections. Calculate WACC, terminal value with a perpetuity growth method, and implied share price.",
+      "should_trigger": false,
+      "expected_skill": "dcf-model",
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": false
+    },
+    {
+      "id": 10,
+      "kind": "trigger",
+      "prompt": "Put together a leveraged buyout model for this target: 5.5x senior debt, 7-year hold, show sponsor IRR and MOIC at exit.",
+      "should_trigger": false,
+      "expected_skill": "lbo-model",
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": false
+    },
+    {
+      "id": 11,
+      "kind": "trigger",
+      "prompt": "Review this finished spreadsheet model a colleague built and flag any hardcodes, broken formulas, or errors. Don't change anything, just give me an audit report.",
+      "should_trigger": false,
+      "expected_skill": "audit-xls",
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": false
+    },
+    {
+      "id": 12,
+      "kind": "trigger",
+      "prompt": "Pull trading multiples (EV/EBITDA, P/E) for these six peer companies and put together a comparable companies table.",
+      "should_trigger": false,
+      "expected_skill": "comps-analysis",
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": false
+    },
+    {
+      "id": 13,
+      "kind": "trigger",
+      "prompt": "Write me a cover letter for a marketing coordinator job at a nonprofit.",
+      "should_trigger": false,
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": false
+    },
+    {
+      "id": 14,
+      "kind": "trigger",
+      "prompt": "What's a good recipe for vegetarian chili that freezes well?",
+      "should_trigger": false,
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": false
+    },
+    {
+      "id": 15,
+      "kind": "trigger",
+      "prompt": "Explain the difference between TCP and UDP and when I'd pick one over the other.",
+      "should_trigger": false,
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": false
+    }
+  ]
+}

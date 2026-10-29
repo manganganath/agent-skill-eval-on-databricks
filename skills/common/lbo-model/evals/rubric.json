@@ -1,0 +1,79 @@
+{
+  "skill_name": "lbo-model",
+  "source_hash": "sha256:9e6660158ae07aaba3bc761ce3daefec6cbbf8d202023c6ae26cd2871acab4ab",
+  "generated_by": "claude-opus",
+  "pass_score": 0.7,
+  "reviewed": false,
+  "criteria": [
+    {
+      "id": "c1",
+      "text": "Every calculated cell is written as a formula that references its source cells (e.g. \"=B5*B6\" in openpyxl, or range.formulas in Office JS). No values are computed in Python or JavaScript and then hardcoded into cells.",
+      "type": "task_quality",
+      "weight": 5,
+      "source": "Core Principles: Every calculation must be an Excel formula"
+    },
+    {
+      "id": "c2",
+      "text": "If a template file is attached, the response uses that template's structure and populates it rather than building from scratch. If no template is attached, the response asks whether the user has a specific template before using the standard examples/LBO_Model.xlsx.",
+      "type": "skill_format",
+      "weight": 4,
+      "source": "TEMPLATE REQUIREMENT section"
+    },
+    {
+      "id": "c3",
+      "text": "The response builds the model one section at a time and stops after completing each major section (e.g. Sources & Uses) to show the result and ask for user confirmation. It does not deliver the full model end-to-end with no checkpoints.",
+      "type": "skill_format",
+      "weight": 4,
+      "source": "Work section by section / SECTION-BY-SECTION CHECKPOINTS"
+    },
+    {
+      "id": "c4",
+      "text": "Sources and Uses balance exactly, with one item (typically sponsor equity) calculated by formula as the plug.",
+      "type": "task_quality",
+      "weight": 4,
+      "source": "Common Problem Areas: Balancing Sections; Verification: Section Balancing"
+    },
+    {
+      "id": "c5",
+      "text": "Debt interest is calculated on the beginning balance to avoid circular references. Debt paydowns or cash sweeps follow the tranche priority order and use MAX/MIN so that balances never go negative.",
+      "type": "task_quality",
+      "weight": 4,
+      "source": "Interest and Circular References; Debt Paydown / Cash Sweeps"
+    },
+    {
+      "id": "c6",
+      "text": "Returns cash flows carry the correct signs (investment negative, proceeds positive). IRR/MOIC formulas reference the complete period range, and MOIC is calculated as total proceeds divided by total investment.",
+      "type": "task_quality",
+      "weight": 4,
+      "source": "Returns Calculations (IRR/MOIC)"
+    },
+    {
+      "id": "c7",
+      "text": "Any sensitivity table uses odd dimensions (5×5 or 7×7). Its axis values are symmetric around the base-case assumptions, and its center cell equals the model's actual IRR/MOIC and is highlighted with #BDD7EE fill and bold font. Each data cell is a formula with mixed references.",
+      "type": "task_quality",
+      "weight": 3,
+      "source": "Sensitivity Tables section and checklist"
+    },
+    {
+      "id": "c8",
+      "text": "Font colors follow the stated convention: blue (0000FF) for hardcoded inputs, black for calculations, purple (800080) for same-tab links, and green (008000) for cross-tab links. Fills use only the blue/grey palette unless the template specifies otherwise.",
+      "type": "skill_format",
+      "weight": 3,
+      "source": "Formula Color Conventions; Fill Color Palette"
+    },
+    {
+      "id": "c9",
+      "text": "When generating a standalone .xlsx file, the response runs recalc.py (or equivalent validation) and confirms there are zero formula errors (#REF!, #DIV/0!, etc.) before delivery. In an Office JS environment, it uses Office JS APIs rather than openpyxl.",
+      "type": "skill_format",
+      "weight": 3,
+      "source": "Environment: Office JS vs Python; Verification: Run Formula Validation"
+    },
+    {
+      "id": "c10",
+      "text": "Number formats follow the stated standards: currency formats, percentages as 0.0%, multiples as 0.0\"x\", and MOIC as 0.00\"x\". Numeric cells are right-aligned.",
+      "type": "skill_format",
+      "weight": 2,
+      "source": "Number Formatting Standards"
+    }
+  ]
+}

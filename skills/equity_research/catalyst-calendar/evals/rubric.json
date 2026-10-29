@@ -1,0 +1,79 @@
+{
+  "skill_name": "catalyst-calendar",
+  "source_hash": "sha256:5ed6f2c300ae7658e8ad7460fcfa8c4c018b0e35690297fbfc9fc5b7aff0fe5a",
+  "generated_by": "claude-opus",
+  "pass_score": 0.7,
+  "reviewed": false,
+  "criteria": [
+    {
+      "id": "c1",
+      "text": "Before it gathers catalysts, the response establishes or explicitly states the coverage universe: tickers or companies, sector focus, whether macro events are included, and the time horizon. If the user did not give these, it asks for them or states the assumptions it made.",
+      "type": "task_quality",
+      "weight": 4,
+      "source": "Step 1: Define Coverage Universe"
+    },
+    {
+      "id": "c2",
+      "text": "The catalysts identified span several relevant categories from the skill: Earnings/Financial, Corporate (e.g., product launches, FDA/regulatory, M&A, lockups), Industry (conferences, data releases), and Macro (FOMC, CPI, jobs, central banks). The scan is not limited to earnings dates.",
+      "type": "task_quality",
+      "weight": 4,
+      "source": "Step 2: Gather Catalysts"
+    },
+    {
+      "id": "c3",
+      "text": "The response presents the catalysts in a calendar table. The table has columns for Date, Event, Company/Sector, Type (Earnings/Corp/Industry/Macro), Impact (H/M/L), Our Positioning (Long/Short/Neutral), and Notes.",
+      "type": "skill_format",
+      "weight": 4,
+      "source": "Step 3: Calendar View"
+    },
+    {
+      "id": "c4",
+      "text": "Each catalyst has an impact rating of High, Medium, or Low. Ratings are differentiated in a sensible way: binary events like FDA decisions or earnings for key holdings rate higher, and routine data rates lower. Impact levels are color-coded or labeled (Red high, Yellow moderate, Green routine).",
+      "type": "task_quality",
+      "weight": 3,
+      "source": "Step 3 Impact column; Important Notes color-coding"
+    },
+    {
+      "id": "c5",
+      "text": "The response includes a weekly preview with three parts. (1) This Week's Key Events by day, with consensus vs. our estimate and the key focus metric for earnings. (2) A Next Week Preview. (3) Position Implications covering events that could move positions, any pre-positioning, and risk management ahead of binary events.",
+      "type": "skill_format",
+      "weight": 4,
+      "source": "Step 4: Weekly Preview"
+    },
+    {
+      "id": "c6",
+      "text": "The response warns that event dates, especially earnings dates, are tentative and should be checked against company IR pages or Bloomberg/FactSet closer to the date. It does not present unconfirmed dates as certain.",
+      "type": "task_quality",
+      "weight": 4,
+      "source": "Important Notes: earnings dates shift"
+    },
+    {
+      "id": "c7",
+      "text": "The response does not make up specific figures (EPS consensus, exact dates, FDA PDUFA dates) as if they were facts. Any value it cannot verify is shown as a placeholder or clearly marked as an estimate or assumption.",
+      "type": "task_quality",
+      "weight": 5,
+      "source": "Step 4 placeholders ([$X EPS]); Important Notes verification"
+    },
+    {
+      "id": "c8",
+      "text": "The response includes at least one forward-looking risk insight from the skill's notes. Examples: flagging companies with a history of pre-announcing, noting which companies are presenting at conferences or conspicuously absent, or highlighting recurring catalysts such as monthly data.",
+      "type": "task_quality",
+      "weight": 2,
+      "source": "Important Notes: pre-announce risk, conference attendance, recurring catalysts"
+    },
+    {
+      "id": "c9",
+      "text": "The response produces or offers the deliverables in the specified formats: an Excel workbook (or Excel-ready table) with sortable calendar columns, and a weekly preview note in markdown. Google Calendar integration may be offered as optional.",
+      "type": "skill_format",
+      "weight": 3,
+      "source": "Step 5: Output"
+    },
+    {
+      "id": "c10",
+      "text": "The response suggests archiving past catalysts together with their actual outcomes, or includes a field for doing so, to build pattern recognition over time.",
+      "type": "task_quality",
+      "weight": 2,
+      "source": "Important Notes: archive past catalysts"
+    }
+  ]
+}

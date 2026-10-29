@@ -1,0 +1,256 @@
+{
+  "skill_name": "earnings-preview",
+  "criteria": {},
+  "evals": [
+    {
+      "id": 101,
+      "kind": "effectiveness",
+      "prompt": "Preview Northwind Robotics' Q4 FY26 print on November 12. I need the consensus numbers, what to watch, and a bull, base and bear table.",
+      "should_trigger": true,
+      "assertions": [
+        "Gives Q4 FY26 consensus revenue of $428.0M and non-GAAP EPS of $0.92, with the source (Consensus Hub) and the as-of date (2026-10-20)",
+        "Includes a bull, base and bear table with Revenue, EPS, Key driver and Stock reaction columns",
+        "Ranks three to five catalysts, including Q4 consensus gross margin of 41.2% against the FY26 range of 40.0% to 41.0% from the Q2 call",
+        "States the earnings date and time from the release: November 12, 2026, after market close"
+      ],
+      "fixtures": [
+        "northwind/consensus_q3.json",
+        "northwind/prior_q2_call.md",
+        "northwind/press_release_q3.md"
+      ],
+      "expected_tool_calls": [
+        {
+          "name": "web_search"
+        }
+      ],
+      "origin": "human",
+      "reviewed": true
+    },
+    {
+      "id": 102,
+      "kind": "effectiveness",
+      "prompt": "The stock is up about 9 percent year to date going into the Q4 print. Build the trading setup, including the options-implied move and how big the reaction risk is.",
+      "should_trigger": true,
+      "assertions": [
+        "Does not invent an options-implied move; says the implied move is not in the materials",
+        "Uses the $48.20 close and the 9 percent year-to-date return from the consensus file, with its date",
+        "Includes a bull, base and bear table with Revenue, EPS, Key driver and Stock reaction columns, with a reaction for each scenario rather than a single point estimate",
+        "Ranks three to five catalysts or metrics to watch"
+      ],
+      "fixtures": [
+        "northwind/consensus_q3.json",
+        "northwind/press_release_q3.md"
+      ],
+      "origin": "human",
+      "reviewed": true
+    },
+    {
+      "id": 103,
+      "kind": "effectiveness",
+      "prompt": "Pre-earnings note for the Q4 print. What is the whisper number, and does the buy side expect more than consensus?",
+      "should_trigger": true,
+      "assertions": [
+        "Does not state a whisper number; says buy-side survey data is not in the materials",
+        "Uses published Q4 consensus (revenue $428.0M, EPS $0.92) and names its source and date",
+        "Lists what management said on the Q2 call that the buy side will test in Q4, such as the gross margin range",
+        "Ranks three to five catalysts in a checklist, each with a metric against consensus and why it matters"
+      ],
+      "fixtures": [
+        "northwind/consensus_q3.json",
+        "northwind/prior_q2_call.md"
+      ],
+      "origin": "human",
+      "reviewed": true
+    },
+    {
+      "id": 104,
+      "kind": "effectiveness",
+      "prompt": "Q3 beat the gross margin range from the Q2 call. Does that change what we should watch in the Q4 preview?",
+      "should_trigger": true,
+      "assertions": [
+        "Compares Q3 gross margin of 41.5% with the Q2 guidance range of 40.0% to 41.0%",
+        "Flags that the Q3 restructuring charge ($5.8M pre-tax) contradicts the Q2 comment that no further charges were expected in fiscal 2026",
+        "Makes Q4 consensus gross margin of 41.2%, above the FY26 range, a watch item",
+        "Ranks three to five catalysts in a checklist, each with why it matters"
+      ],
+      "fixtures": [
+        "northwind/prior_q2_call.md",
+        "northwind/press_release_q3.md",
+        "northwind/consensus_q3.json"
+      ],
+      "origin": "human",
+      "reviewed": true
+    },
+    {
+      "id": 105,
+      "kind": "effectiveness",
+      "prompt": "One-page Q4 preview for the wealth desk. Put the consensus source and date at the top.",
+      "should_trigger": true,
+      "assertions": [
+        "Fits on one page, about 500 words or fewer",
+        "Includes Q4 consensus revenue of $428.0M and EPS of $0.92, and a ranked list of metrics to watch",
+        "Includes a bull, base and bear table with Revenue, EPS, Key driver and Stock reaction columns",
+        "Includes a trading setup with the $48.20 close and 9 percent year-to-date return, and does not invent an options-implied move"
+      ],
+      "fixtures": [
+        "northwind/consensus_q3.json"
+      ],
+      "origin": "human",
+      "reviewed": true
+    },
+    {
+      "id": 1,
+      "kind": "trigger",
+      "prompt": "NVIDIA reports next Wednesday after the close. Can you put together a preview of what to watch, with consensus numbers and a bull/base/bear setup?",
+      "should_trigger": true,
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": true
+    },
+    {
+      "id": 2,
+      "kind": "trigger",
+      "prompt": "preview Q3 for Costco — comps, traffic, membership fee income, what the street wants to hear",
+      "should_trigger": true,
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": true
+    },
+    {
+      "id": 3,
+      "kind": "trigger",
+      "prompt": "We hold a position in Snowflake into the print on Thursday. I need a positioning note: key metrics like NRR and RPO, implied move from options, and how the stock has reacted historically.",
+      "should_trigger": true,
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": true
+    },
+    {
+      "id": 4,
+      "kind": "trigger",
+      "prompt": "What's the earnings setup for JPMorgan this quarter? Focus on NIM, credit provisions, and the guidance items that could move the stock.",
+      "should_trigger": true,
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": true
+    },
+    {
+      "id": 5,
+      "kind": "trigger",
+      "prompt": "Caterpillar reports before the bell tomorrow. Give me a one-pager on backlog, price vs volume, and the 3-5 catalysts that decide the reaction.",
+      "should_trigger": true,
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": true
+    },
+    {
+      "id": 6,
+      "kind": "trigger",
+      "prompt": "pre-earnings thoughts on Eli Lilly? want scenarios with EPS and revenue for each and what mgmt commentary would signal upside",
+      "should_trigger": true,
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": true
+    },
+    {
+      "id": 7,
+      "kind": "trigger",
+      "prompt": "Our PM wants something on Shopify ahead of its Q2 report: consensus table with sources, whisper vs published numbers, and a bull/bear framework.",
+      "should_trigger": true,
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": true
+    },
+    {
+      "id": 8,
+      "kind": "trigger",
+      "prompt": "Before Adobe reports, what should I be watching for? Is the options market pricing too big a move compared to realistic outcomes?",
+      "should_trigger": true,
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": true
+    },
+    {
+      "id": 9,
+      "kind": "trigger",
+      "prompt": "Microsoft reported last night. Break down the beat/miss vs consensus, the guidance changes, and what the call said about Azure growth.",
+      "should_trigger": false,
+      "expected_skill": "earnings-analysis",
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": true
+    },
+    {
+      "id": 10,
+      "kind": "trigger",
+      "prompt": "Put together a calendar of upcoming earnings dates, investor days, and FDA decisions for the names in my healthcare coverage over the next two months.",
+      "should_trigger": false,
+      "expected_skill": "catalyst-calendar",
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": true
+    },
+    {
+      "id": 11,
+      "kind": "trigger",
+      "prompt": "AMD just posted its quarter — update my model with the actuals and roll forward the estimates for next year.",
+      "should_trigger": false,
+      "expected_skill": "model-update",
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": true
+    },
+    {
+      "id": 12,
+      "kind": "trigger",
+      "prompt": "Write today's morning note covering overnight moves, the macro data out this morning, and any company headlines from my coverage.",
+      "should_trigger": false,
+      "expected_skill": "morning-note",
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": true
+    },
+    {
+      "id": 13,
+      "kind": "trigger",
+      "prompt": "Can you help me write a cover letter for a marketing coordinator role at a nonprofit?",
+      "should_trigger": false,
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": true
+    },
+    {
+      "id": 14,
+      "kind": "trigger",
+      "prompt": "What's a good weeknight recipe using chickpeas and spinach?",
+      "should_trigger": false,
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": true
+    },
+    {
+      "id": 15,
+      "kind": "trigger",
+      "prompt": "Explain the difference between TCP and UDP with examples of when to use each.",
+      "should_trigger": false,
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": true
+    }
+  ]
+}

@@ -1,0 +1,160 @@
+{
+  "skill_name": "skill-creator",
+  "criteria": {},
+  "evals": [
+    {
+      "id": 1,
+      "kind": "trigger",
+      "prompt": "I want to build a new capability package for you that teaches our team's internal BigQuery schemas so you stop guessing table names. Can you help me set up the folder structure and write the main instructions file?",
+      "should_trigger": true,
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": false
+    },
+    {
+      "id": 2,
+      "kind": "trigger",
+      "prompt": "Our existing PDF-rotation skill keeps triggering on unrelated requests. Can you help me rewrite its frontmatter description so it only fires when it should?",
+      "should_trigger": true,
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": false
+    },
+    {
+      "id": 3,
+      "kind": "trigger",
+      "prompt": "Help me package my brand-guidelines skill folder into a distributable .skill file and check that the YAML frontmatter is valid.",
+      "should_trigger": true,
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": false
+    },
+    {
+      "id": 4,
+      "kind": "trigger",
+      "prompt": "I keep re-explaining our company's NDA review process to you every session. Can we turn that workflow into a reusable skill with a references file for the NDA template?",
+      "should_trigger": true,
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": false
+    },
+    {
+      "id": 5,
+      "kind": "trigger",
+      "prompt": "My SKILL.md is now 900 lines long and covers AWS, GCP, and Azure deployments. How should I split it up with progressive disclosure so it doesn't bloat context?",
+      "should_trigger": true,
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": false
+    },
+    {
+      "id": 6,
+      "kind": "trigger",
+      "prompt": "Can you create a new skill that bundles a Python script for merging CSV exports from our CRM, plus instructions on when to run it?",
+      "should_trigger": true,
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": false
+    },
+    {
+      "id": 7,
+      "kind": "trigger",
+      "prompt": "I'd like to extend your capabilities with a tool integration for our internal ticketing API. What should go in scripts/ vs references/ vs assets/ for that?",
+      "should_trigger": true,
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": false
+    },
+    {
+      "id": 8,
+      "kind": "trigger",
+      "prompt": "I've used my frontend-webapp skill on a few tasks, and it keeps forgetting to use our React boilerplate. Can you help me update the skill so it reliably copies the template from assets?",
+      "should_trigger": true,
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": false
+    },
+    {
+      "id": 9,
+      "kind": "trigger",
+      "prompt": "Build me a reusable PowerPoint template for our firm's pitch decks with our logo, color palette, and standard title, agenda, and section layouts.",
+      "should_trigger": false,
+      "expected_skill": "ppt-template-creator",
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": false
+    },
+    {
+      "id": 10,
+      "kind": "trigger",
+      "prompt": "Create an Excel workbook that tracks monthly SaaS metrics, with formulas for MRR growth and churn plus a summary tab.",
+      "should_trigger": false,
+      "expected_skill": "xlsx-author",
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": false
+    },
+    {
+      "id": 11,
+      "kind": "trigger",
+      "prompt": "Write a 10-slide presentation explaining our Q3 product roadmap for the leadership offsite.",
+      "should_trigger": false,
+      "expected_skill": "pptx-author",
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": false
+    },
+    {
+      "id": 12,
+      "kind": "trigger",
+      "prompt": "Here's a spreadsheet model a junior analyst built. Can you audit it for broken formulas, hardcodes, and circular references?",
+      "should_trigger": false,
+      "expected_skill": "audit-xls",
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": false
+    },
+    {
+      "id": 13,
+      "kind": "trigger",
+      "prompt": "What's the difference between a list comprehension and a generator expression in Python?",
+      "should_trigger": false,
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": false
+    },
+    {
+      "id": 14,
+      "kind": "trigger",
+      "prompt": "Suggest a 5-day itinerary for a first trip to Lisbon, with a mix of food spots and museums.",
+      "should_trigger": false,
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": false
+    },
+    {
+      "id": 15,
+      "kind": "trigger",
+      "prompt": "Proofread this cover letter for a marketing coordinator role and tighten up the opening paragraph.",
+      "should_trigger": false,
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": false
+    }
+  ]
+}
