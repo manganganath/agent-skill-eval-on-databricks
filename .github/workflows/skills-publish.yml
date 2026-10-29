@@ -47,20 +47,20 @@ jobs:
       - name: Plan re-evaluation, publish and retire
         id: plan
         env:
-          EVENT_BEFORE_SHA: ${{ github.event.before }}
           HEAD_SHA: ${{ github.sha }}
           RUN_ATTEMPT: ${{ github.run_attempt }}
         run: |
-          # Diff from the last released commit so a replaced pending run loses no changes.
-          base="$EVENT_BEFORE_SHA"
+          # Diff from the last released commit so a failed, rejected or replaced release loses no changes.
+          # Without the tag nothing is released yet: every skill counts as added, not only those of this push.
+          base=(--empty-base)
           if git rev-parse -q --verify refs/tags/skillhub/released > /dev/null; then
             if ! git merge-base --is-ancestor refs/tags/skillhub/released "$HEAD_SHA"; then
               echo "::error::The skillhub/released tag is not an ancestor of this commit. Fix the tag before releasing."
               exit 1
             fi
-            base="refs/tags/skillhub/released"
+            base=(--base refs/tags/skillhub/released)
           fi
-          uv run skillhub changed-skills --base "$base" --head "$HEAD_SHA" > "$RUNNER_TEMP/changed.json"
+          uv run skillhub changed-skills "${base[@]}" --head "$HEAD_SHA" > "$RUNNER_TEMP/changed.json"
           cat "$RUNNER_TEMP/changed.json"
           # Never promote content out of a quarantined department through CI. The rows are printed above.
           if jq -e 'any(.[]; .moved_from_quarantine == true)' "$RUNNER_TEMP/changed.json" > /dev/null; then

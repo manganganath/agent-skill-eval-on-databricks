@@ -127,6 +127,21 @@ def test_cli_prints_json_rows(repo, monkeypatch):
     ]
 
 
+def test_an_empty_base_adds_every_skill_at_head(repo, monkeypatch):
+    """Before the first release nothing is released: every skill at head is added, and none is deleted."""
+    path, base = repo
+    git(path, "rm", "-r", "-q", "skills/common/beta")
+    head = commit_all(path, "delete beta")
+    assert changed_skills(None, head, repo=path) == [ChangedSkill("common", "alpha", "added", True, True)]
+    monkeypatch.chdir(path)
+    result = CliRunner().invoke(app, ["changed-skills", "--empty-base", "--head", base])
+    assert result.exit_code == 0, result.output
+    rows = [(r["skill"], r["status"]) for r in json.loads(result.stdout)]
+    assert rows == [("alpha", "added"), ("beta", "added")]
+    for args in ([], ["--base", base, "--empty-base"], ["--base", ""]):
+        assert CliRunner().invoke(app, ["changed-skills", *args, "--head", head]).exit_code == 2
+
+
 def test_option_like_ref_is_rejected(repo):
     path, base = repo
     with pytest.raises(GitRefError, match="must not start with"):

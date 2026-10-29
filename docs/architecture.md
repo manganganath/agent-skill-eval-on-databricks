@@ -44,7 +44,7 @@ sequenceDiagram
   GH-->>A: Sticky comment with the verdict table
 ```
 
-**Merge to `main`.** CI re-evaluates every changed skill that still exists on every merge. A change that moves a skill out of a quarantined department stops here: an operator must handle it. A `fail` or `inconclusive` verdict stops the run. `warn`, `advisory` and `pass` go on to approval in the `production` environment. After approval, CI starts the `skill-switch` Job (`publish`, then `switch`), which registers `<skill>-v<N+1>` in the versions schema and makes it live, and writes the journal. CI never registers a version itself; publishes run only in the `skill-switch` Job.
+**Merge to `main`.** CI re-evaluates every changed skill that still exists on every merge. Changed means changed since the `skillhub/released` tag, which a release moves when it finishes, so the next merge picks up a release that failed or was rejected. Before the first release there is no tag, and every skill counts as changed. A change that moves a skill out of a quarantined department stops here: an operator must handle it. A `fail` or `inconclusive` verdict stops the run. `warn`, `advisory` and `pass` go on to approval in the `production` environment. After approval, CI starts the `skill-switch` Job (`publish`, then `switch`), which registers `<skill>-v<N+1>` in the versions schema and makes it live, and writes the journal. CI never registers a version itself; publishes run only in the `skill-switch` Job.
 
 **Publish gate.** Published content equals evaluated content, and the eval read the merged cases. The publish step takes the run key of the merge eval and the plan's eval digests and cells. It refuses, exits with code 2 and journals `publish_refused` unless all of these hold:
 
