@@ -35,7 +35,10 @@ const detail: CandidateDetailT = {
       verdict: "warn", run_id: "r1", experiment_id: "17", n_cases: 4, pass_rate: 0.75, error_rate: 0, accuracy: 1,
       content_hash: "sha256:abc", started_at: "2026-10-28T10:00:00Z" },
   ],
-  candidate: { pr_number: 5, run_key: KEY, git_sha: "c7ecd3e0123456789", uploaded_at: "2026-10-28T09:00:00Z" },
+  candidate: {
+    kind: "pr", pr_number: 5, run_key: KEY, git_sha: "c7ecd3e0123456789", uploaded_at: "2026-10-28T09:00:00Z",
+    uploaded_by: null,
+  },
 };
 
 beforeEach(() => {
@@ -95,5 +98,28 @@ describe("CandidateDetail", () => {
     vi.mocked(api.candidate).mockRejectedValue(new ApiError(404, "candidate_not_found"));
     renderAt();
     expect(await screen.findByRole("alert")).toHaveTextContent(/not found, or you do not have access/i);
+  });
+});
+
+describe("CandidateDetail for a draft", () => {
+  const DRAFT = "draft_6720a1b2c3d4e5f6a7b8c9d0";
+  const draft: CandidateDetailT = {
+    ...detail,
+    rubric: null,
+    candidate: { kind: "draft", pr_number: null, run_key: DRAFT, git_sha: null, uploaded_at: "2026-10-29T08:00:00Z",
+      uploaded_by: "ana@example.com" },
+  };
+
+  it("says a draft is never released, who uploaded it, and that it runs trigger mode only without a rubric", async () => {
+    vi.mocked(api.candidate).mockResolvedValue(draft);
+    renderAt(`/candidates/${DRAFT}/common/new-skill`);
+    const banner = await screen.findByRole("note", { name: /release status/i });
+    expect(banner).toHaveTextContent("Not released. Draft uploaded by ana@example.com.");
+    expect(banner).toHaveTextContent(/never released/i);
+    expect(screen.getByText("Draft")).toBeTruthy();
+    expect(screen.getByText(/no rubric, so it can run in trigger mode only/i)).toBeTruthy();
+    expect(screen.getByRole("link", { name: /run eval/i })).toHaveAttribute(
+      "href", `/run?candidate=${DRAFT}&skill=common%2Fnew-skill`,
+    );
   });
 });

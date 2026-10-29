@@ -1,7 +1,7 @@
 import io
 from types import SimpleNamespace
 
-from databricks.sdk.errors import NotFound
+from databricks.sdk.errors import NotFound, ResourceAlreadyExists
 from databricks.sdk.service.workspace import ObjectType
 
 
@@ -28,12 +28,14 @@ class FakeTree:
     `files` maps a path, with or without the /Workspace prefix, to bytes; folders are implied by the paths.
     Entries come back without the prefix, as the Workspace API returns them, and `list(recursive=True)` lists
     one folder per call, as the SDK does. `calls` records (method, path). `fail` maps a path to the exception a
-    call on it raises."""
+    call on it raises. `mkdirs`, `upload` and `delete` write the tree; `formats` records each upload's format."""
 
     def __init__(self, files: dict[str, bytes] | None = None, fail: dict | None = None):
         self.files = {self._norm(p): bytes(b) for p, b in (files or {}).items()}
         self.fail = {self._norm(p): e for p, e in (fail or {}).items()}
         self.calls: list[tuple[str, str]] = []
+        self.made: set[str] = set()
+        self.formats: dict[str, object] = {}
 
     @staticmethod
     def _norm(path: str) -> str:
@@ -41,6 +43,9 @@ class FakeTree:
 
     def _dirs(self) -> set[str]:
         out: set[str] = set()
+        for d in self.made:
+            parts = d.split("/")
+            out.update("/".join(parts[:i]) for i in range(2, len(parts) + 1))
         for f in self.files:
             parts = f.split("/")
             out.update("/".join(parts[:i]) for i in range(2, len(parts)))
@@ -81,6 +86,23 @@ class FakeTree:
         if p not in self.files:
             raise NotFound(p)
         return io.BytesIO(self.files[p])
+
+    def mkdirs(self, path):
+        self.made.add(self._touch("mkdirs", path))
+
+    def upload(self, path, content, *, format=None, overwrite=False, **_):
+        p = self._touch("upload", path)
+        if p.rsplit("/", 1)[0] not in self._dirs():
+            raise NotFound(f"parent of {p}")
+        if p in self.files and not overwrite:
+            raise ResourceAlreadyExists(p)
+        self.files[p] = bytes(content if isinstance(content, bytes) else content.read())
+        self.formats[p] = format
+
+    def delete(self, path, recursive=False):
+        p = self._touch("delete", path)
+        self.files = {f: b for f, b in self.files.items() if f != p and not f.startswith(p + "/")}
+        self.made = {d for d in self.made if d != p and not d.startswith(p + "/")}
 
     def get_status(self, path):
         p = self._touch("get_status", path)

@@ -22,8 +22,9 @@ _IDENT = re.compile(r"[a-z0-9_]+")
 _VAR = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)(?::-([^}]*))?\}")
 # A key ending in one of these would share a schema name with another department: x_versions -> dept_x_versions.
 _RESERVED_SUFFIXES = ("_versions", "_evals")
-# <workspace_root>/<catalog>/candidates holds the CI candidate folders, next to the department experiment folders.
-_RESERVED_KEYS = ("candidates",)
+# <workspace_root>/<catalog>/candidates holds the CI candidate folders, and .../drafts the Skill Hub drafts, next to
+# the department experiment folders.
+_RESERVED_KEYS = ("candidates", "drafts")
 # A workspace folder path: absolute, segments of letters, digits, @ . _ + - (user names and application IDs).
 _WORKSPACE_PATH = re.compile(r"(?:/[A-Za-z0-9@._+-]+)+")
 DEFAULT_WORKSPACE_ROOT = "/Shared/skill-hub"
@@ -41,7 +42,9 @@ def check_department_keys(keys: Iterable[str]) -> None:
                 "with another department's"
             )
         if key in _RESERVED_KEYS:
-            raise ValueError(f"department key {key!r} is reserved: the CI candidate folders use that name")
+            raise ValueError(
+                f"department key {key!r} is reserved: the candidate and draft folders use that name"
+            )
     if "common" not in keys:
         raise ValueError("departments must include common: every department scope sees it")
 

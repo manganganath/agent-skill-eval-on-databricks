@@ -18,6 +18,7 @@ DIRS = {
     "/Shared/skill-hub": 200,
     "/Shared/skill-hub/skill_hub": 300,
     "/Shared/skill-hub/skill_hub/candidates": 310,
+    "/Shared/skill-hub/skill_hub/drafts": 320,
 }
 
 
@@ -397,13 +398,19 @@ def test_ensure_experiment_root_replaces_folder_acls_and_gives_users_nothing(mon
     w = FakeW()
     lines = exp.ensure_experiment_root(cfg, w, ci=CI, ci_eval=CI_EVAL, app=APP)
     assert w.mkdirs[0] == ROOT
-    assert set(w.mkdirs[1:]) == {f"{ROOT}/candidates", *(f"{ROOT}/{d}" for d in cfg.departments)}
-    (root_id, root), (cand_id, cand), (base_id, base) = (
+    assert set(w.mkdirs[1:]) == {
+        f"{ROOT}/candidates",
+        f"{ROOT}/drafts",
+        *(f"{ROOT}/{d}" for d in cfg.departments),
+    }
+    (root_id, root), (cand_id, cand), (drafts_id, drafts), (base_id, base) = (
         w.sets
     )  # root first: replacing the base may drop the caller
-    assert (base_id, root_id, cand_id) == ("200", "300", "310")
+    assert (base_id, root_id, cand_id, drafts_id) == ("200", "300", "310", "320")
     # Creating a run's candidate folder needs MANAGE; ci_eval gets it on the candidates folder only.
     assert _acl_of(cand) == {CI: "CAN_MANAGE", CI_EVAL: "CAN_MANAGE"}
+    # The app creates Skill Hub drafts in drafts/ only: it never gets MANAGE on the PR uploads in candidates/.
+    assert _acl_of(drafts) == {CI: "CAN_MANAGE", CI_EVAL: "CAN_MANAGE", APP: "CAN_MANAGE"}
     assert _acl_of(base) == {CI: "CAN_MANAGE", CI_EVAL: "CAN_EDIT"}
     assert _acl_of(root) == {
         CI: "CAN_MANAGE",
@@ -414,6 +421,15 @@ def test_ensure_experiment_root_replaces_folder_acls_and_gives_users_nothing(mon
     assert "users" not in _acl_of(base) | _acl_of(root)
     assert not [ln for ln in lines if ln.startswith("warning")]
     assert w.updates == []  # set, never a merging update
+
+
+def test_without_the_app_principal_the_drafts_folder_has_only_the_ci_principals(monkeypatch):
+    monkeypatch.delenv("SKILLHUB_APP_PRINCIPAL", raising=False)
+    w = FakeW()
+    lines = exp.ensure_experiment_root(make_cfg(), w, ci=CI, ci_eval=CI_EVAL)
+    drafts = next(acl for oid, acl in w.sets if oid == "320")
+    assert _acl_of(drafts) == {CI: "CAN_MANAGE", CI_EVAL: "CAN_MANAGE"}
+    assert any(ln.startswith("warning") and "SKILLHUB_APP_PRINCIPAL" in ln for ln in lines)
 
 
 def test_ensure_experiment_root_reads_the_app_principal_from_the_environment(monkeypatch):
@@ -608,9 +624,10 @@ def test_the_experiment_root_follows_workspace_root(monkeypatch):
     w = FakeW(dirs=HOME_DIRS)
     exp.ensure_experiment_root(cfg, w, ci=CI, ci_eval=CI_EVAL, app=APP)
     assert w.mkdirs[0] == f"{HOME}/skill-hub/skill_hub"
-    (root_id, root), (_, cand), (base_id, base) = w.sets
+    (root_id, root), (_, cand), (_, drafts), (base_id, base) = w.sets
     assert (root_id, base_id) == ("40", "30")
     assert _acl_of(cand) == {CI: "CAN_MANAGE", CI_EVAL: "CAN_MANAGE"}
+    assert _acl_of(drafts) == {CI: "CAN_MANAGE", CI_EVAL: "CAN_MANAGE", APP: "CAN_MANAGE"}
     assert _acl_of(base) == {CI: "CAN_MANAGE", CI_EVAL: "CAN_EDIT"}
     assert "users" not in _acl_of(root)
 

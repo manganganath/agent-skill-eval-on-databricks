@@ -62,14 +62,19 @@ class JournalRowOut(BaseModel):
 
 
 class CandidateSummary(BaseModel):
-    """A skill under review in a pull request, not released. Mirrors CandidateSummary in app/frontend/src/api/types.ts.
+    """A skill that is not released: under review in a pull request (`kind` pr) or uploaded as a Skill Hub draft
+    (`kind` draft). Mirrors CandidateSummary in app/frontend/src/api/types.ts.
 
-    `verdicts` is the newest result of each model across modes, from the candidate's own run keys only."""
+    `verdicts` is the newest result of each model across modes, from the candidate's own run keys only. A draft has
+    no pull request or commit; `uploaded_by` and `has_rubric` are known for drafts only."""
 
+    kind: Literal["pr", "draft"]
     run_key: str
-    pr_number: int
-    git_sha: str
+    pr_number: int | None
+    git_sha: str | None
     uploaded_at: datetime | None
+    uploaded_by: str | None = None
+    has_rubric: bool | None = None
     dept: str
     name: str
     description: str | None
@@ -79,10 +84,12 @@ class CandidateSummary(BaseModel):
 
 
 class CandidateBlock(BaseModel):
-    pr_number: int
+    kind: Literal["pr", "draft"]
+    pr_number: int | None
     run_key: str
-    git_sha: str
+    git_sha: str | None
     uploaded_at: datetime | None
+    uploaded_by: str | None = None
 
 
 class CandidateResult(BaseModel):

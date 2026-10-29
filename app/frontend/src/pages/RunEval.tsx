@@ -1,9 +1,11 @@
 import { useEffect, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { api } from "../api/client";
-import type { AppConfig, CandidateSummary, EvalRunIn, EvalRunStatus, JournalRow, Me, Mode, SkillSummary } from "../api/types";
+import type {
+  AppConfig, CandidateKind, CandidateSummary, EvalRunIn, EvalRunStatus, JournalRow, Me, Mode, SkillSummary,
+} from "../api/types";
 import { MODES } from "../api/types";
-import { canSeeCandidates, prNumberOf } from "../candidates";
+import { canSeeCandidates, isDraftKey, prNumberOf } from "../candidates";
 import { useAsync } from "../hooks/useAsync";
 import { CandidateBadge } from "../components/CandidateBadge";
 import { ErrorState } from "../components/ErrorState";
@@ -40,16 +42,21 @@ function VersionPicker({ fqn, name, liveVersion, value, onChange }: {
   );
 }
 
-// A candidate choice: one skill of one upload. The run key names the upload's folder.
-type Choice = { run_key: string; pr_number: number; dept: string; name: string };
+// A candidate choice: one skill of one upload (a pull request's, or a draft). The run key names the upload's folder.
+type Choice = {
+  run_key: string; kind: CandidateKind; pr_number: number | null; dept: string; name: string; has_rubric: boolean | null;
+};
 const choiceId = (c: Choice) => `${c.run_key}|${c.dept}/${c.name}`;
+const choiceLabel = (c: Choice) => (c.kind === "draft" ? "draft" : `candidate in PR #${c.pr_number}`);
 
 // The candidate a candidate page linked to (?candidate=<run key>&skill=<dept>/<name>), when the link is well formed.
 function linked(params: URLSearchParams): Choice | null {
   const runKey = params.get("candidate") ?? "";
   const [dept, name, ...rest] = (params.get("skill") ?? "").split("/");
+  if (!dept || !name || rest.length > 0) return null;
   const pr = prNumberOf(runKey);
-  return pr !== null && dept && name && rest.length === 0 ? { run_key: runKey, pr_number: pr, dept, name } : null;
+  if (pr !== null) return { run_key: runKey, kind: "pr", pr_number: pr, dept, name, has_rubric: null };
+  return isDraftKey(runKey) ? { run_key: runKey, kind: "draft", pr_number: null, dept, name, has_rubric: null } : null;
 }
 
 export default function RunEval() {
@@ -84,6 +91,9 @@ export default function RunEval() {
   const choices = fromLink && !listed.some((c) => choiceId(c) === choiceId(fromLink)) ? [fromLink, ...listed] : listed;
   // One run evaluates live skills, or skills of one candidate upload: the Job reads one skills folder per run.
   const candidateKey = pickedCandidates.length > 0 ? pickedCandidates[0].split("|")[0] : null;
+  // A draft without a rubric can run trigger mode only: the effectiveness judges score against the rubric.
+  const triggerOnly = choices.some((c) => pickedCandidates.includes(choiceId(c)) && c.kind === "draft" && c.has_rubric === false);
+  const runModes = triggerOnly ? modes.filter((m) => m !== "effectiveness") : modes;
 
   // The linked candidate is picked once, when the candidates have loaded.
   const preselected = useRef(false);
@@ -96,7 +106,7 @@ export default function RunEval() {
   const active = run !== null && !gaveUp && !pollError &&
     !(status && (status.result_state !== null || TERMINAL.includes(status.state)));
   const chosen = picked.length > 0 || pickedCandidates.length > 0;
-  const ready = chosen && models.length > 0 && modes.length > 0 && !submitting && !active;
+  const ready = chosen && models.length > 0 && runModes.length > 0 && !submitting && !active;
 
   // Polls every 5 s. Stops on a result state, on unmount (the timer is cleared) or after MAX_POLLS.
   useEffect(() => {
@@ -144,7 +154,10 @@ export default function RunEval() {
     // Only pins for skills that are still picked are sent. With no pins the body has no versions field.
     const pinned = Object.fromEntries(Object.entries(pins).filter(([fqn]) => picked.includes(fqn)));
     const body: EvalRunIn = candidateKey !== null
-      ? { candidate: { run_key: candidateKey, skills: pickedCandidates.map((id) => id.split("|")[1]) }, models, modes }
+      ? {
+        candidate: { run_key: candidateKey, skills: pickedCandidates.map((id) => id.split("|")[1]) },
+        models, modes: runModes,
+      }
       : { skills: picked, models, modes, ...(Object.keys(pinned).length > 0 ? { versions: pinned } : {}) };
     try {
       const out = await api.startEval(body);
@@ -222,10 +235,10 @@ export default function RunEval() {
                     <label key={id} className="choice choice-candidate">
                       <input type="checkbox" checked={pickedCandidates.includes(id)} disabled={blocked}
                         onChange={() => toggle(pickedCandidates, id, setPickedCandidates)}
-                        aria-label={`${c.dept}/${c.name}, candidate in PR #${c.pr_number}`} />
+                        aria-label={`${c.dept}/${c.name}, ${choiceLabel(c)}`} />
                       <span className="choice-text">
                         <strong>{c.name}</strong><span className="choice-sub">{c.dept}</span>
-                        <CandidateBadge pr={c.pr_number} />
+                        <CandidateBadge kind={c.kind} pr={c.pr_number} />
                       </span>
                     </label>
                   );
@@ -259,9 +272,11 @@ export default function RunEval() {
       </fieldset>
       <fieldset className="form-group">
         <legend>Modes</legend>
+        {triggerOnly && <p className="hint">A draft without a rubric runs in trigger mode only.</p>}
         <div className="choice-grid">
           {MODES.map((m) => (
-            <label key={m} className="choice"><input type="checkbox" checked={modes.includes(m)}
+            <label key={m} className="choice"><input type="checkbox" checked={runModes.includes(m)}
+              disabled={triggerOnly && m === "effectiveness"}
               onChange={() => toggle(modes, m, setModes)} aria-label={m} />
               <span className="choice-text"><strong>{m}</strong><span className="choice-sub">{MODE_HINTS[m]}</span></span>
             </label>

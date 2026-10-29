@@ -14,6 +14,7 @@ from mlflow.entities import UnityCatalog
 from skillhub.config import HubConfig
 from skillhub.naming import (
     CANDIDATES,
+    DRAFTS,
     evals_schema,
     experiment_parts,
     experiment_path,
@@ -233,6 +234,14 @@ def root_acl(cfg: HubConfig, *, ci: str, ci_eval: str, app: str | None) -> dict[
     return acl
 
 
+def drafts_acl(*, ci: str, ci_eval: str, app: str | None) -> dict[str, str]:
+    """The direct ACL of <workspace_root>/<catalog>/drafts. Without the app principal, nobody can upload drafts."""
+    acl = {ci: "CAN_MANAGE", ci_eval: "CAN_MANAGE"}
+    if app:
+        acl[app] = "CAN_MANAGE"
+    return acl
+
+
 def _base_acl(*, ci: str, ci_eval: str) -> dict[str, str]:
     """The direct ACL of <workspace_root>, which every catalog (dev and prod) shares."""
     return {ci: "CAN_MANAGE", ci_eval: "CAN_EDIT"}
@@ -243,14 +252,16 @@ def ensure_experiment_root(cfg: HubConfig, w, *, ci: str, ci_eval: str, app: str
 
     <workspace_root> is shared by every catalog, so it gets only the two CI principals (the same in dev and
     prod). <workspace_root>/<catalog> adds this target's app principal and the reviewers; it holds the department
-    experiment folders and the CI candidates. Folder ACLs only add to what a folder inherits: every folder under
+    experiment folders, the CI candidates and the Skill Hub drafts. Folder ACLs only add to what a folder inherits:
+    every folder under
     /Workspace/Shared inherits `users` CAN_MANAGE, so the bundle puts the root in the ci principal's home
     folder. An inherited grant beyond these ACLs is warned about, and check-permissions reports it.
     """
     app = app or _env(APP_ENV)
     base = workspace_root(cfg)
     root = experiment_root(cfg)
-    for path in (root, f"{root}/{CANDIDATES}", *(f"{root}/{dept}" for dept in cfg.departments)):
+    folders = (f"{root}/{CANDIDATES}", f"{root}/{DRAFTS}", *(f"{root}/{dept}" for dept in cfg.departments))
+    for path in (root, *folders):
         w.workspace.mkdirs(path)
     want = root_acl(cfg, ci=ci, ci_eval=ci_eval, app=app)
     # The root first: a caller that is not an admin may lose its own access when the base is replaced.
@@ -258,10 +269,13 @@ def ensure_experiment_root(cfg: HubConfig, w, *, ci: str, ci_eval: str, app: str
     # CI creates a folder per run under candidates/, and creating a folder needs MANAGE. ci_eval gets MANAGE on
     # candidates/ only, never on the experiment folders, so code holding its credentials cannot reopen their ACLs.
     _set_dir_acl(w, cfg, f"{root}/{CANDIDATES}", {ci: "CAN_MANAGE", ci_eval: "CAN_MANAGE"})
+    # The Skill Hub creates a folder per draft under drafts/, so the app gets MANAGE there and only there: it never
+    # gets MANAGE on candidates/, so it cannot change a pull request's upload. ci_eval's cleanup deletes old drafts.
+    _set_dir_acl(w, cfg, f"{root}/{DRAFTS}", drafts_acl(ci=ci, ci_eval=ci_eval, app=app))
     base_id = _set_dir_acl(w, cfg, base, _base_acl(ci=ci, ci_eval=ci_eval))
     lines = [
         f"experiment root {root}: CAN_MANAGE ci, CAN_EDIT ci_eval and app, CAN_READ {cfg.roles.reviewers}; "
-        f"{CANDIDATES}/: CAN_MANAGE ci and ci_eval"
+        f"{CANDIDATES}/: CAN_MANAGE ci and ci_eval; {DRAFTS}/: CAN_MANAGE ci, ci_eval and app"
     ]
     if not app:
         msg = f"{APP_ENV} is not set: the Skill Hub app has no access to {root}; set it and re-run bootstrap"

@@ -36,9 +36,12 @@ export interface SkillDetail {
   eval_access: EvalAccess;
 }
 
-// A skill under review in a pull request, not released (CandidateSummary in app/backend/schemas.py).
+// A skill that is not released: under review in a pull request ("pr"), or a Skill Hub draft ("draft").
+// CandidateSummary in app/backend/schemas.py. A draft has no pull request or commit.
+export type CandidateKind = "pr" | "draft";
 export interface CandidateSummary {
-  run_key: string; pr_number: number; git_sha: string; uploaded_at: string | null;
+  kind: CandidateKind; run_key: string; pr_number: number | null; git_sha: string | null; uploaded_at: string | null;
+  uploaded_by: string | null; has_rubric: boolean | null;
   dept: string; name: string; description: string | null; content_hash: string | null;
   verdicts: Record<string, Verdict>; eval_access: EvalAccess;
 }
@@ -55,8 +58,17 @@ export interface CandidateDetail {
   dept: string; name: string; description: string | null; content_hash: string;
   verdicts: Record<string, Verdict>; files: Record<string, string>; evals: EvalFile | null; rubric: Rubric | null;
   eval_access: EvalAccess; results: CandidateResult[];
-  candidate: { pr_number: number; run_key: string; git_sha: string; uploaded_at: string | null };
+  candidate: {
+    kind: CandidateKind; pr_number: number | null; run_key: string; git_sha: string | null;
+    uploaded_at: string | null; uploaded_by: string | null;
+  };
 }
+
+// A draft upload: a zip of the skill folder as it is (base64), or the folder's files with their paths.
+export type DraftIn =
+  | { dept: string; archive: string }
+  | { dept: string; files: { path: string; content: string }[] };
+export interface DraftOut { run_key: string; dept: string; name: string; has_rubric: boolean }
 
 export interface JournalRow {
   dept: string; skill: string; action: string; version: number | null; from_version: number | null;

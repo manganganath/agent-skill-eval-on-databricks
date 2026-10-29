@@ -31,8 +31,8 @@ function SignedInUser() {
 
 export function Layout() {
   const { pathname } = useLocation();
-  // A skill page, live or candidate, belongs to the catalog, so the Catalog tab stays marked there too.
-  const inCatalog = pathname.startsWith("/skills/") || pathname.startsWith("/candidates/");
+  // A skill page (live, candidate or draft) and the draft upload belong to the catalog, so the tab stays marked.
+  const inCatalog = ["/skills/", "/candidates/", "/drafts/"].some((p) => pathname.startsWith(p));
   return (
     <>
       <a className="skip-link" href="#main">Skip to content</a>

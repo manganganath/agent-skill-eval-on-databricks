@@ -101,11 +101,14 @@ export function CandidateCard({ c }: { c: CandidateSummary }) {
     <li className="skill-card skill-card-candidate">
       <div className="skill-card-head">
         <h3><Link className="card-link" to={candidatePath(c)}>{c.name}</Link></h3>
-        <CandidateBadge pr={c.pr_number} />
+        <CandidateBadge kind={c.kind} pr={c.pr_number} />
       </div>
       <p className="skill-card-dept">{c.dept}</p>
       {c.description && <p className="skill-card-desc">{c.description}</p>}
-      <Scorecard label={`Latest verdicts for ${c.name} in PR #${c.pr_number}`} verdicts={c.verdicts} access={c.eval_access} />
+      <Scorecard
+        label={`Latest verdicts for ${c.name}, ${c.kind === "draft" ? "draft" : `in PR #${c.pr_number}`}`}
+        verdicts={c.verdicts} access={c.eval_access}
+      />
     </li>
   );
 }
@@ -175,6 +178,7 @@ export default function Catalog() {
           {total !== null && total > 0 && <span className="count-pill">{total} live</span>}
           {candidates.length > 0 && <span className="count-pill count-pill-review">{candidates.length} under review</span>}
         </div>
+        {reviewing && <Link className="btn" to="/drafts/new">Upload draft</Link>}
       </div>
       <div className="catalog-tools">
         <div className="field search">
@@ -223,7 +227,9 @@ export default function Catalog() {
             <h2 id="under-review">Under review</h2>
             <span>{plural(visibleCandidates.length, "skill")}</span>
           </div>
-          <p className="group-note">Not released yet. Open a candidate to see its pull request, test cases and results.</p>
+          <p className="group-note">
+            Not released yet: skills in pull requests, and drafts uploaded here. Open one to see its test cases and results.
+          </p>
           <ul className="cards">
             {visibleCandidates.map((c) => <CandidateCard key={`${c.run_key}/${c.dept}/${c.name}`} c={c} />)}
           </ul>

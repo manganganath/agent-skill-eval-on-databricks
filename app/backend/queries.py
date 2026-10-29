@@ -121,7 +121,7 @@ CANDIDATE_RUN_COLUMNS = (
     "run_key, skill, skill_version, content_hash, model_profile, mode, verdict, git_sha, trigger_source, run_id, "
     "experiment_id, n_cases, pass_rate, error_rate, accuracy, started_at"
 )
-MAX_CANDIDATE_KEYS = 100
+MAX_CANDIDATE_KEYS = 200  # candidates.MAX_KEYS pull request uploads and as many drafts
 
 
 def candidate_runs_sql(

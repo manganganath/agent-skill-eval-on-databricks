@@ -17,3 +17,6 @@ export function prNumberOf(runKey: string): number | null {
   const m = /^pr([1-9][0-9]{0,8})_[0-9a-f]{7}(?:_a[0-9]{1,4})?$/.exec(runKey);
   return m ? Number(m[1]) : null;
 }
+
+// draft_<8 hex time><16 hex random>: the folder name of a Skill Hub draft.
+export const isDraftKey = (runKey: string): boolean => /^draft_[0-9a-f]{24}$/.test(runKey);

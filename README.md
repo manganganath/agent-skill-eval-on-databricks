@@ -20,7 +20,7 @@ Configuration is in `config/hub.yaml`, and its `${VAR}` values come from the env
 - **Skills registry:** common and department-specific skills as Unity Catalog securables. Versions can be published, switched and rolled back.
 - **Skill evaluation:** whether a skill is invoked when it should be (and not when it shouldn't), and how much it improves results compared with the same model without the skill. Results form a matrix across skill versions and models, scored with MLflow judges.
 - **CI/CD:** GitHub Actions evaluate every skill change on its pull request. A reviewer approves the new version before it goes live.
-- **Skill Hub:** a Databricks App for browsing skills, running evals, reviewing results and switching versions, governed by Unity Catalog permissions. Authors and reviewers also see and evaluate skills that are still under review in a pull request.
+- **Skill Hub:** a Databricks App for browsing skills, running evals, reviewing results and switching versions, governed by Unity Catalog permissions. Authors and reviewers also see and evaluate skills that are still under review in a pull request, or that they upload as drafts.
 
 ```mermaid
 flowchart LR

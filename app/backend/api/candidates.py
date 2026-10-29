@@ -39,9 +39,9 @@ def list_candidates(
     cfg: Annotated[HubConfig, Depends(get_cfg)],
     sql: Annotated[UserSql, Depends(get_sql)],
 ) -> list[CandidateSummary]:
-    """The changed skills of each pull request's newest upload that the user may see. The work is bounded: one
-    folder listing, one marker per pull request run, one Job-runs listing, one SQL read per visible department and
-    one SKILL.md per candidate, side by side on a small pool. No other skill file is opened."""
+    """The changed skills of each pull request's newest upload, and the drafts, that the user may see. The work is
+    bounded: two folder listings, one marker per pull request run, one draft.json per draft, one Job-runs listing,
+    one SQL read per department and one SKILL.md per pull request candidate, side by side on a small pool."""
     me = authz.fetch_me(user_w)
     if not candidates.may_see(me, cfg):
         return []  # nothing is read as the app principal for this user
@@ -49,17 +49,34 @@ def list_candidates(
     with ThreadPoolExecutor(max_workers=MAX_PARALLEL) as pool:
         # Folder names only; no content is opened before the departments are settled.
         listing = pool.submit(candidates.list_keys, app_w, cfg)
+        draft_listing = pool.submit(candidates.list_draft_keys, app_w, cfg)
         depts = candidates.visible_departments(app_w, cfg, me, pool, memo)
-        keys = candidates.workspace_call(listing.result)
-        if not keys or not depts:
-            return []
-        stamps = {k.run_key: pool.submit(candidates.uploaded_at, app_w, cfg, k.run_key) for k in keys}
+        keys = candidates.workspace_call(listing.result) if depts else []
+        draft_keys = candidates.workspace_call(draft_listing.result)
+        stamps = {k.run_key: pool.submit(candidates.uploaded_at, app_w, cfg, k) for k in keys}
+        metas = [(k, pool.submit(candidates.read_meta, app_w, cfg, k, cfg.departments)) for k in draft_keys]
         newest = candidates.newest_per_pr(keys, {k: s.result() for k, s in stamps.items()})
-        chosen = [k.run_key for k, _ in newest]
-        started = pool.submit(candidates.tested_skills, app_w, chosen)
+        # A draft is seen in a visible department, and always by its uploader.
+        drafts: list[tuple[candidates.CandidateKey, candidates.DraftMeta]] = []
+        for key, read in metas:
+            try:
+                meta = read.result()
+            except DatabricksError as exc:  # this draft only
+                log.warning("skipped draft %s: %s", key.run_key, type(exc).__name__)
+                continue
+            if meta is not None and (meta.dept in depts or candidates.is_uploader(meta, me)):
+                drafts.append((key, meta))
+        if not newest and not drafts:
+            return []
+        pr_keys = [k.run_key for k, _ in newest]
+        started = pool.submit(candidates.tested_skills, app_w, pr_keys)
+        # Per department: the pull request uploads when the user may see the department, and its drafts shown here.
+        dept_keys = {d: list(pr_keys) for d in depts} if pr_keys else {}
+        for key, meta in drafts:
+            dept_keys.setdefault(meta.dept, []).append(key.run_key)
         reads = {
-            d: pool.submit(read_dept, sql, queries.candidate_runs_sql(cfg, d, chosen), d)
-            for d in sorted(depts)
+            d: pool.submit(read_dept, sql, queries.candidate_runs_sql(cfg, d, ks), d)
+            for d, ks in sorted(dept_keys.items())
         }
         tested = started.result()
         rows: dict[str, tuple[list[dict], EvalAccess]] = {d: r.result() for d, r in reads.items()}
@@ -77,9 +94,25 @@ def list_candidates(
                 (key, stamp, d, n) for d, n in sorted(refs) if d in depts and candidates.valid_skill_name(n)
             ]
         plan = plan[: candidates.MAX_CANDIDATES]
-        skill_mds = [
-            pool.submit(candidates.read_skill_md, app_w, cfg, k.run_key, d, n) for k, _, d, n in plan
-        ]
+        skill_mds = [pool.submit(candidates.read_skill_md, app_w, cfg, k, d, n) for k, _, d, n in plan]
+
+        def summary(key, dept, name, **fields) -> CandidateSummary:
+            dept_rows, access = rows[dept]
+            mine = [r for r in dept_rows if r.get("skill") == name]
+            latest = candidates.latest_rows(mine, key.run_key)
+            return CandidateSummary(
+                kind=key.kind,
+                run_key=key.run_key,
+                pr_number=key.pr_number,
+                git_sha=candidates.commit(key, mine, tested.get(key.run_key)),
+                dept=dept,
+                name=name,
+                content_hash=candidates.content_hash(latest),
+                verdicts=candidates.verdicts(latest),
+                eval_access=access,
+                **fields,
+            )
+
         out: list[CandidateSummary] = []
         for (key, stamp, dept, name), skill_md in zip(plan, skill_mds, strict=True):
             try:
@@ -89,21 +122,17 @@ def list_candidates(
                 continue
             if data is None:
                 continue  # not in the upload: deleted in the pull request, or the folder went away
-            dept_rows, access = rows[dept]
-            mine = [r for r in dept_rows if r.get("skill") == name]
-            latest = candidates.latest_rows(mine, key.run_key)
+            out.append(summary(key, dept, name, uploaded_at=stamp, description=candidates.description(data)))
+        for key, meta in drafts:
             out.append(
-                CandidateSummary(
-                    run_key=key.run_key,
-                    pr_number=key.pr_number,
-                    git_sha=candidates.commit(key, mine, tested.get(key.run_key)),
-                    uploaded_at=stamp,
-                    dept=dept,
-                    name=name,
-                    description=candidates.description(data),
-                    content_hash=candidates.content_hash(latest),
-                    verdicts=candidates.verdicts(latest),
-                    eval_access=access,
+                summary(
+                    key,
+                    meta.dept,
+                    meta.skill,
+                    uploaded_at=meta.uploaded_at,
+                    description=meta.description,
+                    uploaded_by=meta.uploaded_by,
+                    has_rubric=meta.has_rubric,
                 )
             )
     return sorted(out, key=_order)
@@ -132,19 +161,20 @@ def candidate_detail(
     key = candidates.parse_key(run_key)
     if key is None or dept not in cfg.departments or not candidates.valid_skill_name(skill):
         raise problem(404, Reason.CANDIDATE_NOT_FOUND)
-    candidates.require_visible(app_w, cfg, authz.fetch_me(user_w), [dept])  # before any read as the app
+    # Before any read as the app, except a draft's draft.json, which names its uploader.
+    meta = candidates.authorize(app_w, cfg, authz.fetch_me(user_w), key, [(dept, skill)])
     with ThreadPoolExecutor(max_workers=MAX_PARALLEL) as pool:
         rows_read = pool.submit(
             read_dept, sql, queries.candidate_runs_sql(cfg, dept, [key.run_key], skill), dept
         )
-        stamp_read = pool.submit(candidates.uploaded_at, app_w, cfg, key.run_key)
+        stamp_read = pool.submit(candidates.uploaded_at, app_w, cfg, key) if meta is None else None
         files = candidates.workspace_call(
-            lambda: candidates.read_skill_files(app_w, cfg, key.run_key, dept, skill, pool)
+            lambda: candidates.read_skill_files(app_w, cfg, key, dept, skill, pool)
         )
         if "SKILL.md" not in files:
             raise problem(404, Reason.CANDIDATE_NOT_FOUND)
         rows, access = rows_read.result()
-        stamp = stamp_read.result()
+        stamp = meta.uploaded_at if meta is not None else stamp_read.result()
     owned = candidates.owned_rows(rows, key.run_key)
     latest = candidates.latest_rows(owned, key.run_key)
     return CandidateDetail(
@@ -159,9 +189,11 @@ def candidate_detail(
         eval_access=access,
         results=[CandidateResult.model_validate(r) for r in owned],
         candidate=CandidateBlock(
+            kind=key.kind,
             pr_number=key.pr_number,
             run_key=key.run_key,
             git_sha=candidates.commit(key, owned),
             uploaded_at=stamp,
+            uploaded_by=meta.uploaded_by if meta is not None else None,
         ),
     )

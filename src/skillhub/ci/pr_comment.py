@@ -316,13 +316,15 @@ def upsert_pr_comment(
             http.close()
 
 
-def _matrix_sql(cfg, n_authors: int = 1) -> str:
+def _matrix_sql(cfg, n_authors: int = 1, *, merge_only: bool = False) -> str:
     """eval_runs lives in each department's evals schema, so read every one of them.
 
     Only child rows (parent_run_id set) by trusted authors count. A row with no mode stays in, and
-    blocks the gate (blocking_verdicts).
+    blocks the gate (blocking_verdicts). With `merge_only` (the publish gate), only rows whose trigger_source is
+    the :trigger_source parameter count, before the latest row of each cell is picked.
     """
     authors = ", ".join(f":author_{i}" for i in range(n_authors))
+    source = " AND trigger_source = :trigger_source" if merge_only else ""
     parts = [
         f"SELECT * EXCEPT (rn) FROM ("
         f"SELECT dept, skill, skill_version, content_hash, rubric_hash, dataset_digest, model_profile, "
@@ -332,7 +334,7 @@ def _matrix_sql(cfg, n_authors: int = 1) -> str:
         f"COALESCE(harness, 'reference'), mode "
         f"ORDER BY started_at DESC, synced_at DESC) AS rn "
         f"FROM {evals_schema(cfg, dept)}.eval_runs "
-        f"WHERE run_key = :run_key AND parent_run_id IS NOT NULL AND run_author IN ({authors})"
+        f"WHERE run_key = :run_key AND parent_run_id IS NOT NULL AND run_author IN ({authors}){source}"
         f") WHERE rn = 1"
         for dept in cfg.departments
     ]
@@ -345,15 +347,23 @@ def load_matrix_rows(
     run_key: str,
     *,
     trusted: Iterable[str],
+    trigger_source: str | None = None,
 ) -> list[dict[str, Any]]:
-    """`fetch(sql, params)` returns rows as dicts: the latest row per partition, by trusted authors only."""
+    """`fetch(sql, params)` returns rows as dicts: the latest row per partition, by trusted authors only.
+
+    With `trigger_source`, only rows of runs started with that trigger source count (the publish gate passes the
+    merge eval's). Without it every trigger source counts, as the PR and merge gates read their own keys."""
     authors = sorted(set(trusted))
     if not authors:
         raise ValueError(
             "no trusted run authors: set SKILLHUB_CI_EVAL_PRINCIPAL or run as the ci_eval principal"
         )
     params = {"run_key": run_key, **{f"author_{i}": a for i, a in enumerate(authors)}}
-    return fetch(_matrix_sql(cfg, len(authors)), params)
+    if trigger_source is None:
+        return fetch(_matrix_sql(cfg, len(authors)), params)
+    return fetch(
+        _matrix_sql(cfg, len(authors), merge_only=True), {**params, "trigger_source": trigger_source}
+    )
 
 
 def add_run_links(rows: list[dict[str, Any]], host: str) -> list[dict[str, Any]]:

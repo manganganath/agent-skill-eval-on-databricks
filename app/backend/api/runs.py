@@ -184,8 +184,9 @@ def _candidate_params(
     models: list[str],
     modes: list[str],
 ) -> dict[str, str]:
-    """Job parameters for an eval of candidate skills. Authors and reviewers only, under the candidate visibility
-    rule (backend.candidates); a candidate the user may not see answers 404, as a missing one does."""
+    """Job parameters for an eval of candidate skills: a pull request upload, or a draft. Authors and reviewers only,
+    under the candidate visibility rule (backend.candidates); a candidate the user may not see answers 404, as a
+    missing one does. Without evals/rubric.json only trigger mode can run."""
     me = authz.fetch_me(user_w)
     key = candidates.parse_key(ref.run_key)
     refs: list[tuple[str, str]] = []
@@ -196,12 +197,17 @@ def _candidate_params(
         raise problem(403, Reason.NOT_AUTHOR)
     if key is None or any(d not in cfg.departments or not candidates.valid_skill_name(n) for d, n in refs):
         raise problem(404, Reason.CANDIDATE_NOT_FOUND)
-    candidates.require_visible(app_w, cfg, me, {d for d, _ in refs})
+    candidates.authorize(app_w, cfg, me, key, refs)
     for dept, name in refs:  # read as the app principal only now
-        md = f"{candidates.skill_dir(cfg, key.run_key, dept, name)}/SKILL.md"
+        md = f"{candidates.skill_dir(cfg, key, dept, name)}/SKILL.md"
         if not candidates.workspace_call(lambda md=md: candidates.exists(app_w, md)):
             raise problem(404, Reason.CANDIDATE_NOT_FOUND)
-    fixtures = candidates.workspace_call(lambda: candidates.fixtures_root(app_w, cfg, key.run_key))
+    if "effectiveness" in modes:
+        for dept, name in refs:  # the runner needs a rubric for effectiveness; say so before the Job starts
+            rubric = f"{candidates.skill_dir(cfg, key, dept, name)}/evals/rubric.json"
+            if not candidates.workspace_call(lambda rubric=rubric: candidates.exists(app_w, rubric)):
+                raise problem(422, Reason.RUBRIC_REQUIRED)
+    fixtures = candidates.workspace_call(lambda: candidates.fixtures_root(app_w, cfg, key))
     # Every parameter is sent; "" means unset. The key is fresh, so the PR gate's rows are never mixed with these.
     return {
         "run_key": candidates.hub_run_key(key.run_key),
@@ -209,10 +215,10 @@ def _candidate_params(
         "models": ",".join(models),
         "modes": ",".join(modes),
         "versions": "",
-        "source": f"git:{key.sha7}",
+        "source": candidates.source(key),
         "trigger_source": "manual",
         "requested_by": me.user,
-        "skills_root": f"{candidates.folder(cfg, key.run_key)}/skills",
+        "skills_root": f"{candidates.folder(cfg, key)}/skills",
         "fixtures_root": fixtures,
     }
 

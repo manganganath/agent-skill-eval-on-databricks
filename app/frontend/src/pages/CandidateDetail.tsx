@@ -11,6 +11,7 @@ import { VerdictChip } from "../components/VerdictChip";
 import { useAsync } from "../hooks/useAsync";
 
 const FROM_PR = "From evals/ in the pull request. Change them there.";
+const FROM_DRAFT = "From evals/ in the uploaded draft. To change them, upload the draft again.";
 const SOURCES: Record<string, string> = { pr: "Pull request", manual: "Skill Hub" };
 
 // "2026-10-28 09:00 UTC". The API sends ISO times.
@@ -26,7 +27,7 @@ function Results({ s }: { s: CandidateDetailT }) {
   return (
     <section aria-labelledby="results" className="panel">
       <h2 id="results">Eval results</h2>
-      <p className="muted">This upload's pull request eval and the Skill Hub runs started for it, newest first.</p>
+      <p className="muted">This upload's pull request eval, if any, and the Skill Hub runs started for it, newest first.</p>
       {s.results.length > 0 ? (
         <div className="table-scroll" role="region" aria-label="Eval results" tabIndex={0}>
           <table>
@@ -54,7 +55,10 @@ function Results({ s }: { s: CandidateDetailT }) {
         </div>
       ) : s.eval_access !== "ok" ? <EvalEmpty access={s.eval_access} ok="" /> : (
         <EmptyState title="No eval results yet">
-          <p>Results appear when the pull request's eval finishes. You can also start an eval of this candidate.</p>
+          <p>
+            {s.candidate.kind === "draft" ? "Start an eval of this draft to see results here."
+              : "Results appear when the pull request's eval finishes. You can also start an eval of this candidate."}
+          </p>
         </EmptyState>
       )}
     </section>
@@ -74,36 +78,51 @@ export default function CandidateDetail() {
   }
   const s = candidate.data;
   if (!s) return <EmptyState title="No candidate to show" />;
-  const { pr_number: pr, git_sha: sha, run_key: key, uploaded_at: uploaded } = s.candidate;
+  const { kind, pr_number: pr, git_sha: sha, run_key: key, uploaded_at: uploaded, uploaded_by: uploader } = s.candidate;
   const verdicts = Object.entries(s.verdicts);
+  const draft = kind === "draft";
 
   return (
     <article>
       <nav aria-label="Breadcrumb" className="breadcrumb">
-        <Link to="/">Catalog</Link><span aria-hidden="true">/</span><span>Under review</span>
+        <Link to="/">Catalog</Link><span aria-hidden="true">/</span><span>{draft ? "Drafts" : "Under review"}</span>
         <span aria-hidden="true">/</span><span>{s.dept}</span>
       </nav>
       <div className="candidate-banner" role="note" aria-label="Release status">
-        <p className="candidate-banner-title"><strong>Not released.</strong> Under review in PR #{pr}.</p>
-        <p className="candidate-banner-meta">
-          Commit <code title={sha}>{sha.slice(0, 7)}</code>, uploaded {utcMinute(uploaded)}. Run key <code>{key}</code>.
-          Agents cannot load this skill until the pull request merges and a reviewer approves the release.
-        </p>
+        {draft ? (
+          <>
+            <p className="candidate-banner-title"><strong>Not released.</strong> Draft uploaded by {uploader ?? "unknown"}.</p>
+            <p className="candidate-banner-meta">
+              Uploaded {utcMinute(uploaded)}. Run key <code>{key}</code>. A draft is never released and is removed 7 days
+              after upload. To release the skill, open a pull request.
+            </p>
+          </>
+        ) : (
+          <>
+            <p className="candidate-banner-title"><strong>Not released.</strong> Under review in PR #{pr}.</p>
+            <p className="candidate-banner-meta">
+              Commit <code title={sha ?? undefined}>{(sha ?? "").slice(0, 7)}</code>, uploaded {utcMinute(uploaded)}. Run
+              key <code>{key}</code>. Agents cannot load this skill until the pull request merges and a reviewer approves
+              the release.
+            </p>
+          </>
+        )}
       </div>
       <header className="panel summary">
         <div>
           <h1>{s.name}</h1>
           <p className="summary-meta">
             <span className="tag"><span className="visually-hidden">Department: </span>{s.dept}</span>
-            <CandidateBadge pr={pr} />
+            <CandidateBadge kind={kind} pr={pr} />
           </p>
           {s.description && <p className="summary-desc">{s.description}</p>}
         </div>
         <div className="summary-actions">
           <Link className="btn btn-primary" to={runCandidatePath(key, s.dept, s.name)}>Run eval</Link>
+          {!s.rubric && <p className="hint summary-hint">This skill has no rubric, so it can run in trigger mode only.</p>}
         </div>
         <section className="summary-verdicts" aria-labelledby="summary-verdicts">
-          <h2 id="summary-verdicts">Latest verdicts on this candidate</h2>
+          <h2 id="summary-verdicts">Latest verdicts on this {draft ? "draft" : "candidate"}</h2>
           {verdicts.length > 0 ? (
             <ul className="chips" aria-label="Latest verdicts">
               {verdicts.map(([model, verdict]) => (
@@ -122,8 +141,10 @@ export default function CandidateDetail() {
       <SkillMdSection source={s.files["SKILL.md"]} />
       <FilesSection files={s.files} />
       <Results s={s} />
-      <TestCasesSection evals={s.evals} name={s.name} access="ok" note={FROM_PR} empty="This upload has no evals/evals.json" />
-      <RubricSection rubric={s.rubric} access="ok" note={FROM_PR} empty="This upload has no evals/rubric.json" />
+      <TestCasesSection evals={s.evals} name={s.name} access="ok" note={draft ? FROM_DRAFT : FROM_PR}
+        empty="This upload has no evals/evals.json" />
+      <RubricSection rubric={s.rubric} access="ok" note={draft ? FROM_DRAFT : FROM_PR}
+        empty="This upload has no evals/rubric.json" />
     </article>
   );
 }

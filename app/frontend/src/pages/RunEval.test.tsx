@@ -21,7 +21,7 @@ const KEY = "pr5_c7ecd3e_a1";
 const reader: Me = { user: "rae@example.com", groups: [], is_reviewer: false, is_author: false };
 const author: Me = { user: "ana@example.com", groups: ["skillhub-authors"], is_reviewer: false, is_author: true };
 const candidate: CandidateSummary = {
-  run_key: KEY, pr_number: 5, git_sha: "c7ecd3e", uploaded_at: null, dept: "common", name: "new-skill",
+  kind: "pr", uploaded_by: null, has_rubric: null, run_key: KEY, pr_number: 5, git_sha: "c7ecd3e", uploaded_at: null, dept: "common", name: "new-skill",
   description: null, content_hash: null, verdicts: {}, eval_access: "ok",
 };
 
@@ -205,5 +205,31 @@ describe("RunEval with candidates", () => {
       <MemoryRouter initialEntries={[`/run?candidate=${KEY}&skill=common%2Fnew-skill`]}><RunEval /></MemoryRouter>,
     );
     expect(await screen.findByRole("checkbox", { name: /common\/new-skill/i })).toBeChecked();
+  });
+});
+
+describe("RunEval with drafts", () => {
+  const DRAFT = "draft_6720a1b2c3d4e5f6a7b8c9d0";
+  const draft: CandidateSummary = {
+    ...candidate, kind: "draft", run_key: DRAFT, pr_number: null, git_sha: null, name: "draft-skill",
+    uploaded_by: "ana@example.com", has_rubric: false,
+  };
+
+  it("badges a draft, and runs a draft without a rubric in trigger mode only", async () => {
+    vi.mocked(api.me).mockResolvedValue(author);
+    vi.mocked(api.candidates).mockResolvedValue([candidate, draft]);
+    render(<MemoryRouter><RunEval /></MemoryRouter>);
+    const group = await screen.findByRole("group", { name: /candidates under review/i });
+    expect(within(group).getByText("Draft")).toBeTruthy();
+    fireEvent.click(within(group).getByRole("checkbox", { name: /common\/draft-skill, draft/i }));
+    expect(screen.getByRole("checkbox", { name: /effectiveness/i })).toBeDisabled();
+    expect(screen.getByText(/without a rubric runs in trigger mode only/i)).toBeTruthy();
+    fireEvent.click(screen.getByRole("checkbox", { name: /claude-sonnet/i }));
+    fireEvent.click(screen.getByRole("checkbox", { name: /trigger/i }));
+    fireEvent.click(screen.getByRole("button", { name: /start evaluation/i }));
+    await screen.findByText(/run hub_0123abcd/i);
+    expect(api.startEval).toHaveBeenLastCalledWith({
+      candidate: { run_key: DRAFT, skills: ["common/draft-skill"] }, models: ["claude-sonnet"], modes: ["trigger"],
+    });
   });
 });

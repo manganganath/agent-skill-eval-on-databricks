@@ -80,6 +80,15 @@ def candidates_root(cfg: HubConfig) -> str:
     return f"/Workspace{experiment_root(cfg)}/{CANDIDATES}"
 
 
+DRAFTS = "drafts"  # a reserved department key too: Skill Hub drafts, apart from the CI candidates
+
+
+def drafts_root(cfg: HubConfig) -> str:
+    """Folder of this catalog's Skill Hub drafts, one sub-folder per draft, in /Workspace form like candidates_root.
+    The app principal may create folders here, never in candidates/, so it cannot change a pull request's upload."""
+    return f"/Workspace{experiment_root(cfg)}/{DRAFTS}"
+
+
 def experiment_path(cfg: HubConfig, dept: str, skill: str) -> str:
     return f"{experiment_root(cfg)}/{dept}/{skill}"
 

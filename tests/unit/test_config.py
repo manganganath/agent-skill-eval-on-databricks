@@ -154,6 +154,13 @@ def test_candidates_is_not_a_department_key(tmp_path):
         load_config(p)
 
 
+def test_drafts_is_not_a_department_key(tmp_path):
+    """<workspace_root>/<catalog>/drafts holds the Skill Hub drafts, next to the department experiment folders."""
+    p = _variant(tmp_path, "  operations:", "  drafts:")
+    with pytest.raises(ConfigError, match="reserved"):
+        load_config(p)
+
+
 def test_gating_modes_default_to_both_and_reject_unknown_or_empty():
     from pydantic import ValidationError
 

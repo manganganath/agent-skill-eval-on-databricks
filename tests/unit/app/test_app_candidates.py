@@ -225,7 +225,7 @@ def test_a_reviewer_sees_the_changed_skills_of_every_department(make_client):
     assert sorted(names(body)) == sorted(CHANGED)
     first = next(x for x in body if x["name"] == "new-skill")
     assert first["description"] == "new-skill helps analysts"
-    assert (first["pr_number"], first["run_key"], first["git_sha"]) == (5, KEY, SHA)
+    assert (first["kind"], first["pr_number"], first["run_key"], first["git_sha"]) == ("pr", 5, KEY, SHA)
     assert first["uploaded_at"].startswith("2026-09-21")
     assert first["verdicts"] == {} and first["content_hash"] is None and first["eval_access"] == "ok"
     assert not [call for call in a.api_client.calls if "effective-permissions" in call[1]]
@@ -334,7 +334,10 @@ def test_the_listing_opens_one_skill_md_per_candidate_and_no_other_skill_file(ma
     assert opened == sorted(
         [f"{base}/.uploaded_at", *(f"{base}/skills/{d}/{n}/SKILL.md" for d, n in CHANGED)]
     )
-    assert [p for m, p in tree.calls if m == "list"] == [ROOT.removeprefix("/Workspace")]
+    # One listing of each root: the pull request uploads and the drafts. No skill folder is listed.
+    assert sorted(p for m, p in tree.calls if m == "list") == sorted(
+        [ROOT.removeprefix("/Workspace"), ROOT.removeprefix("/Workspace").replace("/candidates", "/drafts")]
+    )
 
 
 def test_folders_that_are_not_pull_request_runs_are_ignored(make_client):
@@ -397,10 +400,12 @@ def test_candidate_detail_has_the_files_cases_rubric_results_and_candidate_block
     assert [case["id"] for case in body["evals"]["evals"]] == [1, 2]
     assert len(body["rubric"]["criteria"]) == 5
     assert body["candidate"] == {
+        "kind": "pr",
         "pr_number": 5,
         "run_key": KEY,
         "git_sha": SHA,
         "uploaded_at": body["candidate"]["uploaded_at"],
+        "uploaded_by": None,
     } and body["candidate"]["uploaded_at"].startswith("2026-09-21")
     assert body["verdicts"] == {"claude-sonnet": "pass"}
     assert [(x["skill"], x["run_key"], x["verdict"]) for x in body["results"]] == [("new-skill", KEY, "pass")]

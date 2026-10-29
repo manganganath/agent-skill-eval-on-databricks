@@ -30,7 +30,7 @@ const more: SkillSummary[] = [
 ];
 
 const candidate: CandidateSummary = {
-  run_key: "pr5_c7ecd3e_a1", pr_number: 5, git_sha: "c7ecd3e", uploaded_at: "2026-10-28T10:00:00Z",
+  kind: "pr", uploaded_by: null, has_rubric: null, run_key: "pr5_c7ecd3e_a1", pr_number: 5, git_sha: "c7ecd3e", uploaded_at: "2026-10-28T10:00:00Z",
   dept: "common", name: "new-skill", description: "Drafts the quarterly note", content_hash: null,
   verdicts: { "claude-sonnet": "pass" }, eval_access: "ok",
 };
@@ -268,5 +268,35 @@ describe("Catalog candidates", () => {
     renderCatalog();
     expect(await screen.findByRole("alert")).toHaveTextContent(/candidate/i);
     expect(screen.getByRole("region", { name: "common" })).toBeTruthy();
+  });
+});
+
+describe("Catalog drafts", () => {
+  const draft: CandidateSummary = {
+    ...candidate, kind: "draft", run_key: "draft_6720a1b2c3d4e5f6a7b8c9d0", pr_number: null, git_sha: null,
+    name: "draft-skill", uploaded_by: "ana@example.com", has_rubric: false,
+  };
+
+  it("badges a draft as a draft and links to its page", async () => {
+    vi.mocked(api.me).mockResolvedValue(author);
+    vi.mocked(api.skills).mockResolvedValue(skills);
+    vi.mocked(api.candidates).mockResolvedValue([draft]);
+    renderCatalog();
+    const review = await screen.findByRole("region", { name: /under review/i });
+    const link = within(review).getByRole("link", { name: "draft-skill" });
+    expect(link).toHaveAttribute("href", "/candidates/draft_6720a1b2c3d4e5f6a7b8c9d0/common/draft-skill");
+    expect(within(link.closest(".skill-card") as HTMLElement).getByText("Draft")).toBeTruthy();
+  });
+
+  it("offers Upload draft to authors and reviewers only", async () => {
+    vi.mocked(api.skills).mockResolvedValue(skills);
+    vi.mocked(api.me).mockResolvedValue(author);
+    const { unmount } = renderCatalog();
+    expect(await screen.findByRole("link", { name: /upload draft/i })).toHaveAttribute("href", "/drafts/new");
+    unmount();
+    vi.mocked(api.me).mockResolvedValue(reader);
+    renderCatalog();
+    await screen.findByRole("region", { name: "common" });
+    expect(screen.queryByRole("link", { name: /upload draft/i })).toBeNull();
   });
 });

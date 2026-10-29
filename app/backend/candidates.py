@@ -18,13 +18,19 @@ Who sees a candidate. Every candidate route applies this one rule:
    USE SCHEMA and READ VOLUME (`authz.effective_read_schema`, the test the read fallback uses). Any failure of that
    check hides the department (fail closed). A hidden candidate answers 404, the same as a missing one.
 
+Drafts are candidates too: a skill uploaded in the Skill Hub (backend.drafts), stored in
+`<workspace_root>/<catalog>/drafts/draft_<id>/` with the same layout plus `draft.json` (who uploaded it). The rule is the
+same, with one addition: the uploader always sees their own drafts (still only as an author or reviewer).
+
 Only after these checks does the app principal read the folder. It inherits CAN_EDIT on `candidates/` from the
-`<workspace_root>/<catalog>` folder ACL (`skillhub.results.experiments.root_acl`), which is enough to list and read.
-Eval rows are always read with the user's own SQL grants.
+`<workspace_root>/<catalog>` folder ACL (`skillhub.results.experiments.root_acl`), which is enough to list and read,
+and holds CAN_MANAGE on `drafts/` only (`experiments.drafts_acl`). Eval rows are always read with the user's own SQL
+grants.
 """
 
 from __future__ import annotations
 
+import json
 import logging
 import re
 import secrets
@@ -34,6 +40,7 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from itertools import islice
+from typing import Literal
 
 from databricks.sdk import WorkspaceClient
 from databricks.sdk.errors import DatabricksError, NotFound
@@ -45,13 +52,17 @@ from backend.deps import problem
 from skillhub.bundle import BundleError, is_ignored, parse_frontmatter
 from skillhub.config import HubConfig
 from skillhub.lint import MAX_BUNDLE_BYTES, NAME_RE
-from skillhub.naming import candidates_root, live_schema, make_run_key
+from skillhub.naming import candidates_root, drafts_root, live_schema, make_run_key
 from skillhub.registry.stage import CANDIDATE_MARKER, CANDIDATE_MAX_AGE_HOURS
 
 log = logging.getLogger("skillhub.app.candidates")
 
 # pr<N>_<sha7>, with the workflow's _a<attempt> suffix. Used with fullmatch.
 PR_KEY = re.compile(r"pr([1-9][0-9]{0,8})_([0-9a-f]{7})(?:_a([0-9]{1,4}))?")
+# draft_<id>: 8 hex digits of the upload time (sortable), then 16 random hex digits (unguessable).
+DRAFT_KEY = re.compile(r"draft_([0-9a-f]{8}[0-9a-f]{16})")
+DRAFT_META = "draft.json"  # who uploaded a draft, and what it holds, next to its skills/ folder
+MAX_META = 64 * 1024
 # A Hub run of a candidate is keyed <candidate key>_h<8 hex>, so it never collides with the PR gate's key and its
 # rows can still be found from the candidate. The runner applies make_run_key, which cuts a key at 40 characters.
 HUB_RUN = "_h"
@@ -73,12 +84,31 @@ class CandidateTooLarge(Exception):
     """A candidate skill has more files or bytes than the Skill Hub shows."""
 
 
+Kind = Literal["pr", "draft"]
+
+
 @dataclass(frozen=True)
 class CandidateKey:
+    """A candidate folder: a pull request upload (pr_number, sha7, attempt) or a Skill Hub draft (draft_id)."""
+
     run_key: str
-    pr_number: int
-    sha7: str
-    attempt: int | None
+    kind: Kind = "pr"
+    pr_number: int | None = None
+    sha7: str | None = None
+    attempt: int | None = None
+    draft_id: str | None = None
+
+
+@dataclass(frozen=True)
+class DraftMeta:
+    """draft.json, written by the app when it stores a draft."""
+
+    dept: str
+    skill: str
+    uploaded_by: str
+    uploaded_at: datetime | None
+    description: str | None
+    has_rubric: bool
 
 
 @dataclass
@@ -90,11 +120,19 @@ class StartedEval:
 
 
 def parse_key(value: object) -> CandidateKey | None:
-    """The pull request run a candidate folder name stands for, or None for any other name."""
-    m = PR_KEY.fullmatch(value) if isinstance(value, str) else None
-    if m is None:
+    """The pull request upload or draft a candidate folder name stands for, or None for any other name."""
+    if not isinstance(value, str):
         return None
-    return CandidateKey(value, int(m[1]), m[2], int(m[3]) if m[3] else None)
+    m = PR_KEY.fullmatch(value)
+    if m is not None:
+        return CandidateKey(value, "pr", pr_number=int(m[1]), sha7=m[2], attempt=int(m[3]) if m[3] else None)
+    d = DRAFT_KEY.fullmatch(value)
+    return CandidateKey(value, "draft", draft_id=d[1]) if d is not None else None
+
+
+def source(key: CandidateKey) -> str:
+    """The eval's `source` parameter: the pull request's commit, or the draft."""
+    return f"draft:{key.draft_id}" if key.kind == "draft" else f"git:{key.sha7}"
 
 
 def hub_run_key(key: str) -> str:
@@ -125,8 +163,8 @@ def may_see(me: MeProfile, cfg: HubConfig) -> bool:
     return cfg.roles.authors in me.groups or authz.has_reviewer_role(me, cfg)
 
 
-def _reads_live(
-    app_w: WorkspaceClient, cfg: HubConfig, me: MeProfile, dept: str, memo: RequestMemo | None
+def reads_live(
+    app_w: WorkspaceClient, cfg: HubConfig, me: MeProfile, dept: str, memo: RequestMemo | None = None
 ) -> bool:
     """Rule 3: the user's effective READ VOLUME, USE SCHEMA and USE CATALOG on the live schema. Fails closed."""
     try:
@@ -143,7 +181,7 @@ def visible_departments(
     from the request thread: it waits on the pool."""
     if authz.has_reviewer_role(me, cfg):
         return set(cfg.departments)
-    checks = {d: pool.submit(_reads_live, app_w, cfg, me, d, memo) for d in cfg.departments}
+    checks = {d: pool.submit(reads_live, app_w, cfg, me, d, memo) for d in cfg.departments}
     return {d for d, check in checks.items() if check.result()}
 
 
@@ -161,18 +199,19 @@ def require_visible(
     if authz.has_reviewer_role(me, cfg):
         return
     for dept in sorted(set(depts)):
-        if not _reads_live(app_w, cfg, me, dept, memo):
+        if not reads_live(app_w, cfg, me, dept, memo):
             raise problem(404, Reason.CANDIDATE_NOT_FOUND)
 
 
 # --- the candidate folders, read as the app principal --------------------------------------------------------
 
 
-def folder(cfg: HubConfig, key: str) -> str:
-    return f"{candidates_root(cfg)}/{key}"
+def folder(cfg: HubConfig, key: CandidateKey) -> str:
+    """Pull request uploads live in candidates/, drafts in drafts/."""
+    return f"{drafts_root(cfg) if key.kind == 'draft' else candidates_root(cfg)}/{key.run_key}"
 
 
-def skill_dir(cfg: HubConfig, key: str, dept: str, name: str) -> str:
+def skill_dir(cfg: HubConfig, key: CandidateKey, dept: str, name: str) -> str:
     return f"{folder(cfg, key)}/skills/{dept}/{name}"
 
 
@@ -181,9 +220,8 @@ def _aliases(path: str) -> tuple[str, str]:
     return path, path.removeprefix("/Workspace")
 
 
-def list_keys(app_w: WorkspaceClient, cfg: HubConfig) -> list[CandidateKey]:
-    """The pull request runs that have a folder directly under the candidates root, newest pull request first."""
-    root = candidates_root(cfg)
+def _child_keys(app_w: WorkspaceClient, root: str, kind: Kind) -> list[CandidateKey]:
+    """Folders directly under `root` whose names are keys of that kind."""
     try:
         entries = list(islice(app_w.workspace.list(root), MAX_ENTRIES))
     except NotFound:
@@ -193,9 +231,26 @@ def list_keys(app_w: WorkspaceClient, cfg: HubConfig) -> list[CandidateKey]:
     for e in entries:
         parent, _, name = (e.path or "").rpartition("/")
         key = parse_key(name)
-        if e.object_type == ObjectType.DIRECTORY and parent in parents and key is not None:
+        if (
+            e.object_type == ObjectType.DIRECTORY
+            and parent in parents
+            and key is not None
+            and key.kind == kind
+        ):
             keys.append(key)
-    keys.sort(key=lambda k: (k.pr_number, k.attempt or 0, k.run_key), reverse=True)
+    return keys
+
+
+def list_keys(app_w: WorkspaceClient, cfg: HubConfig) -> list[CandidateKey]:
+    """The pull request runs that have a folder directly under the candidates root, newest pull request first."""
+    keys = _child_keys(app_w, candidates_root(cfg), "pr")
+    keys.sort(key=lambda k: (k.pr_number or 0, k.attempt or 0, k.run_key), reverse=True)
+    return keys[:MAX_KEYS]
+
+
+def list_draft_keys(app_w: WorkspaceClient, cfg: HubConfig) -> list[CandidateKey]:
+    """The drafts directly under the drafts root, newest first (the id starts with the upload time)."""
+    keys = sorted(_child_keys(app_w, drafts_root(cfg), "draft"), key=lambda k: k.run_key, reverse=True)
     return keys[:MAX_KEYS]
 
 
@@ -207,12 +262,12 @@ def _download(app_w: WorkspaceClient, path: str, limit: int) -> bytes | None:
         return None
 
 
-def uploaded_at(app_w: WorkspaceClient, cfg: HubConfig, key: str) -> datetime | None:
+def uploaded_at(app_w: WorkspaceClient, cfg: HubConfig, key: CandidateKey) -> datetime | None:
     """The upload time from the folder's .uploaded_at marker. None when it is absent or unreadable."""
     try:
         data = _download(app_w, f"{folder(cfg, key)}/{CANDIDATE_MARKER}", 64)
     except DatabricksError as exc:
-        log.warning("could not read the upload marker of %s: %s", key, type(exc).__name__)
+        log.warning("could not read the upload marker of %s: %s", key.run_key, type(exc).__name__)
         return None
     text = (data or b"").decode("utf-8", "replace").strip()
     if not text.isdecimal() or len(text) > 12:
@@ -229,13 +284,15 @@ def newest_per_pr(
         stamp = stamps.get(k.run_key)
         return (stamp.timestamp() if stamp else 0.0, k.attempt or 0, k.run_key)
 
-    out: dict[int, tuple[CandidateKey, datetime | None]] = {}
+    out: dict[int | None, tuple[CandidateKey, datetime | None]] = {}
     for k in sorted(keys, key=order, reverse=True):
         out.setdefault(k.pr_number, (k, stamps.get(k.run_key)))
     return list(out.values())
 
 
-def read_skill_md(app_w: WorkspaceClient, cfg: HubConfig, key: str, dept: str, name: str) -> bytes | None:
+def read_skill_md(
+    app_w: WorkspaceClient, cfg: HubConfig, key: CandidateKey, dept: str, name: str
+) -> bytes | None:
     return _download(app_w, f"{skill_dir(cfg, key, dept, name)}/SKILL.md", MAX_SKILL_MD)
 
 
@@ -255,7 +312,7 @@ def exists(app_w: WorkspaceClient, path: str) -> bool:
 
 
 def read_skill_files(
-    app_w: WorkspaceClient, cfg: HubConfig, key: str, dept: str, name: str, pool: ThreadPoolExecutor
+    app_w: WorkspaceClient, cfg: HubConfig, key: CandidateKey, dept: str, name: str, pool: ThreadPoolExecutor
 ) -> dict[str, bytes]:
     """Every file of one candidate skill, evals/ included, by path relative to the skill folder. {} when the folder
     is gone. Files the bundle loader ignores are left out, so the content hash matches the eval's."""
@@ -290,10 +347,69 @@ def read_skill_files(
     return files
 
 
-def fixtures_root(app_w: WorkspaceClient, cfg: HubConfig, key: str) -> str:
+def fixtures_root(app_w: WorkspaceClient, cfg: HubConfig, key: CandidateKey) -> str:
     """The upload's fixtures folder, or "" (the Job's default fixtures) when the upload has none."""
     path = f"{folder(cfg, key)}/fixtures"
     return path if exists(app_w, path) else ""
+
+
+def _text(value: object) -> str | None:
+    return value if isinstance(value, str) and value else None
+
+
+def read_meta(
+    app_w: WorkspaceClient, cfg: HubConfig, key: CandidateKey, depts: Collection[str]
+) -> DraftMeta | None:
+    """The draft's draft.json, or None when it is missing, unreadable or names something that is not configured."""
+    data = _download(app_w, f"{folder(cfg, key)}/{DRAFT_META}", MAX_META)
+    if data is None or len(data) > MAX_META:
+        return None
+    try:
+        raw = json.loads(data)
+        stamp = raw.get("uploaded_at")
+        meta = DraftMeta(
+            dept=raw["dept"],
+            skill=raw["skill"],
+            uploaded_by=raw["uploaded_by"],
+            uploaded_at=datetime.fromtimestamp(int(stamp), UTC) if isinstance(stamp, int) else None,
+            description=_text(raw.get("description")),
+            has_rubric=raw.get("has_rubric") is True,
+        )
+    except (ValueError, TypeError, KeyError, AttributeError, OverflowError, OSError):
+        log.warning("ignored the unreadable draft.json of %s", key.run_key)
+        return None
+    if meta.dept not in depts or not valid_skill_name(meta.skill) or not _text(meta.uploaded_by):
+        return None
+    return meta
+
+
+def is_uploader(meta: DraftMeta, me: MeProfile) -> bool:
+    return meta.uploaded_by.casefold() == me.user.casefold()
+
+
+def authorize(
+    app_w: WorkspaceClient,
+    cfg: HubConfig,
+    me: MeProfile,
+    key: CandidateKey,
+    refs: Iterable[tuple[str, str]],
+    memo: RequestMemo | None = None,
+) -> DraftMeta | None:
+    """The rule for one candidate and the (dept, skill) pairs asked for. 403 `not_author`, or 404
+    `candidate_not_found` for a candidate the user may not see. For a draft, returns its draft.json: the pairs must be
+    the draft's own skill, and its uploader always passes. The app reads only draft.json before the check passes."""
+    if not may_see(me, cfg):
+        raise problem(403, Reason.NOT_AUTHOR)
+    refs = sorted(set(refs))
+    meta = None
+    if key.kind == "draft":
+        meta = workspace_call(lambda: read_meta(app_w, cfg, key, cfg.departments))
+        if meta is None or any(ref != (meta.dept, meta.skill) for ref in refs):
+            raise problem(404, Reason.CANDIDATE_NOT_FOUND)
+        if is_uploader(meta, me):
+            return meta
+    require_visible(app_w, cfg, me, [d for d, _ in refs], memo)
+    return meta
 
 
 # --- what each run key evaluates --------------------------------------------------------------------------------
@@ -375,8 +491,13 @@ def verdicts(latest: Iterable[Mapping[str, object]]) -> dict[str, str]:
     return {m: skill_ref.worst_verdict(v) for m, v in sorted(by_model.items())}
 
 
-def commit(key: CandidateKey, rows: Iterable[Mapping[str, object]], tested: StartedEval | None = None) -> str:
-    """The candidate's commit: the full sha from its PR eval when one names it, else the key's short sha."""
+def commit(
+    key: CandidateKey, rows: Iterable[Mapping[str, object]], tested: StartedEval | None = None
+) -> str | None:
+    """The candidate's commit: the full sha from its PR eval when one names it, else the key's short sha. A draft
+    has none."""
+    if key.kind == "draft" or key.sha7 is None:
+        return None
     for r in owned_rows(rows, key.run_key):
         sha = str(r.get("git_sha") or "")
         if r.get("run_key") == key.run_key and sha.startswith(key.sha7) and _SHA.fullmatch(sha):

@@ -4,8 +4,8 @@ Authors write skills, reviewers mark cases as reviewed and switch versions, and 
 
 | Role | Group | Can do |
 |---|---|---|
-| Author | `skillhub-authors` | Open pull requests with skills and cases. See and evaluate candidates (skills under review) in the Skill Hub, in the departments they can read |
-| Reviewer | `skillhub-reviewers` | Mark generated cases and rubrics as reviewed, switch versions in the Skill Hub, see and evaluate the candidates of every department, and read the cross-department results and the dashboard |
+| Author | `skillhub-authors` | Open pull requests with skills and cases. Upload drafts, and see and evaluate candidates (skills under review) in the Skill Hub, in the departments they can read |
+| Reviewer | `skillhub-reviewers` | Mark generated cases and rubrics as reviewed, switch versions in the Skill Hub, upload drafts, see and evaluate the candidates of every department, and read the cross-department results and the dashboard |
 | Reader | The department group named in `config/hub.yaml` (for example `dept-equity-research`), or `skillhub-users` | Load skills through agents and browse them in the Skill Hub |
 
 The customer's administrator grants group membership.
@@ -25,7 +25,7 @@ The customer's administrator grants group membership.
 
 ## Evaluate a new skill
 
-A new or changed skill can be evaluated before it is released, in two ways. Both evaluate the content of the pull request.
+A new or changed skill can be evaluated before it is released: in its pull request, in the Skill Hub while the pull request is open, or in the Skill Hub as a draft before there is any pull request.
 
 **In the pull request.** Open a pull request as in [Add a skill](#add-a-skill). CI uploads the pull request's skills to a candidate folder, `<workspace_root>/<catalog>/candidates/<run key>`, with a run key such as `pr12_ab12cd3_a1`. It then runs the eval and posts the matrix comment. This eval is the merge gate.
 
@@ -37,7 +37,15 @@ A new or changed skill can be evaluated before it is released, in two ways. Both
 
 A Skill Hub run gets its own run key (`<candidate run key>_h<8 hex digits>`) and `trigger_source` `manual`, so it never changes the pull request's gate. Its results appear on the candidate's page next to the pull request's own eval. To change the skill or its cases, push to the pull request; the next upload replaces the candidate.
 
-Who sees a candidate: reviewers see every department. An author sees a candidate only in a department whose live skills they can read. Everyone else sees no candidates. The nightly cleanup removes a candidate folder 7 days after its upload.
+Who sees a candidate: reviewers see every department. An author sees a candidate only in a department whose live skills they can read, and always sees their own drafts. Everyone else sees no candidates. The nightly cleanup removes a candidate or draft folder 7 days after its upload.
+
+**As a draft.** To try a skill before you open a pull request:
+
+1. In the catalog, select **Upload draft**. Choose the department, then a zip of the skill folder or the folder itself. The upload needs `SKILL.md` with `name` and `description` in its frontmatter and `evals/evals.json`. `evals/rubric.json` is optional; without it the draft runs in trigger mode only. A `fixtures/` folder in the upload replaces the default fixtures for this draft.
+2. The Skill Hub checks the skill as `uv run skillhub lint` does. If something is wrong, the form lists every problem; fix them and upload again.
+3. The draft's page opens, with a **Draft** badge and the banner **Not released. Draft uploaded by ...**. Select **Run eval** to evaluate it.
+
+A draft is never released. To release the skill, add it to `skills/` in a pull request, as in [Add a skill](#add-a-skill).
 
 ## Retire a skill
 

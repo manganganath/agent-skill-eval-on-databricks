@@ -14,7 +14,7 @@ from skillhub import SkillHubError
 from skillhub.bundle import SkillBundle, content_hash
 from skillhub.config import HubConfig
 from skillhub.lint import assert_clean
-from skillhub.naming import candidates_root, live_fqn, run_schema, version_fqn
+from skillhub.naming import candidates_root, drafts_root, live_fqn, run_schema, version_fqn
 from skillhub.registry.journal import Journal
 from skillhub.registry.uc_skills import UCSkills, _check_rel
 
@@ -214,12 +214,12 @@ def _uploaded_ms(w, folder: str, now_ms: float) -> int | None:
     return _marker_ms(w, folder, now_ms) or _newest_file_ms(w, folder)
 
 
-def _stale_candidate_paths(cfg: HubConfig, w, max_age_hours: float) -> list[str]:
-    """Direct child folders of this catalog's candidates root (naming.candidates_root) uploaded longer ago
-    than the limit. Anything else is skipped."""
+def _stale_candidate_paths(cfg: HubConfig, w, max_age_hours: float, root: str | None = None) -> list[str]:
+    """Direct child folders of `root` uploaded longer ago than the limit: this catalog's candidates root
+    (naming.candidates_root) unless another root is given. Anything else is skipped."""
     now_ms = time.time() * 1000
     cutoff_ms = now_ms - max_age_hours * 3600 * 1000
-    root = candidates_root(cfg)
+    root = root or candidates_root(cfg)
     root_aliases = {root, root.removeprefix("/Workspace")}
     try:
         entries = list(w.workspace.list(root))
@@ -249,7 +249,7 @@ def cleanup_stale(
     *,
     candidate_max_age_hours: int = CANDIDATE_MAX_AGE_HOURS,
 ) -> list[str]:
-    """Drop run_* schemas older than `older_than_hours` and candidate folders older than 168 hours.
+    """Drop run_* schemas older than `older_than_hours`, and candidate and draft folders older than 168 hours.
 
     Returns the schemas and folders removed. Only run schemas this principal owns and direct children of this
     catalog's candidates root are touched: a shared catalog may hold other schemas that happen to match the name
@@ -272,7 +272,12 @@ def cleanup_stale(
             _log.warning("could not drop %s (%s); the rest of the cleanup continues", full, e)
             continue
         dropped.append(full)
-    for path in _stale_candidate_paths(cfg, w, candidate_max_age_hours):
+    stale = [
+        path
+        for root in (candidates_root(cfg), drafts_root(cfg))  # Skill Hub drafts age by the same rule
+        for path in _stale_candidate_paths(cfg, w, candidate_max_age_hours, root)
+    ]
+    for path in stale:
         try:
             w.workspace.delete(path, recursive=True)
         except NotFound:
