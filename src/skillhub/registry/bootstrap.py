@@ -677,57 +677,66 @@ def _write_new_secret(w, i: _Identity, log: list[str]) -> None:
 
 # Permission levels on a SQL warehouse that include running statements on it.
 _WAREHOUSE_USE = frozenset({"CAN_USE", "CAN_MONITOR", "CAN_MANAGE", "IS_OWNER"})
+_WAREHOUSE_MANAGE = frozenset({"CAN_MANAGE", "IS_OWNER"})
 
 
-def ensure_warehouse_access(cfg: HubConfig, w, app_ids: list[str], create: bool) -> list[str]:
+def ensure_warehouse_access(
+    cfg: HubConfig, w, app_ids: list[str], create: bool, *, manage: str | None = None
+) -> list[str]:
     """CAN_USE on the SQL warehouse for both CI principals: without it every statement they run fails.
 
-    With `create` the grant is added (the Permissions API PATCH is additive). Otherwise the ACL is only read
-    and a missing grant is a warning with the manual step.
+    `manage` (the ci principal, which deploys the bundle) gets CAN_MANAGE instead: Databricks Apps requires
+    MANAGE on a warehouse to bind it to an app. With `create` the grant is added (the Permissions API PATCH
+    is additive). Otherwise the ACL is only read and a missing grant is a warning with the manual step.
     """
     wid = cfg.workspace.sql_warehouse_id
-    manual = (
-        f"Manual step: give CAN USE on SQL warehouse {wid} to {', '.join(app_ids)} (warehouse > Permissions)."
-    )
+
+    def level(a: str) -> str:
+        return "CAN_MANAGE" if a == manage else "CAN_USE"
+
+    wanted = ", ".join(f"{level(a).replace('_', ' ')} to {a}" for a in app_ids)
+    manual = f"Manual step: on SQL warehouse {wid} (warehouse > Permissions), give {wanted}."
     if create:
         try:
             w.permissions.update(
                 request_object_type="warehouses",
                 request_object_id=wid,
                 access_control_list=[
-                    AccessControlRequest(service_principal_name=a, permission_level=PermissionLevel.CAN_USE)
+                    AccessControlRequest(service_principal_name=a, permission_level=PermissionLevel(level(a)))
                     for a in app_ids
                 ],
             )
         except DatabricksError as e:
-            _log.warning("could not grant CAN_USE on SQL warehouse %s (%s). %s", wid, e, manual)
+            _log.warning("could not grant access on SQL warehouse %s (%s). %s", wid, e, manual)
             return [
-                f"warning: CAN_USE on SQL warehouse {wid} was not granted; see the log for the manual step"
+                f"warning: access on SQL warehouse {wid} was not granted; see the log for the manual step"
             ]
-        return [f"SQL warehouse {wid}: CAN_USE for {', '.join(app_ids)}"]
+        return [f"SQL warehouse {wid}: " + ", ".join(f"{level(a)} for {a}" for a in app_ids)]
     try:
         acl = w.permissions.get(request_object_type="warehouses", request_object_id=wid)
-        have = {
-            e.service_principal_name
+        held = {
+            e.service_principal_name: {
+                getattr(p.permission_level, "value", None) for p in (e.all_permissions or [])
+            }
             for e in (acl.access_control_list or [])
-            if any(
-                getattr(p.permission_level, "value", None) in _WAREHOUSE_USE
-                for p in (e.all_permissions or [])
-            )
         }
     except DatabricksError as e:
         _log.warning("could not read the permissions of SQL warehouse %s (%s). %s", wid, e, manual)
-        return [f"warning: could not check CAN_USE on SQL warehouse {wid}"]
-    lacking = [a for a in app_ids if a not in have]
-    if not lacking:
-        return []
-    _log.warning(
-        "%s may lack CAN_USE on SQL warehouse %s; re-run with --create-identities or do it by hand. %s",
-        ", ".join(lacking),
-        wid,
-        manual,
-    )
-    return [f"warning: {', '.join(lacking)} may lack CAN_USE on SQL warehouse {wid}"]
+        return [f"warning: could not check access on SQL warehouse {wid}"]
+    out: list[str] = []
+    for a in app_ids:
+        enough = _WAREHOUSE_MANAGE if a == manage else _WAREHOUSE_USE
+        if held.get(a, set()) & enough:
+            continue
+        _log.warning(
+            "%s may lack %s on SQL warehouse %s; re-run with --create-identities or do it by hand. %s",
+            a,
+            level(a),
+            wid,
+            manual,
+        )
+        out.append(f"warning: {a} may lack {level(a)} on SQL warehouse {wid}")
+    return out
 
 
 def _optional(module: str, attr: str) -> Any | None:
@@ -880,7 +889,9 @@ def bootstrap(
     _, ci_app_id, ci_eval_app_id = _ensure_identities(
         cfg, w, create_identities, secret_out, eval_secret_out, log=log_lines
     )
-    log_lines += ensure_warehouse_access(cfg, w, [ci_app_id, ci_eval_app_id], create_identities)
+    log_lines += ensure_warehouse_access(
+        cfg, w, [ci_app_id, ci_eval_app_id], create_identities, manage=ci_app_id
+    )
     deployer = _deployer(w)
     if deployer == ci_eval_app_id:
         raise BootstrapError(
