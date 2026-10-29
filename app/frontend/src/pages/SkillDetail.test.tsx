@@ -5,7 +5,7 @@ import SkillDetail, { liveVersion } from "./SkillDetail";
 import { api, ApiError } from "../api/client";
 import type { JournalRow, SkillDetail as SkillDetailT } from "../api/types";
 
-// `me`, `config` and `skills` are mocked so no test does a real fetch, even when later tasks add panels that call them.
+// `me`, `config` and `skills` are mocked so no test does a real fetch, and so a test can check that a call is not made.
 vi.mock("../api/client", async (orig) => {
   const real = await orig<typeof import("../api/client")>();
   return {
@@ -16,6 +16,7 @@ vi.mock("../api/client", async (orig) => {
 
 const detail: SkillDetailT = {
   fqn: "skill_hub.common.audit-xls", dept: "common", name: "audit-xls", description: "Audit",
+  live_version: null, verdicts: {},
   files: { "SKILL.md": "# Audit steps\n\n<img src=x onerror=alert(1)>\n\nDo the audit.", "references/glossary.md": "terms" },
   evals: null,
   rubric: null,
@@ -159,32 +160,36 @@ describe("SkillDetail", () => {
 });
 
 describe("SkillDetail summary header", () => {
-  it("shows the department, the live version and a verdict chip per model from the catalog entry", async () => {
-    vi.mocked(api.skill).mockResolvedValue(detail);
-    vi.mocked(api.skills).mockResolvedValue([
-      { fqn: "skill_hub.other.audit-xls", dept: "other", name: "audit-xls", description: null, live_version: 9,
-        verdicts: { "claude-sonnet": "fail" }, eval_access: "ok" },
-      { fqn: detail.fqn, dept: "common", name: "audit-xls", description: "Audit", live_version: 3,
-        verdicts: { "claude-sonnet": "pass", "gemini-flash": "warn" }, eval_access: "ok" },
-    ]);
+  it("shows the department, the live version and a verdict chip per model from the skill itself", async () => {
+    vi.mocked(api.skill).mockResolvedValue({
+      ...detail, live_version: 3, verdicts: { "claude-sonnet": "pass", "gemini-flash": "warn" },
+    });
     renderAt(detail.fqn);
     expect(await screen.findByText("Live version 3")).toBeTruthy();
-    expect(api.skills).toHaveBeenCalledWith("audit-xls");
     const chips = screen.getByRole("list", { name: /latest verdicts/i });
     expect(within(chips).getByText("Pass")).toBeTruthy();
     expect(within(chips).getByText("Warn")).toBeTruthy();
-    expect(within(chips).queryByText("Fail")).toBeNull(); // the same name in another department is not this skill
     expect(screen.getByText("common", { selector: ".tag" })).toBeTruthy();
+    expect(api.skills).not.toHaveBeenCalled(); // no catalog listing just for the header
   });
 
-  it("leaves the live version and verdicts out when the catalog entry cannot be read", async () => {
+  it("says when no version is live and there are no results yet", async () => {
     vi.mocked(api.skill).mockResolvedValue(detail);
-    vi.mocked(api.skills).mockRejectedValue(new ApiError(500, "boom"));
     renderAt(detail.fqn);
-    expect(await screen.findByRole("heading", { level: 1, name: "audit-xls" })).toBeTruthy();
-    expect(screen.queryByRole("list", { name: /latest verdicts/i })).toBeNull();
-    expect(screen.queryByText(/^Live version \d/)).toBeNull();
-    expect(screen.queryByRole("alert")).toBeNull();
+    expect(await screen.findByText("No live version")).toBeTruthy();
+    const verdicts = screen.getByRole("region", { name: /latest verdicts on the live version/i });
+    expect(within(verdicts).getByText("No results yet")).toBeTruthy();
+    expect(within(verdicts).queryByRole("list")).toBeNull();
+  });
+
+  it.each([
+    ["denied", "You can't read eval results for this department"],
+    ["unavailable", "Eval results are temporarily unavailable"],
+  ] as const)("explains %s eval access in place of verdicts", async (access, message) => {
+    vi.mocked(api.skill).mockResolvedValue({ ...detail, eval_access: access });
+    renderAt(detail.fqn);
+    const verdicts = await screen.findByRole("region", { name: /latest verdicts on the live version/i });
+    expect(within(verdicts).getByText(message)).toBeTruthy();
   });
 });
 

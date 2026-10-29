@@ -16,14 +16,20 @@ def _check_dept(cfg: HubConfig, dept: str) -> None:
         raise UnknownDepartment("unknown department")
 
 
-def journal_sql(cfg: HubConfig, dept: str) -> tuple[str, dict[str, object]]:
+def journal_sql(cfg: HubConfig, dept: str, skill: str | None = None) -> tuple[str, dict[str, object]]:
+    """The department's skill_versions rows, oldest first. `skill` narrows them to one skill."""
     _check_dept(cfg, dept)
+    params: dict[str, object] = {"dept": dept}
+    where = "dept = :dept"
+    if skill is not None:
+        where += " AND skill = :skill"
+        params["skill"] = skill
     sql = (
         "SELECT dept, skill, action, version, from_version, to_version, versioned_fqn, content_hash, "
         "git_sha, eval_run_id, actor, job_run_id, ts "
-        f"FROM {evals_schema(cfg, dept)}.skill_versions WHERE dept = :dept ORDER BY ts"
+        f"FROM {evals_schema(cfg, dept)}.skill_versions WHERE {where} ORDER BY ts"
     )
-    return sql, {"dept": dept}
+    return sql, params
 
 
 # Explicit column lists that match the frontend MatrixRow and CaseRow (app/frontend/src/api/types.ts).
@@ -74,11 +80,15 @@ def cases_all_sql(cfg: HubConfig, run_id: str) -> tuple[str, dict[str, object]]:
     return sql, {"run_id": run_id}
 
 
-def catalog_verdicts_sql(cfg: HubConfig, dept: str) -> tuple[str, dict[str, object]]:
-    """Verdict rows for the catalog; reduce them with skill_ref.live_verdicts()."""
+def catalog_verdicts_sql(
+    cfg: HubConfig, dept: str, skill: str | None = None
+) -> tuple[str, dict[str, object]]:
+    """Verdict rows for the catalog; reduce them with skill_ref.live_verdicts(). `skill` narrows them to one skill."""
     _check_dept(cfg, dept)
     sql = f"SELECT skill, skill_version, model_profile, mode, verdict FROM {evals_schema(cfg, dept)}.eval_matrix"
-    return sql, {}
+    if skill is None:
+        return sql, {}
+    return f"{sql} WHERE skill = :skill", {"skill": skill}
 
 
 def dataset_sql(cfg: HubConfig, dept: str, skill: str) -> tuple[str, dict[str, object]]:

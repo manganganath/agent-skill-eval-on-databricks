@@ -14,10 +14,12 @@ from __future__ import annotations
 
 import logging
 import re
+import threading
 from collections.abc import Callable
+from concurrent.futures import Future
 from dataclasses import dataclass
 from enum import StrEnum
-from typing import Literal
+from typing import Literal, TypeVar
 from urllib.parse import quote
 
 from databricks.sdk import WorkspaceClient
@@ -89,6 +91,7 @@ READ_PRIVILEGES = frozenset({"READ_VOLUME", "ALL_PRIVILEGES"})
 USE_SCHEMA_PRIVILEGES = frozenset({"USE_SCHEMA", "ALL_PRIVILEGES"})
 USE_CATALOG_PRIVILEGES = frozenset({"USE_CATALOG", "ALL_PRIVILEGES"})
 Decision = Literal["yes", "no", "unknown"]
+T = TypeVar("T")
 
 
 @dataclass(frozen=True)
@@ -167,29 +170,62 @@ def _assigned(payload: dict, names: set[str], wanted: frozenset[str]) -> bool:
     return False
 
 
+class RequestMemo:
+    """Answers worked out at most once per key in one request, also when several threads ask at the same time.
+
+    A failure is remembered too. It holds one user's answers, so it lives for one request and is never shared.
+    """
+
+    def __init__(self):
+        self._lock = threading.Lock()
+        self._answers: dict[object, Future] = {}
+
+    def get(self, key: object, compute: Callable[[], T]) -> T:
+        with self._lock:
+            answer = self._answers.get(key)
+            first = answer is None
+            if first:
+                answer = self._answers[key] = Future()
+        if first:  # outside the lock, so other keys are not held up while this one is fetched
+            try:
+                answer.set_result(compute())
+            except BaseException as exc:  # never leave a waiting thread without an answer
+                answer.set_exception(exc)
+        return answer.result()
+
+
 def effective_read_schema(
-    app_w: WorkspaceClient, principal: str, schema_fqn: str, groups: tuple[str, ...] = ()
+    app_w: WorkspaceClient,
+    principal: str,
+    schema_fqn: str,
+    groups: tuple[str, ...] = (),
+    memo: RequestMemo | None = None,
 ) -> bool:
     """True when the user may read skills in the schema: USE CATALOG, USE SCHEMA and READ VOLUME, each direct
     or inherited (ALL PRIVILEGES counts for each).
 
     Called as the app service principal. Only assignments naming the user (case-insensitive) or one of the
-    user's groups count; the server's filtering is not trusted.
+    user's groups count; the server's filtering is not trusted. With a per-request `memo`, schemas that share
+    a catalog ask for its permissions once.
     """
     _require_schema_fqn(schema_fqn)
     names = {principal.casefold(), *(g.casefold() for g in groups)}
 
-    def effective(kind: str, name: str, wanted: frozenset[str]) -> bool:
+    def effective(kind: str, name: str) -> dict:
         path = f"/api/2.1/unity-catalog/effective-permissions/{kind}/" + ".".join(
             quote(part, safe="") for part in name.split(".")
         )
-        payload = app_w.api_client.do("GET", path, query={"principal": principal})
-        return _assigned(payload, names, wanted)
 
+        def fetch() -> dict:
+            return app_w.api_client.do("GET", path, query={"principal": principal})
+
+        return memo.get(("effective", path, principal), fetch) if memo is not None else fetch()
+
+    schema = effective("schema", schema_fqn)  # one answer holds both READ VOLUME and USE SCHEMA
     return (
-        effective("schema", schema_fqn, READ_PRIVILEGES)
-        and effective("schema", schema_fqn, USE_SCHEMA_PRIVILEGES)
-        and effective("catalog", schema_fqn.split(".")[0], USE_CATALOG_PRIVILEGES)
+        _assigned(schema, names, READ_PRIVILEGES)
+        and _assigned(schema, names, USE_SCHEMA_PRIVILEGES)
+        and _assigned(effective("catalog", schema_fqn.split(".")[0]), names, USE_CATALOG_PRIVILEGES)
     )
 
 
@@ -206,23 +242,17 @@ def _is_scope_error(exc: Exception) -> bool:
 
 
 class CachedMe:
-    """The signed-in user's identity, fetched at most once per request (a failure is remembered too)."""
+    """The signed-in user's identity, fetched at most once per request (a failure is remembered too).
+
+    Safe to share between the threads of one request.
+    """
 
     def __init__(self, user_w: WorkspaceClient):
         self._user_w = user_w
-        self._me: MeProfile | None = None
-        self._error: Forbidden | None = None
+        self._memo = RequestMemo()
 
     def __call__(self) -> MeProfile:
-        if self._error is not None:
-            raise self._error
-        if self._me is None:
-            try:
-                self._me = fetch_me(self._user_w)
-            except Forbidden as exc:
-                self._error = exc
-                raise
-        return self._me
+        return self._memo.get("me", lambda: fetch_me(self._user_w))
 
 
 def _fallback_read(user_w: WorkspaceClient, app_w: WorkspaceClient, fqn: str) -> SkillInfo:
@@ -275,10 +305,12 @@ def list_visible_skills(
     app_w: WorkspaceClient,
     schema_fqn: str,
     me: Callable[[], MeProfile] | None = None,
+    memo: RequestMemo | None = None,
 ) -> list[SkillInfo]:
     """The skills the user can see in one schema. Uses the user's view; falls back to effective permissions.
 
-    `me` is a per-request identity getter (`CachedMe`), so a catalog load resolves the user once.
+    `me` is a per-request identity getter (`CachedMe`) and `memo` a per-request `RequestMemo`, so a catalog
+    load resolves the user and the catalog's permissions once, not once per department.
     """
     _require_schema_fqn(schema_fqn)
     try:
@@ -291,7 +323,7 @@ def list_visible_skills(
         log.warning("user-token listing unavailable (%s); checking effective permissions", type(exc).__name__)
     try:
         profile = me() if me is not None else fetch_me(user_w)
-        if not effective_read_schema(app_w, profile.user, schema_fqn, profile.groups):
+        if not effective_read_schema(app_w, profile.user, schema_fqn, profile.groups, memo):
             return []
         return UCSkills(app_w).list(schema_fqn)
     except Forbidden:

@@ -1,7 +1,7 @@
 import { fireEvent, render, screen, within } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { describe, expect, it, vi, beforeEach } from "vitest";
-import Catalog from "./Catalog";
+import Catalog, { SkillCard } from "./Catalog";
 import { api, ApiError } from "../api/client";
 import type { SkillSummary } from "../api/types";
 
@@ -56,6 +56,22 @@ describe("Catalog", () => {
     const equity = screen.getByRole("region", { name: /equity_research/i });
     expect(within(equity).getByText("No live version")).toBeTruthy();
     expect(within(equity).getByText("No results yet")).toBeTruthy();
+  });
+
+  it("names the department in the section heading only, not again on each card", async () => {
+    vi.mocked(api.skills).mockResolvedValue(more);
+    renderCatalog();
+    for (const [dept, name] of [["common", "audit-xls"], ["equity_research", "morning-note"]]) {
+      const section = await screen.findByRole("region", { name: dept });
+      expect(within(section).getByRole("heading", { level: 2, name: dept })).toBeTruthy();
+      const card = within(section).getByRole("link", { name }).closest(".skill-card") as HTMLElement;
+      expect(within(card).queryByText(dept)).toBeNull();
+    }
+  });
+
+  it("keeps the department on a card shown outside a department section", () => {
+    render(<MemoryRouter><ul><SkillCard s={skills[1]} /></ul></MemoryRouter>);
+    expect(screen.getByText("equity_research")).toBeTruthy();
   });
 
   it("shows a loading status first", async () => {

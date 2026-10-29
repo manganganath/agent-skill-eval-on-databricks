@@ -65,6 +65,18 @@ async function requestList<T>(path: string): Promise<Listed<T>> {
   };
 }
 
+// The signed-in user, asked for once per page load: the header and the pages share one /api/me request. A failed
+// request is not kept, so the next caller (a page's Try again, say) asks again.
+let mePromise: Promise<Me> | null = null;
+function me(): Promise<Me> {
+  if (!mePromise) {
+    const pending = request<Me>("/me");
+    mePromise = pending;
+    pending.catch(() => { if (mePromise === pending) mePromise = null; });
+  }
+  return mePromise;
+}
+
 const enc = encodeURIComponent;
 const qs = (params: Record<string, string | undefined>) => {
   const p = new URLSearchParams();
@@ -74,7 +86,7 @@ const qs = (params: Record<string, string | undefined>) => {
 };
 
 export const api = {
-  me: () => request<Me>("/me"),
+  me,
   config: () => request<AppConfig>("/config"),
   skills: (q?: string) => request<SkillSummary[]>(`/skills${qs({ q })}`),
   skill: (fqn: string) => request<SkillDetail>(`/skills/${enc(fqn)}`),
