@@ -14,7 +14,7 @@ export function VerdictChip({ verdict }: { verdict: Verdict | undefined }) {
   const { text, icon } = LABEL[verdict];
   return (
     <span className={`chip chip-${verdict}`}>
-      <span aria-hidden="true">{icon} </span>
+      <span className="chip-icon" aria-hidden="true">{icon}</span>
       <span>{text}</span>
     </span>
   );

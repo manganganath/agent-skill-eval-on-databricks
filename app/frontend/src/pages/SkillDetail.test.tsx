@@ -5,10 +5,13 @@ import SkillDetail, { liveVersion } from "./SkillDetail";
 import { api, ApiError } from "../api/client";
 import type { JournalRow, SkillDetail as SkillDetailT } from "../api/types";
 
-// `me` and `config` are mocked so no test does a real fetch, even when later tasks add panels that call them.
+// `me`, `config` and `skills` are mocked so no test does a real fetch, even when later tasks add panels that call them.
 vi.mock("../api/client", async (orig) => {
   const real = await orig<typeof import("../api/client")>();
-  return { ...real, api: { ...real.api, skill: vi.fn(), versions: vi.fn(), me: vi.fn(), config: vi.fn() } };
+  return {
+    ...real,
+    api: { ...real.api, skill: vi.fn(), skills: vi.fn(), versions: vi.fn(), me: vi.fn(), config: vi.fn() },
+  };
 });
 
 const detail: SkillDetailT = {
@@ -33,6 +36,8 @@ beforeEach(() => {
   vi.mocked(api.versions).mockResolvedValue([]);
   vi.mocked(api.me).mockResolvedValue({ user: "a@x.com", groups: [], is_reviewer: false });
   vi.mocked(api.config).mockResolvedValue({ workspace_url: "https://example.test", models: {}, departments: [] });
+  vi.mocked(api.skills).mockReset();
+  vi.mocked(api.skills).mockResolvedValue([]);
 });
 
 function renderAt(fqn: string) {
@@ -150,6 +155,36 @@ describe("SkillDetail", () => {
     renderAt(detail.fqn);
     expect(await screen.findByRole("button", { name: /try again/i })).toBeTruthy();
     expect(screen.getByRole("heading", { name: "Audit steps" })).toBeTruthy();
+  });
+});
+
+describe("SkillDetail summary header", () => {
+  it("shows the department, the live version and a verdict chip per model from the catalog entry", async () => {
+    vi.mocked(api.skill).mockResolvedValue(detail);
+    vi.mocked(api.skills).mockResolvedValue([
+      { fqn: "skill_hub.other.audit-xls", dept: "other", name: "audit-xls", description: null, live_version: 9,
+        verdicts: { "claude-sonnet": "fail" }, eval_access: "ok" },
+      { fqn: detail.fqn, dept: "common", name: "audit-xls", description: "Audit", live_version: 3,
+        verdicts: { "claude-sonnet": "pass", "gemini-flash": "warn" }, eval_access: "ok" },
+    ]);
+    renderAt(detail.fqn);
+    expect(await screen.findByText("Live version 3")).toBeTruthy();
+    expect(api.skills).toHaveBeenCalledWith("audit-xls");
+    const chips = screen.getByRole("list", { name: /latest verdicts/i });
+    expect(within(chips).getByText("Pass")).toBeTruthy();
+    expect(within(chips).getByText("Warn")).toBeTruthy();
+    expect(within(chips).queryByText("Fail")).toBeNull(); // the same name in another department is not this skill
+    expect(screen.getByText("common", { selector: ".tag" })).toBeTruthy();
+  });
+
+  it("leaves the live version and verdicts out when the catalog entry cannot be read", async () => {
+    vi.mocked(api.skill).mockResolvedValue(detail);
+    vi.mocked(api.skills).mockRejectedValue(new ApiError(500, "boom"));
+    renderAt(detail.fqn);
+    expect(await screen.findByRole("heading", { level: 1, name: "audit-xls" })).toBeTruthy();
+    expect(screen.queryByRole("list", { name: /latest verdicts/i })).toBeNull();
+    expect(screen.queryByText(/^Live version \d/)).toBeNull();
+    expect(screen.queryByRole("alert")).toBeNull();
   });
 });
 

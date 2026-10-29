@@ -40,7 +40,7 @@ export function ErrorState({ error, onRetry }: { error: unknown; onRetry?: () =>
   return (
     <div role="alert" className="error">
       <p>{message}</p>
-      {reason && <p className="muted">Reason code: {reason}</p>}
+      {reason && <p className="muted">Reason code: <code>{reason}</code></p>}
       {onRetry && <button type="button" onClick={onRetry}>Try again</button>}
     </div>
   );

@@ -49,35 +49,41 @@ export function TryPanel({ fqn, evalAccess }: { fqn: string; evalAccess: EvalAcc
       <p className="muted">
         Runs as you, so you only get the skills you can use. Pick up to {MAX_MODELS} models. Answers are shown as plain text.
       </p>
-      <label htmlFor="try-prompt">Test input</label>
-      <textarea id="try-prompt" rows={3} maxLength={MAX_PROMPT} value={prompt}
-        onChange={(e) => setPrompt(e.target.value)} />
-      <p className="muted">Try runs are recorded and visible to this department's eval readers.</p>
-      <fieldset>
-        <legend>Models</legend>
-        {Object.entries(config.data?.models ?? {}).map(([name, cls]) => (
-          <label key={name}>
-            <input type="checkbox" aria-label={name} checked={models.includes(name)}
-              disabled={!models.includes(name) && models.length >= MAX_MODELS}
-              onChange={() => toggle(name)} />
-            {" "}{name} <span className="muted">({cls})</span>
-          </label>
-        ))}
+      <div className="field">
+        <label htmlFor="try-prompt">Test input</label>
+        <textarea id="try-prompt" rows={3} maxLength={MAX_PROMPT} value={prompt}
+          onChange={(e) => setPrompt(e.target.value)} />
+        <p className="hint">Try runs are recorded and visible to this department's eval readers.</p>
+      </div>
+      <fieldset className="try-models">
+        <legend className="field-label">Models</legend>
+        <div className="choice-grid">
+          {Object.entries(config.data?.models ?? {}).map(([name, cls]) => (
+            <label key={name} className="choice">
+              <input type="checkbox" aria-label={name} checked={models.includes(name)}
+                disabled={!models.includes(name) && models.length >= MAX_MODELS}
+                onChange={() => toggle(name)} />
+              <span className="choice-text"><strong>{name}</strong> <span className="choice-sub">({cls})</span></span>
+            </label>
+          ))}
+        </div>
       </fieldset>
-      <button type="button" disabled={busy || !prompt.trim() || models.length === 0} onClick={run}>
-        Try skill
-      </button>
+      <div className="form-actions">
+        <button type="button" className="btn-primary" disabled={busy || !prompt.trim() || models.length === 0} onClick={run}>
+          Try skill
+        </button>
+        <p role="status" aria-live="polite" className="status-line">{busy ? "Running the agent. This can take a minute." : ""}</p>
+      </div>
       {error ? <ErrorState error={error} /> : null}
-      <p role="status" aria-live="polite">{busy ? "Running the agent. This can take a minute." : ""}</p>
       {results?.map((r) => (
-        <article key={r.model} aria-label={`Result for ${r.model}`}>
+        <article key={r.model} aria-label={`Result for ${r.model}`} className="try-result">
           <h3>{r.model}</h3>
           <p>Skill invoked: {r.with_skill.invoked ? "yes" : "no"}</p>
           <div className="compare">
             <div><h4>With skill</h4><pre className="plain">{r.with_skill.text}</pre></div>
             <div><h4>Without skill</h4><pre className="plain">{r.without_skill.text}</pre></div>
           </div>
-          {r.trace_url && evalAccess === "ok" && <a href={r.trace_url} target="_blank" rel="noreferrer">Open trace</a>}
+          {r.trace_url && evalAccess === "ok" && <p><a href={r.trace_url} target="_blank" rel="noreferrer">Open trace</a></p>}
         </article>
       ))}
     </section>
