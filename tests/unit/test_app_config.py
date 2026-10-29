@@ -35,17 +35,13 @@ def test_user_scopes_are_the_documented_names():
     assert not (scopes & deprecated)
 
 
-def test_app_resources_bind_warehouse_jobs_and_endpoints():
+def test_app_resources_bind_the_warehouse_and_jobs_but_no_serving_endpoints():
+    """The app calls models with the user's token. Binding an endpoint would need MANAGE on it."""
     resources = {r["name"]: r for r in app()["resources"]}
     assert resources["sql-warehouse"]["sql_warehouse"]["permission"] == "CAN_USE"
     assert resources["skill-eval-job"]["job"]["permission"] == "CAN_MANAGE_RUN"
     assert resources["skill-switch-job"]["job"]["permission"] == "CAN_MANAGE_RUN"
-    endpoints = [r for r in resources.values() if "serving_endpoint" in r]
-    assert len(endpoints) == 4
-    assert all(r["serving_endpoint"]["permission"] == "CAN_QUERY" for r in endpoints)
-    hub = yaml.safe_load((ROOT / "config" / "hub.yaml").read_text())
-    configured = {p["endpoint"] for p in hub["models"].values() if p.get("route") == "serving"}
-    assert configured <= {r["serving_endpoint"]["name"] for r in endpoints}
+    assert not [r for r in resources.values() if "serving_endpoint" in r]
 
 
 def test_app_env_comes_from_bundle_variables():
