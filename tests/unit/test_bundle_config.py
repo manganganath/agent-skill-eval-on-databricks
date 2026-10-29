@@ -132,6 +132,14 @@ def test_skill_eval_parameters_and_task_chain():
     assert tasks["sync"]["python_wheel_task"]["parameters"][:2] == ["sync", "--run-key"]
 
 
+def test_eval_tasks_are_never_retried_automatically():
+    """A retry re-runs every skill under the same run key; a failed eval surfaces and is re-run on purpose."""
+    jobs = jobs_by_name()
+    for job, task in (("skill-eval", "eval"), ("skillhub-nightly", "eval_live")):
+        [t] = [t for t in jobs[job]["tasks"] if t["task_key"] == task]
+        assert t["max_retries"] == 0, (job, task)
+
+
 def test_skill_eval_passes_roots_and_versions_to_the_cli():
     params = jobs_by_name()["skill-eval"]["tasks"][0]["python_wheel_task"]["parameters"]
     for flag, name in (

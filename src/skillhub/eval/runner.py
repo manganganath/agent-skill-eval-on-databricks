@@ -98,6 +98,7 @@ from skillhub.registry.journal import Journal
 from skillhub.registry.stage import RunScope, StagedSkill, drop_run_schemas, stage
 from skillhub.registry.uc_skills import UCSkills
 from skillhub.results.datasets import case_record
+from skillhub.retry import is_transient, is_write_conflict, retrying
 from skillhub.sql import SqlClient
 
 log = logging.getLogger(__name__)
@@ -127,6 +128,17 @@ _NO_SKILL = frozenset({"", "None", "null"})
 _NOT_RECORDED = object()  # the trigger assessment carries no `invoked_skill`
 WORKER_STOP_S = 20  # how long a stopped worker gets to close its open child runs before it is killed
 WORKER_TAIL_LINES = 20  # the stderr lines of a failed worker that its error keeps
+# Worker i of the first wave starts i gaps after the first, so their setups do not reach the APIs at once.
+WORKER_START_GAP_S = 5
+# A skill's setup is retried on a rate limit or an unavailable service: workers that start together hit the
+# dataset and workspace APIs at once (seen live as HTTP 429). Jittered exponential backoff, capped.
+SETUP_ATTEMPTS = 6
+SETUP_BACKOFF_S = 2.0
+SETUP_BACKOFF_MAX_S = 60.0
+# The rubric insert is retried on a Delta write conflict: the workers of one department share its table.
+RUBRIC_ATTEMPTS = 5
+RUBRIC_BACKOFF_S = 1.0
+RUBRIC_BACKOFF_MAX_S = 15.0
 # A child process cannot use a Job's runtime auth, so a worker gets a host and token; these would conflict.
 _PAT_CONFLICTS = (
     "DATABRICKS_AUTH_TYPE",
@@ -711,11 +723,15 @@ class _Workers:
     def __init__(self) -> None:
         self._lock = threading.Lock()
         self._procs: list[subprocess.Popen] = []
-        self._stopping = False
+        self._stopping = threading.Event()
+
+    def wait(self, seconds: float) -> None:
+        """Wait up to `seconds`; a stop ends the wait at once."""
+        self._stopping.wait(seconds)
 
     def start(self, cmd: list[str], env: dict[str, str]) -> subprocess.Popen | None:
         with self._lock:
-            if self._stopping:
+            if self._stopping.is_set():
                 return None
             proc = subprocess.Popen(
                 cmd,
@@ -732,7 +748,7 @@ class _Workers:
     def stop(self, grace_s: float) -> None:
         """SIGTERM each running worker (it closes its open child runs), then kill those still running."""
         with self._lock:
-            self._stopping = True
+            self._stopping.set()
             procs = [p for p in self._procs if p.poll() is None]
         for p in procs:
             p.terminate()
@@ -747,13 +763,21 @@ class _Workers:
 _STDERR_LOCK = threading.Lock()
 
 
+def _start_delay(index: int, wave: int) -> float:
+    """How long the worker of run `index` waits before it starts. The first `wave` runs start together, so
+    they are spread one gap apart; a later run starts when a slot frees, which is spread already."""
+    return index * WORKER_START_GAP_S if index < wave else 0
+
+
 def _launch_worker(
-    cmd: list[str], env: dict[str, str], label: str, procs: _Workers
+    cmd: list[str], env: dict[str, str], label: str, procs: _Workers, delay: float = 0
 ) -> tuple[int | None, str]:
-    """Run one worker to its end: (exit code, the last lines of its stderr).
+    """Run one worker to its end, `delay` seconds from now: (exit code, the last lines of its stderr).
 
     Its stderr streams to this process's stderr (the Job log), each line prefixed with `[dept/skill]`. Its
-    stdout is not read."""
+    stdout is not read. A stop during the delay ends it, and the worker is not started."""
+    if delay > 0:
+        procs.wait(delay)
     proc = procs.start(cmd, env)
     if proc is None:
         return None, "not started: the run was interrupted"
@@ -820,15 +844,26 @@ def _read_worker_result(path: Path) -> tuple[list[ChildRunSummary], list[RunErro
 
 
 def _run_in_worker(
-    cfg, req: RunRequest, run: _SkillRun, workdir: Path, index: int, *, prompts, fixtures, w, procs: _Workers
+    cfg,
+    req: RunRequest,
+    run: _SkillRun,
+    workdir: Path,
+    index: int,
+    *,
+    prompts,
+    fixtures,
+    w,
+    procs: _Workers,
+    delay: float = 0,
 ) -> tuple[list[ChildRunSummary], list[RunError]]:
-    """One skill in a worker process. A worker that fails or leaves no result is one error of the skill."""
+    """One skill in a worker process, started `delay` seconds from now. A worker that fails or leaves no
+    result is one error of the skill."""
     label = f"{run.scope.dept}/{run.skill.name}"
     spec, out = workdir / f"{index}.spec.json", workdir / f"{index}.out.json"
     try:
         body = _worker_spec(cfg, req, run, prompts=prompts, fixtures=fixtures, index=index)
         spec.write_text(json.dumps(body), "utf-8")
-        code, tail = _launch_worker(_worker_command(spec, out), _worker_env(w), label, procs)
+        code, tail = _launch_worker(_worker_command(spec, out), _worker_env(w), label, procs, delay)
     except Exception as e:
         code, tail = None, _describe(e)
     if code == 0:
@@ -846,9 +881,8 @@ def _run_in_workers(
 ) -> list[tuple[list[ChildRunSummary], list[RunError]]]:
     workdir = Path(tempfile.mkdtemp(prefix="skillhub-workers-"))
     procs = _Workers()
-    pool = ThreadPoolExecutor(
-        max_workers=min(cfg.defaults.skill_workers, len(runs)), thread_name_prefix="skill-worker"
-    )
+    wave = min(cfg.defaults.skill_workers, len(runs))
+    pool = ThreadPoolExecutor(max_workers=wave, thread_name_prefix="skill-worker")
     try:
         with _sigterm_raises():
             futures = [
@@ -863,6 +897,7 @@ def _run_in_workers(
                     fixtures=fixtures,
                     w=w,
                     procs=procs,
+                    delay=_start_delay(i, wave),
                 )
                 for i, r in enumerate(runs)
             ]
@@ -983,21 +1018,29 @@ def _run_skill(
     if not modes:
         return [], []
     try:
-        ctx = _prepare(
-            cfg,
-            req,
-            plan,
-            scope,
-            skill,
-            modes,
-            names=names,
-            judges=judges,
-            exp_id=exp_id,
-            parent_id=parent_id,
-            prompts=prompts,
-            version=version,
-            fixtures=fixtures,
-            sql=sql,
+        # _prepare can repeat: sync_dataset merges the same records again, and the rest only reads.
+        ctx = retrying(
+            lambda: _prepare(
+                cfg,
+                req,
+                plan,
+                scope,
+                skill,
+                modes,
+                names=names,
+                judges=judges,
+                exp_id=exp_id,
+                parent_id=parent_id,
+                prompts=prompts,
+                version=version,
+                fixtures=fixtures,
+                sql=sql,
+            ),
+            attempts=SETUP_ATTEMPTS,
+            base_s=SETUP_BACKOFF_S,
+            cap_s=SETUP_BACKOFF_MAX_S,
+            retry_on=is_transient,
+            what=f"{scope.dept}/{skill.name} setup",
         )
     except Exception as e:
         message = names.to_production(f"setup failed: {_describe(e)}")[:ERROR_MAX]
@@ -1350,8 +1393,15 @@ def _run_child(ctx: _SkillCtx, client, profile: str, mode: str, without_scores: 
                 log.warning("could not close the skills bridge of run %s", run_id, exc_info=True)
         mlflow.end_run(status)
     if ctx.rubric is not None:  # Once per child run, after the verdict
-        try:
-            record_rubric(cfg, ctx.sql, ctx.scope.dept, ctx.rubric)
+        try:  # each attempt checks again whether the rubric is recorded, so a retry never writes it twice
+            retrying(
+                lambda: record_rubric(cfg, ctx.sql, ctx.scope.dept, ctx.rubric),
+                attempts=RUBRIC_ATTEMPTS,
+                base_s=RUBRIC_BACKOFF_S,
+                cap_s=RUBRIC_BACKOFF_MAX_S,
+                retry_on=is_write_conflict,
+                what=f"{ctx.scope.dept}/{ctx.skill.name} {profile} {mode} record_rubric",
+            )
         except Exception as e:
             errors.append(error(f"record_rubric: {type(e).__name__}: {e}", run_id))
     child = ChildRunSummary(
