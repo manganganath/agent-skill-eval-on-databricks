@@ -30,6 +30,7 @@ COLUMNS = (
     "Unreviewed",
 )
 LINK_COLUMN = "Run"
+COMMENT_MAX = 65536  # characters: GitHub refuses a longer comment body (422)
 _EXPECT = re.compile(r"^(?P<ref>[a-z0-9_]+/[a-z0-9][a-z0-9_-]*)=(?P<hash>sha256:[0-9a-f]{64})$")
 _REF = re.compile(r"[a-z0-9_]+/[a-z0-9][a-z0-9_-]*")
 _SHA = re.compile(r"sha256:[0-9a-f]{64}")
@@ -61,6 +62,20 @@ def _gating(r: dict[str, Any]) -> bool:
     return r.get("mode") != "without_skill"
 
 
+def _counts(r: dict[str, Any], kinds: set[str]) -> bool:
+    """A row of a mode in `kinds` counts toward the gate; a row with an unknown mode always does."""
+    kind = CASE_KIND.get(r.get("mode") or "")
+    return kind is None or kind in kinds
+
+
+def _blocking(r: dict[str, Any], gating_modes: Iterable[str] = REQUEST_MODES) -> bool:
+    return (
+        _gating(r)
+        and _counts(r, set(gating_modes))
+        and (not r.get("mode") or r.get("verdict") not in PASSING)
+    )
+
+
 def blocking_verdicts(rows: list[dict[str, Any]], gating_modes: Iterable[str] = REQUEST_MODES) -> list[str]:
     """Verdicts that decide the exit code. `without_skill` rows are the baseline and are ignored, and so are
     rows of a request mode left out of `gating_modes` (reported, not blocking).
@@ -68,12 +83,9 @@ def blocking_verdicts(rows: list[dict[str, Any]], gating_modes: Iterable[str] = 
     A NULL verdict, or a row with no mode or an unknown one, becomes or stays a blocker (fail closed).
     """
     kinds = set(gating_modes)
-
-    def counts(r: dict[str, Any]) -> bool:
-        kind = CASE_KIND.get(r.get("mode") or "")
-        return kind is None or kind in kinds
-
-    return [(r.get("verdict") or "") if r.get("mode") else "" for r in rows if _gating(r) and counts(r)]
+    return [
+        (r.get("verdict") or "") if r.get("mode") else "" for r in rows if _gating(r) and _counts(r, kinds)
+    ]
 
 
 def _ref(r: dict[str, Any]) -> str:
@@ -191,11 +203,17 @@ def parse_expectations(text: str) -> dict[str, Expected]:
 
 
 def render_matrix_markdown(
-    rows: list[dict[str, Any]], *, run_key: str, links: bool = False, hub_url: str | None = None
+    rows: list[dict[str, Any]],
+    *,
+    run_key: str,
+    links: bool = False,
+    hub_url: str | None = None,
+    gating_modes: Iterable[str] = REQUEST_MODES,
 ) -> str:
     """The comment body. The repository can be public, so by default it holds no workspace host, run or
     experiment ID and no Skill Hub URL. `links` (SKILLHUB_PR_LINKS=true, for private repositories)
-    adds an MLflow link per row (`run_url`) and the Skill Hub URL."""
+    adds an MLflow link per row (`run_url`) and the Skill Hub URL. A body too long for one GitHub comment shows
+    the blocking rows first and says how many rows it leaves out."""
     lines = [MARKER, f"### Skill evaluation `{_cell(run_key)}`", ""]
     if not rows:
         lines += [
@@ -206,31 +224,49 @@ def render_matrix_markdown(
         return "\n".join(lines)
     columns = (*COLUMNS, LINK_COLUMN) if links else COLUMNS
     lines += ["| " + " | ".join(columns) + " |", "|" + "---|" * len(columns)]
-    for r in sorted(
+    ordered = sorted(
         rows, key=lambda r: tuple(str(r.get(k) or "") for k in ("skill", "model_profile", "mode"))
-    ):
-        unreviewed = (r.get("n_cases") or 0) - (r.get("n_reviewed") or 0)
-        cells = [
-            r["skill"],
-            r["model_profile"],
-            r.get("model_class") or "-",
-            r["mode"] or "-",
-            r["verdict"] or "-",
-            _pct(r.get("accuracy")),
-            _num(r.get("uplift_task_quality")),
-            _num(r.get("uplift_skill_format")),
-            _num(r.get("spread")),
-            unreviewed,
-        ]
-        if links:
-            cells.append(f"[MLflow]({r['run_url']})" if r.get("run_url") else "-")
-        lines.append("| " + " | ".join(_cell(c) for c in cells) + " |")
-    lines.append("")
-    if links and hub_url:
-        lines.append(f"Skill Hub: {hub_url}")
-    else:
-        lines.append("Details in Skill Hub.")
-    return "\n".join(lines)
+    )
+    table = [_matrix_line(r, links) for r in ordered]
+    footer = ["", f"Skill Hub: {hub_url}" if links and hub_url else "Details in Skill Hub."]
+    body = "\n".join([*lines, *table, *footer])
+    if len(body) <= COMMENT_MAX:
+        return body
+
+    def note(left_out: int) -> str:
+        return f"{left_out} of {len(rows)} rows are not shown: a comment holds {COMMENT_MAX} characters."
+
+    # Too long for one comment: the blocking rows first, then as many others as fit.
+    room = COMMENT_MAX - len("\n".join([*lines, "", note(len(rows)), *footer]))
+    shown: list[str] = []
+    for r in sorted(
+        ordered, key=lambda r: not _blocking(r, gating_modes)
+    ):  # stable: each group keeps its order
+        line = _matrix_line(r, links)
+        if len(line) + 1 > room:
+            break
+        shown.append(line)
+        room -= len(line) + 1
+    return "\n".join([*lines, *shown, "", note(len(rows) - len(shown)), *footer])
+
+
+def _matrix_line(r: dict[str, Any], links: bool) -> str:
+    unreviewed = (r.get("n_cases") or 0) - (r.get("n_reviewed") or 0)
+    cells = [
+        r["skill"],
+        r["model_profile"],
+        r.get("model_class") or "-",
+        r["mode"] or "-",
+        r["verdict"] or "-",
+        _pct(r.get("accuracy")),
+        _num(r.get("uplift_task_quality")),
+        _num(r.get("uplift_skill_format")),
+        _num(r.get("spread")),
+        unreviewed,
+    ]
+    if links:
+        cells.append(f"[MLflow]({r['run_url']})" if r.get("run_url") else "-")
+    return "| " + " | ".join(_cell(c) for c in cells) + " |"
 
 
 def _headers(token: str) -> dict[str, str]:

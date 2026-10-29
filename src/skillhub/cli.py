@@ -1154,7 +1154,9 @@ def pr_comment_cmd(
             if links:
                 add_run_links(rows, cfg.workspace.host)
             hub_url = (os.environ.get("SKILL_HUB_URL") or None) if links else None
-            body = render_matrix_markdown(rows, run_key=key, links=links, hub_url=hub_url)
+            body = render_matrix_markdown(
+                rows, run_key=key, links=links, hub_url=hub_url, gating_modes=cfg.defaults.gating_modes
+            )
             action = upsert_pr_comment(repo=repo, pr=pr, body=body, token=token)
         except ValueError as e:
             raise SkillHubError(str(e)) from None
