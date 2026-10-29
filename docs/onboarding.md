@@ -10,6 +10,25 @@ Authors write skills, reviewers mark cases as reviewed and switch versions, and 
 
 The customer's administrator grants group membership.
 
+## Roles in the Skill Hub
+
+The Skill Hub shows the same table on its Access page, with your own roles marked. Each role adds to the one before it.
+
+| Action | Everyone signed in | Authors | Reviewers |
+|---|---|---|---|
+| Browse live skills | Own departments | Own departments | All departments |
+| Try a skill | Yes | Yes | Yes |
+| Run an eval on live skills | Yes | Yes | Yes |
+| See skills under review | No | Own departments | All departments |
+| Upload a draft | No | Yes | Yes |
+| Run an eval on a candidate or draft | No | Yes | Yes |
+| Switch the live version | No | No | Yes |
+| Add or edit a skill | No | Through a pull request | Through a pull request |
+| Approve a release | No | No | In GitHub, as a required reviewer |
+| Publish a version | No one: CI publishes after approval | | |
+
+Nobody publishes a version from the app, and skills are not edited in it. To change a skill, open a pull request that changes `skills/<department>/<skill>/`. The pull request's evaluation runs by itself, and a failed trigger eval blocks the merge. After the merge, the required reviewers of the GitHub `production` environment approve the release, and CI publishes the new version and makes it live.
+
 ## Add a skill
 
 1. Create a branch.

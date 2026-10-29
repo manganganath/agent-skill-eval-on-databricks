@@ -74,7 +74,12 @@ export default function CandidateDetail() {
     // Any 404 means "not found, or no access", whatever reason code the server gave.
     const error = candidate.error instanceof ApiError && candidate.error.status === 404
       ? new ApiError(404, "candidate_not_found") : candidate.error;
-    return <ErrorState error={error} onRetry={candidate.reload} />;
+    return (
+      <>
+        <ErrorState error={error} onRetry={candidate.reload} />
+        <p className="hint">Skills under review are visible to authors and reviewers. <Link to="/access">Who can do what</Link></p>
+      </>
+    );
   }
   const s = candidate.data;
   if (!s) return <EmptyState title="No candidate to show" />;

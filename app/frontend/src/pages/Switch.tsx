@@ -29,7 +29,7 @@ export default function Switch() {
   if (me.loading || versions.loading) return <Loading label="Loading switch options" />;
   if (me.error) return <ErrorState error={me.error} onRetry={me.reload} />;
   if (!me.data?.is_reviewer) {
-    return <EmptyState title="Switching versions"><p>Only skill reviewers can switch versions.</p></EmptyState>;
+    return <EmptyState title="Switching versions"><p>Only skill reviewers can switch versions. <Link to="/access">Who can do what</Link></p></EmptyState>;
   }
   if (versions.error) return <ErrorState error={versions.error} onRetry={versions.reload} />;
 

@@ -124,6 +124,9 @@ export default function SkillDetail() {
           {me.data?.is_reviewer && (
             <Link className="btn" to={`/skills/${encodeURIComponent(s.fqn)}/switch`}>Switch version (reviewers)</Link>
           )}
+          {me.data && !me.data.is_reviewer && (
+            <p className="hint">Only reviewers can switch versions. <Link to="/access">Who can do what</Link></p>
+          )}
         </div>
         <SummaryVerdicts skill={s} />
       </header>

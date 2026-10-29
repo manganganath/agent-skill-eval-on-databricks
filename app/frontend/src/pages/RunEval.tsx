@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { useSearchParams } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import { api } from "../api/client";
 import type {
   AppConfig, CandidateKind, CandidateSummary, EvalRunIn, EvalRunStatus, JournalRow, Me, Mode, SkillSummary,
@@ -207,6 +207,11 @@ export default function RunEval() {
           </p>
         </div>
       </div>
+      {me.data && !reviewing && (
+        <p className="hint">
+          Authors and reviewers can also evaluate skills under review. <Link to="/access">Who can do what</Link>
+        </p>
+      )}
       <fieldset className="form-group">
         <legend>Skills</legend>
         {reviewing && (

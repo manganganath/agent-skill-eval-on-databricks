@@ -1,6 +1,6 @@
 import type {
   AppConfig, CandidateDetail, CandidateSummary, CaseRow, DraftIn, DraftOut, EvalRunIn, EvalRunOut, EvalRunStatus,
-  JournalRow, MatrixRow, Me, SkillDetail, SkillSummary, SwitchOut, TryIn, TryModelResult,
+  JournalRow, MatrixRow, Me, ReadableDepartments, SkillDetail, SkillSummary, SwitchOut, TryIn, TryModelResult,
 } from "./types";
 
 // `errors` carries the plain-language problems of a refused draft upload (reason draft_invalid).
@@ -91,6 +91,7 @@ const qs = (params: Record<string, string | undefined>) => {
 export const api = {
   me,
   config: () => request<AppConfig>("/config"),
+  readableDepartments: () => request<ReadableDepartments>("/me/departments"),
   skills: (q?: string) => request<SkillSummary[]>(`/skills${qs({ q })}`),
   skill: (fqn: string) => request<SkillDetail>(`/skills/${enc(fqn)}`),
   versions: (fqn: string) => request<JournalRow[]>(`/skills/${enc(fqn)}/versions`),

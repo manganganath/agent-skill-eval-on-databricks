@@ -114,7 +114,11 @@ export interface AppConfig {
   workspace_url: string;
   models: Record<string, "frontier" | "fast">;
   departments: string[];
+  // Always sent by the API; optional here so older mocks and callers stay valid.
+  roles?: { authors: string; reviewers: string };
+  department_access?: Record<string, { readers: string[]; quarantine: boolean }>;
 }
+export interface ReadableDepartments { departments: string[] }
 
 // The two evaluation modes, as the API accepts them. The UI lists them from here.
 export const MODES: Mode[] = ["trigger", "effectiveness"];
