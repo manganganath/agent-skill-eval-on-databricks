@@ -449,9 +449,78 @@ def test_plan_diffs_from_the_released_tag_with_an_ancestry_guard():
     assert checkout["with"]["fetch-depth"] == 0 and checkout["with"]["fetch-tags"] is True
     run = step_named(wf, "Plan re-evaluation")["run"]
     assert 'git merge-base --is-ancestor refs/tags/skillhub/released "$HEAD_SHA"' in run
-    assert "::error::" in run and 'base="$EVENT_BEFORE_SHA"' in run
-    assert 'changed-skills --base "$base"' in run
+    assert "::error::" in run and "EVENT_BEFORE_SHA" not in run  # the previous push is never the base
+    assert 'changed-skills "${base[@]}"' in run and "base=(--empty-base)" in run
     assert run.index("is-ancestor") < run.index("changed-skills")
+
+
+def _uv_running_the_cli(tmp_path: Path) -> str:
+    """A `uv` whose `uv run skillhub ...` and `uv run python ...` run this checkout's code. Returns its folder."""
+    import sys
+
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir(exist_ok=True)
+    uv = bin_dir / "uv"
+    uv.write_text(
+        "#!/bin/bash\n"
+        '[ "$1" = run ] || exit 9\n'
+        "shift\n"
+        f'if [ "$1" = skillhub ]; then shift; exec "{sys.executable}" -c '
+        '"from skillhub.cli import app; app()" "$@"; fi\n'
+        f'if [ "$1" = python ]; then shift; exec "{sys.executable}" "$@"; fi\n'
+        "exit 9\n"
+    )
+    uv.chmod(0o755)
+    return str(bin_dir)
+
+
+def _plan(repo: Path, tmp_path: Path) -> dict[str, str]:
+    """Run the plan step on `repo` at HEAD and return its outputs."""
+    env = {"PATH": f"{_uv_running_the_cli(tmp_path)}:/usr/bin:/bin:/usr/local/bin:/opt/homebrew/bin"}
+    env |= {"RUNNER_TEMP": str(tmp_path), "GITHUB_OUTPUT": str(tmp_path / "out"), "RUN_ATTEMPT": "1"}
+    env |= {"HEAD_SHA": _git(repo, "rev-parse", "HEAD"), "HOME": str(tmp_path)}
+    run = step_named(load_workflow("skills-publish.yml"), "Plan re-evaluation")["run"]
+    proc = subprocess.run(["bash", "-e", "-c", run], cwd=repo, env=env, capture_output=True, text=True)
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    return dict(ln.split("=", 1) for ln in (tmp_path / "out").read_text().splitlines())
+
+
+def _git(repo: Path, *args: str) -> str:
+    who = ("-c", "user.name=t", "-c", "user.email=t@example.com", "-c", "commit.gpgsign=false")
+    proc = subprocess.run(["git", "-C", str(repo), *who, *args], check=True, capture_output=True, text=True)
+    return proc.stdout.strip()
+
+
+def _add_skill(repo: Path, name: str) -> str:
+    """Commit skills/common/<name> with one trigger case. Returns the commit."""
+    root = repo / "skills" / "common" / name
+    (root / "evals").mkdir(parents=True)
+    (root / "SKILL.md").write_text(f"---\nname: {name}\ndescription: Does {name}.\n---\nUse it.\n")
+    evals = {"skill_name": name, "evals": [{"id": 1, "prompt": "do it", "should_trigger": True}]}
+    (root / "evals" / "evals.json").write_text(json.dumps(evals))
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-q", "-m", f"add {name}")
+    return _git(repo, "rev-parse", "HEAD")
+
+
+def test_plan_publishes_every_unreleased_skill_even_before_the_first_release(tmp_path):
+    """Without the skillhub/released tag nothing was released yet. A first release that failed, was rejected or was
+    replaced must not lose its skills to the next push: the plan diffs from the released state, never from the
+    previous push alone."""
+    repo = tmp_path / "repo"
+    (repo / "config").mkdir(parents=True)
+    (repo / "config" / "hub.yaml").write_text((ROOT / "config" / "hub.yaml").read_text())
+    _git(repo, "init", "-q", "-b", "main")
+    first = _add_skill(repo, "alpha")  # its release failed, so no tag exists
+    _add_skill(repo, "beta")
+    out = _plan(repo, tmp_path)
+    assert out["reeval"] == "common/alpha,common/beta"
+    assert [r["skill"] for r in json.loads(out["publish"])] == ["alpha", "beta"]
+    assert out["retire"] == "[]" and out["has_changes"] == "true"
+    _git(repo, "tag", "skillhub/released", first)  # alpha was released: only beta is left
+    (tmp_path / "out").unlink()
+    out = _plan(repo, tmp_path)
+    assert out["reeval"] == "common/beta" and out["has_changes"] == "true"
 
 
 def test_release_guard_is_first_and_tag_move_is_last_with_lease():

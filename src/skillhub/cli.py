@@ -1092,16 +1092,21 @@ def eval_cmd(
 
 @app.command("changed-skills")
 def changed_skills_cmd(
-    base: str = typer.Option(..., "--base"),
+    base: str = typer.Option("", "--base", help="Base ref. Give it or --empty-base."),
     head: str = typer.Option(..., "--head"),
+    empty_base: bool = typer.Option(
+        False, "--empty-base", help="Diff from nothing (no release yet): every skill at --head is added."
+    ),
 ) -> None:
     """Print changed skills as JSON: [{dept, skill, status, needs_cases, needs_rubric, needs_generation}]."""
     import json
 
     from skillhub.ci.changes import changed_skills
 
+    if bool(_opt(base)) == empty_base:
+        raise typer.BadParameter("pass exactly one of --base or --empty-base")
     with _guard():
-        rows = [c.as_dict() for c in changed_skills(base, head)]
+        rows = [c.as_dict() for c in changed_skills(None if empty_base else base, head)]
     typer.echo(json.dumps(rows, indent=2))
 
 
