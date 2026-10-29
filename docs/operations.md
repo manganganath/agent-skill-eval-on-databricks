@@ -182,6 +182,17 @@ The run stages its own `run_<key>_<schema_base>` schemas. The Job ends with `syn
 
 Verdicts: `inconclusive` means infrastructure failed or too many votes were missing (rerun the eval). `advisory` means there are too few reviewed cases.
 
+### Eval concurrency
+
+`config/hub.yaml` sets how much one eval run does at once:
+
+- `defaults.skill_workers` (6): skills evaluated at once. Each skill runs in its own worker process, and its models run in parallel inside it.
+- `defaults.concurrency_per_endpoint` (4): agent runs at once per serving endpoint, in each worker.
+
+One run sends about `skill_workers` x `concurrency_per_endpoint` agent runs to each endpoint at once. Lower either value if endpoints answer 429 often; the model client retries with backoff. `skill_workers: 1` evaluates the skills one after another in the Job's own process. Several `skill-eval` runs can run at the same time (`max_concurrent_runs: 4`), and each adds its own load.
+
+A worker's log lines appear in the Job output, prefixed with `[dept/skill]`. A worker that crashes is recorded as an error of its skill (`evaluation worker failed: ...` with the end of its log), and the other skills carry on. In a serverless Job, the runtime credentials do not reach a child process, so each worker gets the workspace host and a token of the Job's identity in its environment. CI waits up to 3 hours for the eval Job.
+
 ### What gates a verdict
 
 - Only reviewed cases gate. Other cases are advisory.

@@ -89,6 +89,7 @@ class Defaults(BaseModel):
     warn_rate: float = Field(default=0.8, ge=0, le=1)
     max_error_rate: float = Field(default=0.1, ge=0, le=1)
     concurrency_per_endpoint: int = Field(default=8, ge=1)
+    skill_workers: int = Field(default=6, ge=1)  # skills evaluated at once, each in its own process
     min_reviewed_cases: int = Field(default=5, ge=1)
 
 

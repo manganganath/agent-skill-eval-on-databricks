@@ -1,7 +1,9 @@
+import dataclasses
 import json
 import os
 import sys
 import threading
+import time
 from collections import Counter
 from pathlib import Path
 from types import SimpleNamespace
@@ -18,14 +20,14 @@ from skillhub.agent.fixtures import FixtureStore
 from skillhub.bundle import SkillBundle
 from skillhub.config import ModelProfile
 from skillhub.eval import runner
-from skillhub.eval.runner import EvalRunError, RunRequest, RunSummary, run_eval
+from skillhub.eval.runner import ChildRunSummary, EvalRunError, RunError, RunRequest, RunSummary, run_eval
 from skillhub.evalspec import Criteria, Criterion, EvalCase, EvalFile, Rubric
 from skillhub.gateway.models import ChatResult, ToolCall
 from skillhub.gateway.toolnames import ToolNameMap
 from skillhub.prompts import PromptRef, load_packaged
 from skillhub.registry.stage import RunScope, StagedSkill
 from skillhub.results.datasets import case_record
-from tests.fakes import FakeModelClient, FakeSkillsMcp
+from tests.fakes import FakeModelClient, FakeSkillsMcp, make_cfg
 
 RUN_KEY = "pr12_ab12cd3"
 REPEATS = 2
@@ -41,6 +43,7 @@ CFG = SimpleNamespace(
     defaults=SimpleNamespace(
         repeats=REPEATS,
         concurrency_per_endpoint=2,
+        skill_workers=1,  # in-process; the worker tests use a real HubConfig
         fail_rate=0.5,
         warn_rate=0.8,
         max_error_rate=0.1,
@@ -1682,3 +1685,510 @@ def test_the_runner_produces_exactly_the_planned_gating_cells(wired):
             modes=req.modes,
         )
         assert ran == sorted(plan) and plan
+
+
+# --- models in parallel inside one skill ---------------------------------------------------------------------
+
+
+def _profile_of_active_run():
+    return MlflowClient().get_run(mlflow.active_run().info.run_id).data.params["model_profile"]
+
+
+def test_models_of_a_skill_run_at_once_and_each_keeps_its_mode_order(wired, monkeypatch):
+    inner = mlflow.genai.evaluate
+    started = {"gpt": threading.Event(), "claude": threading.Event()}
+    order: dict[str, list[str]] = {"gpt": [], "claude": []}
+    overlapped = []
+
+    def evaluate(data, predict_fn, scorers):
+        profile = _profile_of_active_run()
+        mode = MlflowClient().get_run(mlflow.active_run().info.run_id).data.params["mode"]
+        if not order[profile] or order[profile][-1] != mode:
+            order[profile].append(mode)
+        started[profile].set()
+        other = "claude" if profile == "gpt" else "gpt"
+        overlapped.append(started[other].wait(timeout=10))  # sequential models would time out here
+        return inner(data=data, predict_fn=predict_fn, scorers=scorers)
+
+    monkeypatch.setattr(mlflow.genai, "evaluate", evaluate)
+    summary = run_eval(CFG, request(skills=["earnings-preview"], models=["gpt", "claude"]))
+    assert all(overlapped)
+    assert order == {p: ["trigger", "without_skill", "with_skill"] for p in ("gpt", "claude")}
+    assert [(c.model_profile, c.mode) for c in summary.children] == [
+        (p, m) for p in ("gpt", "claude") for m in ("trigger", "without_skill", "with_skill")
+    ]
+    assert not summary.errors
+
+
+def test_with_skill_gets_the_without_skill_scores_of_its_own_model(wired, monkeypatch):
+    real = runner._run_child
+    calls = []
+
+    def spy(ctx, client, profile, mode, without_scores):
+        got = real(ctx, client, profile, mode, without_scores)
+        calls.append((profile, mode, without_scores, got[1]))
+        return got
+
+    monkeypatch.setattr(runner, "_run_child", spy)
+    run_eval(CFG, request(skills=["earnings-preview"], models=["gpt", "claude"]))
+    for profile in ("gpt", "claude"):
+        mine = {mode: (without, scores) for p, mode, without, scores in calls if p == profile}
+        assert mine["with_skill"][0] is mine["without_skill"][1] is not None
+        assert mine["without_skill"][0] is None and mine["trigger"][0] is None
+
+
+def test_children_come_back_in_plan_order_when_a_later_model_finishes_first(wired, monkeypatch):
+    inner = mlflow.genai.evaluate
+    claude_done = threading.Event()
+
+    def evaluate(data, predict_fn, scorers):
+        if _profile_of_active_run() == "gpt":
+            claude_done.wait(timeout=10)
+        return inner(data=data, predict_fn=predict_fn, scorers=scorers)
+
+    real = runner._run_child
+
+    def child_run(ctx, client, profile, mode, without_scores):
+        got = real(ctx, client, profile, mode, without_scores)
+        if profile == "claude" and mode == "with_skill":
+            claude_done.set()
+        return got
+
+    monkeypatch.setattr(mlflow.genai, "evaluate", evaluate)
+    monkeypatch.setattr(runner, "_run_child", child_run)
+    summary = run_eval(CFG, request(skills=["earnings-preview"], models=["gpt", "claude"]))
+    assert [(c.model_profile, c.mode) for c in summary.children] == [
+        (p, m) for p in ("gpt", "claude") for m in ("trigger", "without_skill", "with_skill")
+    ]
+
+
+def test_set_experiment_runs_once_per_skill_before_its_model_threads(wired, monkeypatch):
+    real = mlflow.set_experiment
+    calls = []
+
+    def set_experiment(*a, **k):
+        calls.append((threading.current_thread() is threading.main_thread(), k.get("experiment_id")))
+        return real(*a, **k)
+
+    monkeypatch.setattr(mlflow, "set_experiment", set_experiment)
+    summary = run_eval(CFG, request(models=["gpt", "claude"]))
+    assert len(summary.children) == 12
+    exp_ids = {MlflowClient().get_run(c.run_id).info.experiment_id for c in summary.children}
+    assert len(calls) == 2 and {e for _, e in calls} == exp_ids
+    assert all(main for main, _ in calls)
+
+
+def test_an_interrupt_while_models_run_closes_their_open_child_runs_and_starts_no_more(
+    wired, monkeypatch, tmp_path
+):
+    """The model threads cannot be interrupted, so the waiting thread closes their open child runs with a
+    verdict (sync can finish the run key) and they start no further mode."""
+    import _thread
+
+    release = threading.Event()
+    threads = []
+
+    def evaluate(data, predict_fn, scorers):
+        if not threads:
+            _thread.interrupt_main()  # a Ctrl-C or a Job cancel reaches the waiting main thread
+        threads.append(threading.current_thread())
+        release.wait(timeout=10)
+        raise RuntimeError("the endpoint went away")
+
+    monkeypatch.setattr(mlflow.genai, "evaluate", evaluate)
+    try:
+        with pytest.raises(KeyboardInterrupt):
+            run_eval(CFG, request(skills=["earnings-preview"]))
+        [run] = _runs(tmp_path, "earnings-preview")
+        assert run.info.status == "FAILED"
+        assert run.data.tags["verdict"] == "inconclusive" and "interrupted" in run.data.tags["error"]
+        assert wired["dropped"] == [RUN_KEY]
+    finally:
+        release.set()
+        for t in threads:
+            t.join(timeout=10)
+    assert [r.data.params["mode"] for r in _runs(tmp_path, "earnings-preview")] == ["trigger"]
+
+
+# --- skills in worker processes ------------------------------------------------------------------------------
+
+
+def _hub_cfg(workers):
+    cfg = make_cfg()  # a real HubConfig: the worker spec carries it
+    cfg.defaults.skill_workers = workers
+    return cfg
+
+
+def _client(auth_type="pat", token="tok-not-for-logs"):
+    config = SimpleNamespace(
+        auth_type=auth_type,
+        host="https://ws.example.test",
+        authenticate=lambda: {"Authorization": f"Bearer {token}"},
+    )
+    return SimpleNamespace(config=config)
+
+
+def _answer(spec):
+    """What a fake worker returns: one child and one error of its skill."""
+    dept, skill = spec["dept"], spec["skill"]
+    c = ChildRunSummary(f"run-{skill}", dept, skill, None, "sha256:x", "gpt", "trigger", "pass", {"n": 1.0})
+    return 0, {
+        "children": [dataclasses.asdict(c)],
+        "errors": [dataclasses.asdict(RunError(dept, skill, "e"))],
+    }
+
+
+@pytest.fixture
+def workers(wired, monkeypatch):
+    """skill_workers > 1 with the worker processes faked by `state['answer'](spec) -> (exit code, out.json)`."""
+    state = {"specs": [], "envs": [], "finished": [], "answer": _answer, "launch": runner._launch_worker}
+
+    def launch(cmd, env, label, procs):
+        spec = json.loads(Path(cmd[-2]).read_text())
+        state["specs"].append(spec)
+        state["envs"].append(env)
+        code, out = state["answer"](spec)
+        if out is not None:
+            Path(cmd[-1]).write_text(json.dumps(out))
+        state["finished"].append(label)
+        return code, f"stderr of {label}"
+
+    monkeypatch.setattr(runner, "workspace_client", lambda: _client())
+    monkeypatch.setattr(runner, "_launch_worker", launch)
+    return state
+
+
+def test_one_skill_worker_runs_each_skill_in_process_in_order(wired, monkeypatch):
+    real = runner._run_skill
+    seen = []
+
+    def spy(cfg, req, plan, scope, skill, **kw):
+        seen.append((scope.dept, skill.name))
+        return real(cfg, req, plan, scope, skill, **kw)
+
+    def no_worker(*a, **k):
+        raise AssertionError("no worker process expected")
+
+    monkeypatch.setattr(runner, "_run_skill", spy)
+    monkeypatch.setattr(runner, "_launch_worker", no_worker)
+    summary = run_eval(CFG, request())
+    assert seen == [("common", "audit-xls"), ("equity_research", "earnings-preview")]
+    assert len(summary.children) == 6
+
+
+def test_a_single_skill_runs_in_process_even_with_several_workers(workers, monkeypatch):
+    summary = run_eval(_hub_cfg(6), request(skills=["audit-xls"]))
+    assert workers["specs"] == [] and len(summary.children) == 3
+
+
+def test_worker_results_keep_the_plan_order_when_workers_finish_out_of_order(workers):
+    earnings_done = threading.Event()
+
+    def answer(spec):
+        if spec["skill"] == "audit-xls":  # first in plan order, finishes last
+            assert earnings_done.wait(timeout=10)
+        got = _answer(spec)
+        if spec["skill"] == "earnings-preview":
+            earnings_done.set()
+        return got
+
+    workers["answer"] = answer
+    summary = run_eval(_hub_cfg(2), request())
+    assert workers["finished"] == ["equity_research/earnings-preview", "common/audit-xls"]
+    assert [(c.dept, c.skill) for c in summary.children] == [
+        ("common", "audit-xls"),
+        ("equity_research", "earnings-preview"),
+    ]
+    assert [(e.dept, e.skill) for e in summary.errors] == [
+        ("common", "audit-xls"),
+        ("equity_research", "earnings-preview"),
+    ]
+    assert summary.children[0] == ChildRunSummary(
+        "run-audit-xls", "common", "audit-xls", None, "sha256:x", "gpt", "trigger", "pass", {"n": 1.0}
+    )
+
+
+def test_a_crashed_worker_is_one_error_with_its_stderr_and_the_other_skills_still_report(
+    workers, monkeypatch, capsys
+):
+    """The real launcher, with a worker command that crashes for one skill."""
+    monkeypatch.setattr(runner, "_launch_worker", workers["launch"])
+
+    def command(spec, out):
+        if json.loads(Path(spec).read_text())["skill"] == "audit-xls":
+            script = (
+                "import sys\n"
+                "for i in range(30): print(f'line {i}', file=sys.stderr)\n"
+                "print('RuntimeError: the worker blew up', file=sys.stderr)\n"
+                "sys.exit(3)"
+            )
+            return [sys.executable, "-c", script]
+        Path(out).write_text(json.dumps(_answer(json.loads(Path(spec).read_text()))[1]))
+        return [sys.executable, "-c", "print('stdout is not read')"]
+
+    monkeypatch.setattr(runner, "_worker_command", command)
+    summary = run_eval(_hub_cfg(2), request())
+    [crash] = [e for e in summary.errors if e.skill == "audit-xls"]
+    assert (crash.dept, crash.model_profile, crash.run_id) == ("common", None, None)
+    assert crash.message.startswith("evaluation worker failed: ")
+    assert crash.message.endswith("RuntimeError: the worker blew up")
+    assert "line 29" in crash.message and "line 5\n" not in crash.message  # the tail only
+    assert len(crash.message) <= runner.ERROR_MAX
+    assert [c.skill for c in summary.children] == ["earnings-preview"]
+    err = capsys.readouterr().err
+    assert "[common/audit-xls] line 0" in err and "[common/audit-xls] RuntimeError: the worker blew up" in err
+    assert "stdout is not read" not in err
+
+
+def test_a_worker_that_exits_0_without_a_result_is_an_error(workers):
+    workers["answer"] = lambda spec: (0, None) if spec["skill"] == "audit-xls" else _answer(spec)
+    summary = run_eval(_hub_cfg(2), request())
+    [bad] = [e for e in summary.errors if e.skill == "audit-xls"]
+    assert bad.message == "evaluation worker failed: stderr of common/audit-xls"
+
+
+def test_sync_parents_and_schema_drop_run_once_after_every_worker(workers, monkeypatch):
+    seen = []
+    close = runner._close_parents
+    monkeypatch.setattr(
+        runner, "sync_run", lambda cfg, sql, run_key, **k: seen.append(("sync", len(workers["finished"])))
+    )
+    monkeypatch.setattr(
+        runner, "drop_run_schemas", lambda cfg, w, run_key: seen.append(("drop", len(workers["finished"])))
+    )
+
+    def close_parents(parents, ok):
+        seen.append(("close", len(workers["finished"])))
+        close(parents, ok)
+
+    monkeypatch.setattr(runner, "_close_parents", close_parents)
+    run_eval(_hub_cfg(2), request())
+    assert seen == [("sync", 2), ("close", 2), ("drop", 2)]
+
+
+def test_the_worker_rebuilds_the_run_skill_call_the_parent_planned(wired, workers, monkeypatch, tmp_path):
+    from skillhub.eval import worker
+
+    wired["scopes"] = _pinned_scopes()
+    planned = {}
+    real_spec = runner._worker_spec
+
+    def spec_spy(cfg, req, run, *, prompts, fixtures):
+        planned[run.skill.name] = (cfg, req, run, prompts, fixtures)
+        return real_spec(cfg, req, run, prompts=prompts, fixtures=fixtures)
+
+    monkeypatch.setattr(runner, "_worker_spec", spec_spy)
+    cfg = _hub_cfg(2)
+    req = request(versions={"earnings-preview": 3}, trigger_source="pr", requested_by="ana")
+    run_eval(cfg, req)
+    [spec] = [s for s in workers["specs"] if s["skill"] == "earnings-preview"]
+    parent_cfg, parent_req, run, prompts, fixtures = planned["earnings-preview"]
+
+    captured = {}
+    child = ChildRunSummary("r1", "equity_research", "earnings-preview", 3, "h", "gpt", "trigger", "pass", {})
+    error = RunError("equity_research", "earnings-preview", "m", model_profile="gpt", mode="with_skill")
+
+    def run_skill(*args, **kwargs):
+        captured["args"], captured["kwargs"] = args, kwargs
+        return [child], [error]
+
+    monkeypatch.setattr(runner, "_run_skill", run_skill)
+    monkeypatch.setattr(runner, "configure_mlflow", lambda c: captured.setdefault("configured", c))
+    spec_path, out_path = tmp_path / "spec.json", tmp_path / "out.json"
+    spec_path.write_text(json.dumps(spec))
+    assert worker.main([str(spec_path), str(out_path)]) == 0
+
+    w_cfg, w_req, w_plan, w_scope, w_skill = captured["args"]
+    kw = captured["kwargs"]
+    assert w_cfg == parent_cfg and captured["configured"] == parent_cfg
+    assert w_req == dataclasses.replace(
+        parent_req,
+        skills=["equity_research/earnings-preview"],
+        versions={"equity_research/earnings-preview": 3},
+    )
+    assert (w_plan.bundle, w_plan.ef, w_plan.models) == (run.plan.bundle, run.plan.ef, run.plan.models)
+    assert (w_plan.evals_bytes, w_plan.dataset_digest) == (run.plan.evals_bytes, run.plan.dataset_digest)
+    assert (w_scope, w_skill) == (run.scope, run.skill)
+    assert set(kw["clients"]) == {"gpt"} and kw["judges"] == runner._judges(parent_cfg, parent_req) == ["gpt"]
+    assert (kw["exp_id"], kw["parent_id"], kw["version"]) == (run.exp_id, run.parent_id, 3)
+    assert kw["prompts"] == prompts and isinstance(kw["prompts"], tuple)
+    assert kw["fixtures"].root == fixtures.root
+    assert kw["sql"] is not None
+    assert runner._read_worker_result(out_path) == ([child], [error])
+
+
+def test_a_worker_refuses_an_evals_json_that_changed_since_the_plan(workers, monkeypatch, tmp_path):
+    from skillhub.eval import worker
+
+    run_eval(_hub_cfg(2), request())
+    [spec] = [s for s in workers["specs"] if s["skill"] == "audit-xls"]
+    wired_files = eval_files(TRIGGER)  # the candidate folder now holds other cases
+    monkeypatch.setattr(runner, "read_evals", lambda path: (wired_files["audit-xls"], b"other bytes"))
+    monkeypatch.setattr(runner, "_run_skill", lambda *a, **k: pytest.fail("must not run"))
+    monkeypatch.setattr(runner, "configure_mlflow", lambda c: None)
+    (tmp_path / "spec.json").write_text(json.dumps(spec))
+    with pytest.raises(EvalRunError, match="evals.json changed"):
+        worker.main([str(tmp_path / "spec.json"), str(tmp_path / "out.json")])
+    assert not (tmp_path / "out.json").exists()
+
+
+def test_runtime_auth_gives_the_worker_a_host_and_token_and_drops_conflicting_variables(monkeypatch):
+    for k in runner._PAT_CONFLICTS:
+        monkeypatch.setenv(k, "from-the-job")
+    monkeypatch.setenv("SKILLHUB_CONFIG", "/c/hub.yaml")
+    env = runner._worker_env(_client("runtime", token="tok-1"))
+    assert (env["DATABRICKS_HOST"], env["DATABRICKS_TOKEN"]) == ("https://ws.example.test", "tok-1")
+    assert [k for k in runner._PAT_CONFLICTS if k in env] == []  # names only: a failure must not print env
+    assert env["SKILLHUB_CONFIG"] == "/c/hub.yaml" and os.environ["DATABRICKS_AUTH_TYPE"] == "from-the-job"
+    no_bearer = _client("runtime")
+    no_bearer.config.authenticate = lambda: {}
+    with pytest.raises(EvalRunError, match="no bearer token"):
+        runner._worker_env(no_bearer)
+
+
+def test_other_auth_reaches_the_worker_as_this_process_has_it(monkeypatch):
+    monkeypatch.setenv("DATABRICKS_CONFIG_PROFILE", "dev")
+    monkeypatch.delenv("DATABRICKS_TOKEN", raising=False)
+    for auth in ("databricks-cli", "oauth-m2m", "pat"):
+        env = runner._worker_env(_client(auth))
+        assert env == dict(os.environ), auth
+
+
+def test_the_worker_token_is_never_logged_printed_or_written_to_the_spec(
+    workers, monkeypatch, caplog, capsys
+):
+    import logging
+
+    token = "tok-must-not-leak"
+    monkeypatch.setattr(runner, "workspace_client", lambda: _client("runtime", token=token))
+    caplog.set_level(logging.DEBUG)
+    workers["answer"] = lambda spec: (1, None)  # failed workers: their errors are logged and returned
+    summary = run_eval(_hub_cfg(2), request())
+    assert [e["DATABRICKS_TOKEN"] for e in workers["envs"]] == [token, token]
+    out = capsys.readouterr()
+    seen = (
+        caplog.text
+        + out.out
+        + out.err
+        + json.dumps(workers["specs"])
+        + json.dumps(dataclasses.asdict(summary))
+    )
+    assert len(summary.errors) == 2 and token not in seen
+
+
+def _stoppable_worker(monkeypatch, workers, tmp_path, *, ignore_sigterm=False, then=None):
+    """Real sleeping worker processes; once both have started, `then()` interrupts the parent."""
+    import _thread
+
+    started = []
+    real_start = runner._Workers.start
+    script = (
+        "import pathlib, signal, sys, time\n"
+        + ("signal.signal(signal.SIGTERM, signal.SIG_IGN)\n" if ignore_sigterm else "")
+        + "pathlib.Path(sys.argv[1]).touch()\n"
+        "time.sleep(60)\n"
+    )
+
+    def start(self, cmd, env):
+        proc = real_start(self, cmd, env)
+        started.append(proc)
+        if len(started) == 2:
+            for i in range(2):
+                ready = tmp_path / f"ready-{i}"
+                for _ in range(200):
+                    if ready.exists():
+                        break
+                    time.sleep(0.05)
+            (then or _thread.interrupt_main)()
+        return proc
+
+    monkeypatch.setattr(runner._Workers, "start", start)
+    monkeypatch.setattr(runner, "_launch_worker", workers["launch"])
+    names = iter(tmp_path / f"ready-{i}" for i in range(2))
+    monkeypatch.setattr(
+        runner, "_worker_command", lambda spec, out: [sys.executable, "-c", script, str(next(names))]
+    )
+    return started
+
+
+@pytest.mark.parametrize("ignore_sigterm", [False, True])
+def test_an_interrupt_stops_the_workers_and_the_cleanup_still_runs(
+    wired, workers, monkeypatch, tmp_path, ignore_sigterm
+):
+    import signal
+
+    monkeypatch.setattr(runner, "WORKER_STOP_S", 1)
+    started = _stoppable_worker(monkeypatch, workers, tmp_path, ignore_sigterm=ignore_sigterm)
+    t0 = time.monotonic()
+    try:
+        with pytest.raises(KeyboardInterrupt):
+            run_eval(_hub_cfg(2), request())
+        assert time.monotonic() - t0 < 30
+        killed = -signal.SIGKILL if ignore_sigterm else -signal.SIGTERM  # after WORKER_STOP_S
+        assert [p.poll() for p in started] == [killed, killed]
+        assert wired["dropped"] == [RUN_KEY] and wired["synced"] == []
+        parents = _parents(tmp_path)
+        assert parents and {p.info.status for p in parents} == {"FAILED"}
+    finally:
+        for p in started:
+            if p.poll() is None:
+                p.kill()
+
+
+def test_a_sigterm_to_the_parent_stops_the_workers_and_leaves_through_the_cleanup(
+    wired, workers, monkeypatch, tmp_path
+):
+    import signal
+
+    def unhandled(signum, frame):
+        raise AssertionError("the SIGTERM reached the previous handler")
+
+    prev = signal.signal(signal.SIGTERM, unhandled)
+    started = _stoppable_worker(
+        monkeypatch, workers, tmp_path, then=lambda: os.kill(os.getpid(), signal.SIGTERM)
+    )
+    try:
+        with pytest.raises(SystemExit) as exc:
+            run_eval(_hub_cfg(2), request())
+        assert exc.value.code == 128 + signal.SIGTERM
+        assert [p.poll() for p in started] == [-signal.SIGTERM, -signal.SIGTERM]
+        assert wired["dropped"] == [RUN_KEY]
+        assert signal.getsignal(signal.SIGTERM) is unhandled  # restored
+    finally:
+        signal.signal(signal.SIGTERM, prev)
+        for p in started:
+            if p.poll() is None:
+                p.kill()
+
+
+def test_the_worker_module_runs_as_a_command_and_its_failure_reaches_the_parent(
+    workers, monkeypatch, tmp_path
+):
+    """The real command and launcher. The worker finds no skill in an empty folder, so it fails early."""
+    monkeypatch.setattr(runner, "_launch_worker", workers["launch"])
+    summary = run_eval(_hub_cfg(2), request(skills_root=str(tmp_path / "empty")))
+    assert [(e.skill, e.message.splitlines()[-1]) for e in summary.errors] == [
+        ("audit-xls", "skillhub.eval.runner.EvalRunError: no skill named 'common/audit-xls'"),
+        (
+            "earnings-preview",
+            "skillhub.eval.runner.EvalRunError: no skill named 'equity_research/earnings-preview'",
+        ),
+    ]
+    assert all(e.message.startswith("evaluation worker failed: ") for e in summary.errors)
+
+
+def test_model_threads_record_the_rubric_one_at_a_time(wired, monkeypatch):
+    """record_rubric inserts unless the hash is recorded; two at once could both insert."""
+    both = threading.Barrier(2)
+    met = []
+
+    def record(cfg, sql, dept, rubric):
+        try:
+            both.wait(timeout=2)  # passes only when the two models' calls overlap
+            met.append(True)
+        except threading.BrokenBarrierError:
+            met.append(False)
+
+    monkeypatch.setattr(runner, "record_rubric", record)
+    run_eval(CFG, request(skills=["earnings-preview"], models=["gpt", "claude"], modes=["trigger"]))
+    assert met == [False, False]
