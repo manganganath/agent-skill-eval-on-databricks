@@ -68,4 +68,10 @@ describe("api client", () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response("[]", { status: 200 }));
     expect(await api.matrix({})).toEqual({ rows: [], deniedDepartments: [], truncated: false });
   });
+  it("posts a candidate try to the candidate's own path", async () => {
+    const spy = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify([]), { status: 200 }));
+    await api.tryCandidate("pr5_c7ecd3e_a1", "common", "new-skill", { prompt: "p", models: ["m"] });
+    expect(spy.mock.calls[0][0]).toBe("/api/candidates/pr5_c7ecd3e_a1/common/new-skill/try");
+    expect((spy.mock.calls[0][1] as RequestInit).method).toBe("POST");
+  });
 });

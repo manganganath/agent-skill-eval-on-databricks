@@ -28,6 +28,8 @@ const MESSAGES: Record<string, string> = {
   try_failed: "The test run failed. Try again later.",
   try_busy: "Another test run is in progress. Try again in a moment.",
   try_timeout: "The test run took too long and was stopped. Try a shorter input.",
+  try_setup_required:
+    "Trying skills under review needs a one-time setup: an administrator grants the Skill Hub app CREATE SCHEMA on the catalog. See the operations guide.",
   prompt_too_long: "The test input is too long. Keep it under 4000 characters.",
   too_many_models: "Pick at most 3 models.",
   unknown_model: "One of the selected models is not configured.",

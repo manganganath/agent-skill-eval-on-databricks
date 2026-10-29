@@ -7,6 +7,7 @@ import { EmptyState } from "../components/EmptyState";
 import { ErrorState } from "../components/ErrorState";
 import { Loading } from "../components/Loading";
 import { EvalEmpty, FilesSection, RubricSection, SkillMdSection, TestCasesSection } from "../components/SkillParts";
+import { TryPanel } from "../components/TryPanel";
 import { VerdictChip } from "../components/VerdictChip";
 import { useAsync } from "../hooks/useAsync";
 
@@ -145,6 +146,9 @@ export default function CandidateDetail() {
 
       <SkillMdSection source={s.files["SKILL.md"]} />
       <FilesSection files={s.files} />
+      <div className="panel">
+        <TryPanel target={{ runKey: key, dept: s.dept, skill: s.name }} evalAccess={s.eval_access} />
+      </div>
       <Results s={s} />
       <TestCasesSection evals={s.evals} name={s.name} access="ok" note={draft ? FROM_DRAFT : FROM_PR}
         empty="This upload has no evals/evals.json" />

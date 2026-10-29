@@ -1,15 +1,19 @@
 import contextlib
+import re
 import sys
 import threading
 import time
 from types import SimpleNamespace
 
 import pytest
-from app_fakes import FakeApi, FakeWorkspace
+from app_fakes import FakeApi, FakeGrants, FakeSchemas, FakeTree, FakeWorkspace
 from backend import authz
 from backend.api import try_panel
 from conftest import make_cfg
 
+from skillhub.gateway.skills_mcp import SkillToolError
+from skillhub.gateway.toolnames import ToolNameMap
+from skillhub.naming import schema_base
 from skillhub.registry.uc_skills import SkillInfo
 
 ME = "/api/2.0/preview/scim/v2/Me"
@@ -135,13 +139,25 @@ def wired(monkeypatch):
 
     def fake_run_agent(case, *, model, skills, names, fixtures, trigger, system_prompt, max_turns=8):
         calls["agent"].append(
-            {"skills": skills, "trigger": trigger, "system_prompt": system_prompt, "prompt": case.prompt}
+            {
+                "skills": skills,
+                "trigger": trigger,
+                "system_prompt": system_prompt,
+                "prompt": case.prompt,
+                "names": names,
+            }
         )
         if calls["boom"] and skills is not None:
             raise calls["boom"]
+        if skills is not None and calls.get("probe"):
+            calls["probe"](skills)
         if skills is not None:
             return SimpleNamespace(
-                final_text="with skill answer", invoked_skills=[FQN], tool_calls=[], turns=2, error=None
+                final_text="with skill answer",
+                invoked_skills=calls.get("invoked", [FQN]),
+                tool_calls=[],
+                turns=2,
+                error=None,
             )
         return SimpleNamespace(
             final_text="plain answer", invoked_skills=[], tool_calls=[], turns=1, error=None
@@ -154,7 +170,8 @@ def wired(monkeypatch):
         run_agent=fake_run_agent,
         model_client=fake_model_client,
         SkillsMcpClient=lambda h, s, hd: FakeMcp(h, s, hd),
-        ToolNameMap=lambda: None,
+        SkillToolError=SkillToolError,
+        ToolNameMap=ToolNameMap,
         load_packaged=lambda key: f"packaged {key}",
         ensure_experiment=lambda cfg, dept, skill: "exp-9",
     )
@@ -547,3 +564,338 @@ def test_lease_releases_the_lock_once():
         lease.check()
     with pytest.raises(try_panel._Cancelled), lease.exclusive():
         pass
+
+
+# --- Try on a skill under review (a candidate) -------------------------------------------------------------------
+
+CROOT = "/Workspace/Shared/skill-hub/skill_hub/candidates"  # <workspace_root>/<catalog>/candidates
+CKEY = "pr5_c7ecd3e_a1"
+CURL = f"/api/candidates/{CKEY}/common/new-skill/try"
+LIVE_SAME = "skill_hub.common.new-skill"  # the live skill the upload replaces
+LIVE_OTHER = "skill_hub.common.audit-xls"
+EFF = "/api/2.1/unity-catalog/effective-permissions/"
+
+
+def pr_tree(files=None):
+    base = f"{CROOT}/{CKEY}/skills/common/new-skill"
+    out = {
+        f"{CROOT}/{CKEY}/.uploaded_at": b"1790000000\n",
+        f"{base}/SKILL.md": b"---\nname: new-skill\ndescription: new-skill helps analysts\n---\n# new-skill\n",
+        f"{base}/references/guide.md": b"# Guide\n",
+        f"{base}/evals/evals.json": b'{"skill_name": "new-skill", "evals": []}',
+    }
+    return FakeTree(out | (files or {}))
+
+
+def cand_user(groups=("skillhub-reviewers",), name="ana@example.com"):
+    return FakeWorkspace(api=FakeApi({ME: {"userName": name, "groups": [{"display": g} for g in groups]}}))
+
+
+def cand_app(tree, *, readable=("common",), schemas=None, grants=None):
+    """The app's client: effective permissions for the user, and the workspace tree of the upload."""
+    responses = {
+        f"{EFF}schema/skill_hub.{schema_base(d)}": {
+            "privilege_assignments": [
+                {
+                    "principal": "ana@example.com",
+                    "privileges": [
+                        {"privilege": p}
+                        for p in (("READ_VOLUME", "USE_SCHEMA") if d in readable else ("USE_SCHEMA",))
+                    ],
+                }
+            ]
+        }
+        for d in ("common", "equity_research", "external")
+    }
+    responses[f"{EFF}catalog/skill_hub"] = {
+        "privilege_assignments": [
+            {"principal": "ana@example.com", "privileges": [{"privilege": "USE_CATALOG"}]}
+        ]
+    }
+    return FakeWorkspace(
+        api=FakeApi(responses),
+        workspace=tree,
+        schemas=schemas or FakeSchemas(),
+        grants=grants or FakeGrants(),
+    )
+
+
+def cand_body(**over):
+    return {"prompt": "draft the note", "models": ["claude-sonnet"]} | over
+
+
+@pytest.fixture
+def staging(wired, monkeypatch):
+    """A candidate run with a fake UC for the app's staging. Each bridge lists the live skill of the same name, the
+    other live skill, and the staged tool once it is opened from `ready_after` on (the bridges opened so far)."""
+    from tests.fakes import FakeUCSkills
+
+    uc = FakeUCSkills()
+    monkeypatch.setattr(try_panel, "UCSkills", lambda w: uc)
+    wired["ready_after"] = 0
+    wired["invoked"] = [
+        LIVE_SAME
+    ]  # the agent loads the candidate under the name the model sees: the live FQN
+
+    class _Listing(FakeBridge):
+        def __init__(self, client):
+            super().__init__(client)
+            self.index = len(wired["bridges"])  # the bridges opened before this one
+
+        def list_tools(self):
+            names = [f"skill_{LIVE_SAME}", f"skill_{LIVE_OTHER}"]
+            if self.index >= wired["ready_after"]:
+                names += [f"skill_{s}.new-skill" for s in self.client.schemas if ".run_try_" in s]
+            return [SimpleNamespace(name=n, description="d", input_schema={}) for n in names]
+
+    def make_bridge(client):
+        b = _Listing(client)
+        wired["bridges"].append(b)
+        return b
+
+    eng = try_panel._load_engine()
+    eng.SkillsBridge = make_bridge
+    return SimpleNamespace(uc=uc)
+
+
+def try_schema(app_w, before=()):
+    """The one run schema this request dropped, other than those in `before`."""
+    names = [s for s in app_w.schemas.deleted if ".run_try_" in s and s not in before]
+    assert len(names) == 1, names
+    return names[0]
+
+
+def cpost(make_client, *, user=None, app=None, body=None, url=CURL):
+    c = make_client(user_w=user or cand_user(), app_w=app or cand_app(pr_tree()), cfg=make_cfg())
+    return c.post(url, json=body or cand_body(), headers=HDR)
+
+
+def test_candidate_try_stages_the_upload_into_a_private_schema_and_grants_only_the_requester(
+    make_client, wired, staging
+):
+    app = cand_app(pr_tree())
+    r = cpost(make_client, app=app)
+    assert r.status_code == 200, r.text
+    assert r.json()[0]["with_skill"] == {"text": "with skill answer", "invoked": True}
+    (schema,) = staging.uc.schemas
+    assert re.fullmatch(r"skill_hub\.run_try_[0-9a-f]{10}_common", schema)
+    staged = f"{schema}.new-skill"
+    files = staging.uc.read_files(staged)
+    assert sorted(files) == ["SKILL.md", "references/guide.md"]  # evals/ is never staged
+    # Only the requester gets anything on the schema, and only read privileges.
+    assert len(app.grants.updates) == 1
+    securable, full_name, changes = app.grants.updates[0]
+    assert (securable, full_name) == ("schema", schema)
+    assert [(c.principal, [p.value for p in c.add]) for c in changes] == [
+        ("ana@example.com", ["USE_SCHEMA", "READ_VOLUME"])
+    ]
+    # The agent's scope: the private schema, then live dept and common, so the run is the one under test.
+    assert wired["bridges"][-1].client.schemas == sorted({schema, "skill_hub.common"})
+
+
+def test_candidate_try_hides_the_live_skill_of_the_same_name_from_list_and_call(make_client, wired, staging):
+    seen = {}
+
+    def probe(skills):
+        seen["tools"] = [t.name for t in skills.list_tools()]
+        for key, name, args in [
+            ("hidden call", f"skill_{LIVE_SAME}", {}),
+            ("load_skill", "load_skill", {"full_name": LIVE_SAME}),
+        ]:
+            try:
+                skills.call_tool(name, args)
+                seen[key] = "allowed"
+            except Exception as exc:  # the wrapper refuses with a tool error the model can read
+                seen[key] = type(exc).__name__
+
+    wired["probe"] = probe
+    assert cpost(make_client).status_code == 200
+    staged_tool = [t for t in seen["tools"] if ".run_try_" in t]
+    assert (
+        len(staged_tool) == 1 and f"skill_{LIVE_OTHER}" in seen["tools"]
+    )  # the upload and the other live skill
+    assert f"skill_{LIVE_SAME}" not in seen["tools"]
+    assert seen["hidden call"] == "SkillToolError" and seen["load_skill"] == "SkillToolError"
+
+
+def test_candidate_try_shows_the_agent_the_name_it_has_in_the_live_skills(make_client, wired, staging):
+    assert cpost(make_client).status_code == 200
+    names = wired["agent"][0]["names"]
+    (schema,) = staging.uc.schemas
+    assert names.to_production(f"{schema}.new-skill") == LIVE_SAME  # a staged FQN never reaches the model
+    assert names.to_production("skill_" + f"{schema}.new-skill") == "skill_" + LIVE_SAME
+
+
+def test_candidate_try_tags_the_trace_with_the_run_key(make_client, wired, staging):
+    assert cpost(make_client).status_code == 200
+    assert wired["tags"][0][1]["candidate_run_key"] == CKEY
+    assert wired["tags"][0][1]["mode"] == "with_skill"
+
+
+def test_candidate_try_drops_its_schema_on_success(make_client, wired, staging):
+    app = cand_app(pr_tree())
+    assert cpost(make_client, app=app).status_code == 200
+    schema = try_schema(app)
+    assert schema in staging.uc.schemas  # the fake UC keeps what it staged; the app's drop is what ran
+    assert app.schemas.deleted == [schema]
+
+
+def test_candidate_try_drops_its_schema_when_the_agent_fails(make_client, wired, staging):
+    wired["boom"] = RuntimeError("401 token abc")
+    app = cand_app(pr_tree())
+    r = cpost(make_client, app=app)
+    assert r.status_code == 502 and r.json() == {"detail": {"reason": "try_failed"}}
+    assert app.schemas.deleted == [try_schema(app)]
+    assert "abc" not in r.text
+
+
+def test_candidate_try_drops_its_schema_after_the_worker_stops_on_timeout(
+    make_client, wired, staging, monkeypatch
+):
+    monkeypatch.setattr(try_panel, "DEADLINE_S", 0.2)
+    gate = threading.Event()
+    eng = try_panel._load_engine()
+    inner = eng.run_agent
+
+    def slow(case, **kw):
+        if kw["skills"] is not None:
+            gate.wait(5)
+        return inner(case, **kw)
+
+    eng.run_agent = slow
+    app = cand_app(pr_tree())
+    try:
+        r = cpost(make_client, app=app)
+        assert r.status_code == 504 and r.json() == {"detail": {"reason": "try_timeout"}}
+        assert app.schemas.deleted == []  # the worker is still running: nothing is dropped under it
+        assert try_panel._TRY_LOCK.acquire(timeout=0.5)  # and the lock is free
+        try_panel._TRY_LOCK.release()
+    finally:
+        gate.set()
+    assert eventually(lambda: len(app.schemas.deleted) == 1)
+    assert app.schemas.deleted == [try_schema(app)]
+    assert eventually(lambda: [b.closed for b in wired["bridges"]] == [1])
+
+
+def test_a_timeout_during_staging_frees_the_lock_only_when_staging_ends(
+    make_client, wired, staging, monkeypatch
+):
+    from tests.fakes import FakeUCSkills
+
+    monkeypatch.setattr(try_panel, "DEADLINE_S", 0.2)
+    gate = threading.Event()
+
+    class _SlowUC(FakeUCSkills):
+        def ensure_schema(self, schema_fqn):
+            gate.wait(5)
+            super().ensure_schema(schema_fqn)
+
+    monkeypatch.setattr(try_panel, "UCSkills", lambda w: _SlowUC())
+    app = cand_app(pr_tree())
+    try:
+        assert cpost(make_client, app=app).status_code == 504
+        assert not try_panel._TRY_LOCK.acquire(timeout=0.1)  # staging still holds the lock
+    finally:
+        gate.set()
+    assert try_panel._TRY_LOCK.acquire(timeout=5)
+    try_panel._TRY_LOCK.release()
+    assert eventually(lambda: len(app.schemas.deleted) == 1)  # the schema it did create is dropped
+    assert wired["agent"] == []
+
+
+def test_candidate_try_needs_create_schema_on_the_catalog(make_client, wired, staging, monkeypatch):
+    from databricks.sdk.errors import PermissionDenied
+
+    from tests.fakes import FakeUCSkills
+
+    class _Denied(FakeUCSkills):
+        def ensure_schema(self, schema_fqn):
+            raise PermissionDenied("no CREATE SCHEMA")
+
+    monkeypatch.setattr(try_panel, "UCSkills", lambda w: _Denied())
+    r = cpost(make_client)
+    assert r.status_code == 503 and r.json() == {"detail": {"reason": "try_setup_required"}}
+    assert wired["agent"] == [] and wired["bridges"] == []
+    assert "no CREATE" not in r.text
+
+
+@pytest.mark.parametrize(
+    "user, url, status, reason",
+    [
+        (cand_user(("skillhub-users",)), CURL, 403, "not_author"),  # neither author nor reviewer
+        (cand_user(), "/api/candidates/hub_1a2b3c4d/common/new-skill/try", 404, "candidate_not_found"),
+        (cand_user(), f"/api/candidates/{CKEY}/finance/new-skill/try", 404, "candidate_not_found"),
+        (cand_user(), f"/api/candidates/{CKEY}/common/Bad_Name/try", 404, "candidate_not_found"),
+        (cand_user(), "/api/candidates/pr5_deadbee_a1/common/new-skill/try", 404, "candidate_not_found"),
+    ],
+)
+def test_candidate_try_refuses_before_any_staging(make_client, wired, staging, user, url, status, reason):
+    app = cand_app(pr_tree())
+    r = cpost(make_client, user=user, app=app, url=url)
+    assert r.status_code == status and r.json() == {"detail": {"reason": reason}}
+    assert staging.uc.schemas == set() and app.schemas.deleted == [] and wired["agent"] == []
+
+
+def test_candidate_try_of_a_department_the_user_cannot_read_is_not_found(make_client, wired, staging):
+    app = cand_app(pr_tree(), readable=())
+    r = cpost(make_client, user=cand_user(("skillhub-authors",)), app=app)
+    assert r.status_code == 404 and r.json() == {"detail": {"reason": "candidate_not_found"}}
+    assert staging.uc.schemas == set() and wired["agent"] == []
+
+
+def test_candidate_try_without_a_skill_md_is_not_found(make_client, wired, staging):
+    tree = pr_tree()
+    tree.files = {p: b for p, b in tree.files.items() if not p.endswith("/SKILL.md")}
+    r = cpost(make_client, app=cand_app(tree))
+    assert r.status_code == 404 and r.json() == {"detail": {"reason": "candidate_not_found"}}
+    assert wired["agent"] == []
+
+
+def test_candidate_try_checks_the_models_and_the_prompt_like_the_live_route(make_client, wired, staging):
+    r = cpost(make_client, body=cand_body(models=["nope"]))
+    assert r.status_code == 422 and r.json() == {"detail": {"reason": "unknown_model"}}
+    r = cpost(make_client, body=cand_body(prompt="x" * 4001))
+    assert r.status_code == 422 and r.json() == {"detail": {"reason": "prompt_too_long"}}
+    assert wired["agent"] == [] and staging.uc.schemas == set()
+
+
+def test_candidate_try_waits_for_the_gateway_to_list_the_staged_skill(
+    make_client, wired, staging, monkeypatch
+):
+    monkeypatch.setattr(try_panel, "READY_STEP_S", 0.01)
+    wired["ready_after"] = 1  # the first bridge does not list the staged skill yet, the second does
+    app = cand_app(pr_tree())
+    assert cpost(make_client, app=app).status_code == 200
+    assert [b.closed for b in wired["bridges"]] == [1, 1]  # the first bridge was closed and reopened
+    assert wired["agent"][0]["skills"] is not None
+
+
+def test_candidate_try_fails_when_the_staged_skill_never_appears(make_client, wired, staging, monkeypatch):
+    monkeypatch.setattr(try_panel, "READY_WAIT_S", 0.05)
+    monkeypatch.setattr(try_panel, "READY_STEP_S", 0.01)
+    wired["ready_after"] = 10**6
+    app = cand_app(pr_tree())
+    r = cpost(make_client, app=app)
+    assert r.status_code == 502 and r.json() == {"detail": {"reason": "try_failed"}}
+    assert wired["agent"] == []  # no agent run without the staged skill
+    assert app.schemas.deleted == [try_schema(app)]
+    assert all(b.closed == 1 for b in wired["bridges"])
+
+
+def test_candidate_try_sweeps_only_its_own_old_try_schemas(make_client, wired, staging):
+    now = int(time.time() * 1000)
+    hour = 3600 * 1000
+    listed = [
+        SimpleNamespace(name="run_try_aaaaaaaaaa_common", owner="ana@example.com", created_at=now - 2 * hour),
+        SimpleNamespace(name="run_try_bbbbbbbbbb_common", owner="ana@example.com", created_at=now - 600_000),
+        SimpleNamespace(
+            name="run_try_cccccccccc_common", owner="someone@example.com", created_at=now - 2 * hour
+        ),
+        SimpleNamespace(name="run_pr1_ab_common", owner="ana@example.com", created_at=now - 2 * hour),
+    ]
+    app = cand_app(pr_tree(), schemas=FakeSchemas(listed))
+    assert cpost(make_client, app=app).status_code == 200
+    # Only this user's own try schema from over an hour ago is swept, before the run; the run's schema comes after.
+    old = "skill_hub.run_try_aaaaaaaaaa_common"
+    run = try_schema(app, before=[old])
+    assert app.schemas.deleted == [old, run]

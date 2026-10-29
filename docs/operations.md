@@ -77,7 +77,7 @@ Bootstrap registers the prompts. It registers one `make_judge` judge in each ski
 | `skillhub-reviewers` | Account group | Reviewers. They switch versions in the Skill Hub, read the cross-department views and the dashboard, and read the quarantined `external` department. They do not control GitHub approvals (see Secrets). |
 | `skillhub-ci` | Service principal | Owns the hub schemas, tables and views after the hand-over. Owns live and versioned skills and writes the version journal. Deploys the bundle and runs `skill-switch` (publish, switch, retire). Its secret is only in the GitHub `production` environment |
 | `skillhub-ci-eval` | Service principal | Runs `skill-eval` for pull requests, merges and the nightly run, and syncs results. It writes `eval_runs`, `eval_cases`, `rubrics` and the trace tables. It cannot publish or switch. Its secret is only in the GitHub `ci-eval` environment |
-| App service principal | Service principal | Starts the Jobs on behalf of users. The Jobs run as `skillhub-ci-eval` or `skillhub-ci`. It may switch and retire through `skill-switch`, but never publish, and the gates do not trust MLflow runs it writes. It also writes Try traces, runs the effective-permissions fallback, and stores Skill Hub drafts in `<workspace_root>/<catalog>/drafts`, where bootstrap gives it `CAN_MANAGE`. When `SKILLHUB_APP_PRINCIPAL` is set, bootstrap grants it `USE CATALOG`, `USE SCHEMA` and `READ VOLUME` on each department's live and versions schemas, `USE SCHEMA` on each `<d>_evals`, and write access to the trace tables. It never gets Unity Catalog `MANAGE`, so if the fallback cannot read a user's effective permissions, the app skips that department. |
+| App service principal | Service principal | Starts the Jobs on behalf of users. The Jobs run as `skillhub-ci-eval` or `skillhub-ci`. It may switch and retire through `skill-switch`, but never publish, and the gates do not trust MLflow runs it writes. It also writes Try traces, runs the effective-permissions fallback, and stores Skill Hub drafts in `<workspace_root>/<catalog>/drafts`, where bootstrap gives it `CAN_MANAGE`. When `SKILLHUB_APP_PRINCIPAL` is set, bootstrap grants it `USE CATALOG`, `USE SCHEMA` and `READ VOLUME` on each department's live and versions schemas, `USE SCHEMA` on each `<d>_evals`, write access to the trace tables, and `CREATE SCHEMA` on the catalog for Try's private schemas (see [Try on skills under review](#try-on-skills-under-review)). It never gets Unity Catalog `MANAGE`, so if the fallback cannot read a user's effective permissions, the app skips that department. |
 
 In this release CI uses an OAuth machine-to-machine secret. OIDC federation is planned.
 
@@ -311,6 +311,16 @@ After an upgrade from a build that used `/Shared/skill-hub`, re-run bootstrap. I
 - `unreadable`: the command cannot read the folder ACL.
 
 ## Access to the app and dashboard
+
+### Try on skills under review
+
+Trying a candidate or draft needs one catalog-level grant, `CREATE SCHEMA`, for the app's service principal. A person's bootstrap run applies it when `SKILLHUB_APP_PRINCIPAL` is set. The `skillhub-ci` Job applies it only when `skillhub-ci` owns the catalog. To grant it by hand, run this as the catalog owner, with the application ID of the app's service principal:
+
+```sql
+GRANT CREATE SCHEMA ON CATALOG <catalog> TO `<app service principal application id>`
+```
+
+A skill under review is not in Unity Catalog, so the app stages it for each run into a private schema `run_try_<id>_<dept>`, which it creates. Only the user who runs the Try gets `USE SCHEMA` and `READ VOLUME` on that schema. The app drops the schema when the run ends, including when it times out. Before each Try, the app also drops its own `run_try_*` schemas that are more than an hour old, which are left only when a run died with its process. Until the grant is in place, a Try answers 503 `try_setup_required`.
 
 - **App.** The bundle gives the group `users` `CAN_USE` on the Skill Hub app. The app reads with each user's own Unity Catalog permissions, so a wide group is safe. Change the group with the bundle variable `app_users_group`.
 - **Dashboard.** The bundle gives `skillhub-reviewers` `CAN_RUN` on the results dashboard. The dashboard reads reviewer-only views. Change the group with the bundle variable `reviewers_group`, and keep it equal to `roles.reviewers` in `config/hub.yaml`.

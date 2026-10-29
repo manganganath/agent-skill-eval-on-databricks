@@ -192,6 +192,21 @@ def drop_run_schemas(cfg: HubConfig, w, run_key: str) -> None:
             pass
 
 
+def drop_run_schema(cfg: HubConfig, w, full: str) -> None:
+    """Delete one run schema of this catalog. NotFound and refusals reach the caller."""
+    _drop_schema(cfg, w, full)
+
+
+def stage_candidate(
+    cfg: HubConfig, uc: UCSkills, schema: str, name: str, dept: str, files: dict[str, bytes]
+) -> StagedSkill:
+    """Stage one candidate skill into a run schema of its own, as the eval does, for Try. The caller creates the
+    schema. evals/ is left out, as in the eval."""
+    if not schema.startswith(f"{cfg.catalog}.") or not RUN_SCHEMA_RE.fullmatch(schema.partition(".")[2]):
+        raise StageError(f"refusing to stage into {schema!r}: not a run schema of {cfg.catalog}")
+    return _stage_one(cfg, uc, schema, name, dept, files, "candidate")
+
+
 def _marker_ms(w, folder: str, now_ms: float) -> int | None:
     """The upload time from the marker, in epoch ms. None when it is absent, unreadable or in the future."""
     try:
@@ -283,4 +298,38 @@ def cleanup_stale(
         except NotFound:
             continue
         dropped.append(path)
+    return dropped
+
+
+TRY_PREFIX = "run_try_"  # the private schema of one Try run on a skill under review
+
+
+def cleanup_try_schemas(cfg: HubConfig, w, older_than_hours: float = 1) -> list[str]:
+    """Drop the Try schemas of this catalog that this principal owns and that are older than `older_than_hours`.
+
+    A Try run drops its own schema when it ends, so only a run that died with its process is left over. Other
+    run_* schemas, and schemas another principal owns, are not touched.
+    """
+    cutoff_ms = time.time() * 1000 - older_than_hours * 3600 * 1000
+    me = w.current_user.me().user_name
+    dropped: list[str] = []
+    for s in w.schemas.list(catalog_name=cfg.catalog):
+        name = s.name or ""
+        if (
+            not name.startswith(TRY_PREFIX)
+            or not RUN_SCHEMA_RE.fullmatch(name)
+            or getattr(s, "owner", None) != me
+        ):
+            continue
+        if s.created_at is None or s.created_at >= cutoff_ms:
+            continue
+        full = f"{cfg.catalog}.{name}"
+        try:
+            _drop_schema(cfg, w, full)
+        except NotFound:
+            continue  # gone already: not an error
+        except PermissionDenied as e:
+            _log.warning("could not drop %s (%s); the rest of the cleanup continues", full, type(e).__name__)
+            continue
+        dropped.append(full)
     return dropped

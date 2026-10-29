@@ -158,13 +158,17 @@ def app_grant_plan(cfg: HubConfig, app_principal: str) -> list[str]:
     The app acts with the signed-in user's token and checks that user's permissions first. As itself, it
     reads skill files only after that check passes (the effective-permissions fallback), and it writes Try
     traces. So: USE CATALOG; USE SCHEMA and READ VOLUME on each department's live and versions schemas;
-    USE SCHEMA on each `<d>_evals` (the trace tables are granted by `trace_table_grants`). It gets no MANAGE:
-    without it the fallback cannot read another principal's effective permissions, and the app then skips
-    that department (fail closed).
+    USE SCHEMA on each `<d>_evals` (the trace tables are granted by `trace_table_grants`). Try stages a skill
+    under review into a private run schema that the app creates, so it also gets CREATE SCHEMA on the catalog
+    (catalog-level: only the catalog owner's run applies it). It gets no MANAGE: without it the fallback cannot
+    read another principal's effective permissions, and the app then skips that department (fail closed).
     """
     _check_ident("catalog", cfg.catalog)
     app = _q(app_principal)
-    stmts = [f"GRANT USE CATALOG ON CATALOG {cfg.catalog} TO {app}"]
+    stmts = [
+        f"GRANT USE CATALOG ON CATALOG {cfg.catalog} TO {app}",
+        f"GRANT CREATE SCHEMA ON CATALOG {cfg.catalog} TO {app}",
+    ]
     for dept in cfg.departments:
         for schema in (live_schema(cfg, dept), versions_schema(cfg, dept)):
             stmts += [

@@ -101,6 +101,7 @@ export interface EvalRunStatus { state: string; result_state: string | null; run
 export interface SwitchOut { job_run_id: number }
 
 export interface TryIn { fqn: string; prompt: string; models: string[] }
+export interface TryCandidateIn { prompt: string; models: string[] }
 export interface TryModelResult {
   model: string;
   with_skill: { text: string; invoked: boolean };
