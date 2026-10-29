@@ -913,6 +913,11 @@ def bootstrap(
     handover = not as_ci and any(owner == ci_app_id for owner in schema_owners.values())
     catalog_grants = not as_ci or getattr(catalog, "owner", None) == ci_app_id
     stmts = grant_plan(cfg, ci_app_id, ci_eval_app_id)
+    # The app's catalog-level grant goes with the others: only the catalog owner can give it, and a person's
+    # run after the hand-over stops before the app's schema-level grants (the ci Job applies those).
+    app_principal = os.environ.get(APP_PRINCIPAL_ENV, "").strip()
+    if app_principal and app_principal not in (ci_app_id, ci_eval_app_id):
+        stmts += [st for st in app_grant_plan(cfg, app_principal) if " ON CATALOG " in st]
     applied = skipped = 0
     for stmt in stmts:
         if stmt.startswith("CREATE SCHEMA IF NOT EXISTS "):
@@ -972,7 +977,6 @@ def bootstrap(
     for stmt in trace_stmts:
         sql.execute(stmt)
     log_lines.append(f"granted ci_eval access to {len(trace_stmts)} trace tables")
-    app_principal = os.environ.get(APP_PRINCIPAL_ENV, "").strip()
     if not app_principal:
         log_lines.append(
             f"warning: {APP_PRINCIPAL_ENV} is not set: the app principal gets no Unity Catalog grants"
@@ -980,9 +984,8 @@ def bootstrap(
     elif app_principal in (ci_app_id, ci_eval_app_id):
         log_lines.append(f"warning: {APP_PRINCIPAL_ENV} names a CI principal; no app grants applied")
     else:
-        app_stmts = [
-            s for s in app_grant_plan(cfg, app_principal) if catalog_grants or " ON CATALOG " not in s
-        ]
+        # The catalog-level grant went out with the other catalog grants above.
+        app_stmts = [s for s in app_grant_plan(cfg, app_principal) if " ON CATALOG " not in s]
         app_stmts += trace_table_grants(cfg, sql, app_principal)  # Try writes traces as the app
         for stmt in app_stmts:
             sql.execute(stmt)
