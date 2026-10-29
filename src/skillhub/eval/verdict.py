@@ -3,7 +3,7 @@
 The CI gate, PR comment, Skill Hub and dashboards read these values, and `sync` copies them unchanged.
 Three kinds of result are kept apart on purpose:
 - a fail: the judges answered and the case did not pass
-- an error: no usable answer (judge or infrastructure failure, `Feedback(error=...)`, an undecided panel)
+- an error: no usable answer (judge or infrastructure failure, `Feedback(error=...)`, a criterion no judge answered)
 - a missing assessment (an out-of-scope scorer): it is not an assessment, so it is never a fail
 """
 
@@ -69,20 +69,14 @@ class VerdictResult:
 def panel_majority(votes: list[bool | None]) -> bool | None:
     """True only with a strict majority of the whole panel (one vote per configured judge; None = no response).
 
-    The result is decided only when the missing votes cannot change it: 2 of 3 judges voting True
-    passes; 1 True and 2 missing is undecided, because the silent judges could outvote it. Undecided is None,
-    which makes the case an error. A tie with every judge responding is False. No votes is None.
+    With at least one valid vote, anything short of that majority is False (fail closed): 2 of 3 True passes;
+    1 True and 2 missing is False, because a minority can never pass. None only when no judge answered
+    (every vote None, or no votes), which makes the case an error.
     """
     n = len(votes)
-    yes = sum(1 for v in votes if v is True)
-    missing = sum(1 for v in votes if v is None)
-    if n == 0:
+    if not any(v is not None for v in votes):
         return None
-    if 2 * yes > n:
-        return True
-    if 2 * (yes + missing) <= n:
-        return False
-    return None
+    return 2 * sum(1 for v in votes if v is True) > n
 
 
 def weighted_score(items: list[tuple[int, bool | None]]) -> float | None:
@@ -111,7 +105,7 @@ def case_score_from_assessments(
     """Score one case-repeat. Each vote list holds one entry per judge model; None means the judge did not respond.
 
     A criterion (or the assertions) that no judge answered, or that has no assessment at all, makes the case an
-    error, never a fail. `assertion_votes=None` means the case has no assertions; an empty list means assertions
+    error, never a fail. A criterion with at least one valid vote that lacks a True majority of the panel is not met. `assertion_votes=None` means the case has no assertions; an empty list means assertions
     were expected but no assessment was found, which is an error. Pass `error=True` for a
     failure outside the judges (a misconfigured scorer, a failed agent run).
     """

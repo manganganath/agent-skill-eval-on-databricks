@@ -44,17 +44,16 @@ def reviewed_set(n_cases, passes, repeat=0):
         ([True, True, False], True),
         ([True, False, False], False),
         ([True, False], False),  # tie is not a majority
-        ([True, False, None], None),  # a tie that a silent judge could have broken is undecided
+        ([True, False, None], False),  # a valid vote exists and True is not a majority: not met
         ([True, True, None], True),
         ([None, True, True], True),  # 2 of 3 is a majority of the panel
-        ([None, None], None),
+        ([None, None], None),  # no judge answered
         ([], None),
-        # A criterion is decided only when the missing votes cannot change the result
-        ([True, None, None], None),  # one judge of three cannot carry the panel
-        ([False, None, None], None),
-        ([True, None, None, None, None], None),
-        ([False, False, None], False),  # 2 of 3 against: the silent judge cannot change it
-        ([True, True, None, None, None], None),  # 2 of 5 is not a majority of the panel
+        ([True, None, None], False),  # one judge of three cannot carry the panel
+        ([False, None, None], False),
+        ([True, None, None, None, None], False),
+        ([False, False, None], False),
+        ([True, True, None, None, None], False),  # 2 of 5 is not a majority of the panel
         ([True, True, True, None, None], True),
         ([True], True),
         ([None], None),
@@ -145,7 +144,7 @@ def test_expected_assertions_with_no_assessment_is_an_error():
     assert cs.error is True and cs.passed is None
 
 
-def test_undecided_criterion_makes_the_case_an_error():
+def test_criterion_no_judge_answered_makes_the_case_an_error():
     cs = case_score_from_assessments(
         case_id=1,
         repeat=0,
@@ -156,6 +155,42 @@ def test_undecided_criterion_makes_the_case_an_error():
         pass_score=0.6,
     )
     assert cs.error is True and cs.passed is None
+
+
+@pytest.mark.parametrize(
+    "votes, error",
+    [
+        ([True, False, None], False),
+        ([True, None, None], False),
+        ([True, True, None], False),
+        ([None, None, None], True),
+        ([], True),
+    ],
+)
+def test_split_or_thin_panel_criterion_is_not_met_not_an_error(votes, error):
+    cs = case_score_from_assessments(
+        case_id=1,
+        repeat=0,
+        reviewed=True,
+        criteria=CRITERIA,
+        votes_by_criterion={"c1": votes, "c2": [True]},
+        assertion_votes=[True],
+        pass_score=0.0,
+    )
+    assert cs.error is error
+
+
+def test_undecided_panel_criterion_is_not_met_in_the_score():
+    cs = case_score_from_assessments(
+        case_id=1,
+        repeat=0,
+        reviewed=True,
+        criteria=CRITERIA,
+        votes_by_criterion={"c1": [True, None, None], "c2": [True, True, None]},
+        assertion_votes=[True, False, None],
+        pass_score=0.0,
+    )
+    assert cs.error is False and cs.passed is False
 
 
 def test_missing_criterion_assessment_is_an_error_not_a_fail():
@@ -171,7 +206,7 @@ def test_missing_criterion_assessment_is_an_error_not_a_fail():
     assert cs.error is True and cs.passed is None
 
 
-def test_undecided_assertions_make_the_case_an_error():
+def test_assertions_no_judge_answered_make_the_case_an_error():
     cs = case_score_from_assessments(
         case_id=1,
         repeat=0,
