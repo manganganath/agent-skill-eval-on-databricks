@@ -54,7 +54,7 @@ jobs:
     name: deploy (dev)
     needs: [platform]
     if: ${{ github.event_name == 'workflow_dispatch' }}
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.SKILLHUB_RUNNER || 'ubuntu-latest' }}
     timeout-minutes: 45
     environment: production
     concurrency:
@@ -130,7 +130,7 @@ jobs:
     name: deploy (prod)
     needs: [platform]
     if: ${{ github.event_name == 'push' }}
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.SKILLHUB_RUNNER || 'ubuntu-latest' }}
     timeout-minutes: 45
     environment: production
     concurrency:

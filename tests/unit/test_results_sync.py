@@ -748,3 +748,31 @@ def test_child_run_with_harness_tag_syncs_that_harness(monkeypatch):
     sync_mod.sync_run(make_cfg(), sql, "pr12_ab12cd3", timeout_s=5)
     rows = json.loads(sql.inserts("eval_runs")[0][1]["rows"])
     assert rows[0]["harness"] == "codex"
+
+
+def test_missing_skill_names_are_null_not_the_text_none():
+    # MLflow stores assessment metadata as strings, so a missing skill comes back as "None".
+    t = trace(
+        "t1",
+        1,
+        [
+            assess(
+                "skill_trigger",
+                "correct_reject",
+                metadata={"invoked_skill": "None", "expected_skill": "None"},
+            )
+        ],
+    )
+    row = sync_mod.case_rows("r1", [t])[0]
+    assert row["invoked_skill"] is None and row["expected_skill"] is None
+
+
+def test_none_text_invoked_skill_falls_back_to_tool_span():
+    t = trace(
+        "t1",
+        1,
+        [assess("skill_trigger", "wrong_skill", metadata={"invoked_skill": "None", "expected_skill": "x"})],
+        spans=[tool_span("hub.dept_common.model-update")],
+    )
+    row = sync_mod.case_rows("r1", [t])[0]
+    assert row["invoked_skill"] == "model-update" and row["expected_skill"] == "x"

@@ -140,6 +140,15 @@ GH_TOKEN=$(gh auth token --user <owner-login>) scripts/configure_github.sh --rep
 
 The script reads each secret from a file and passes it on stdin. It never prints a secret or puts one on the command line. Use `--dry-run` to see the commands first. For an organization-owned repository it also checks that no organization-level `DATABRICKS_*` secret exists. Use `--skip-org-check` only after you checked that by hand. To rotate a client secret, create a new one, re-run the script with the new file, then delete the old secret.
 
+### Network access from CI
+
+Every CI job that talks to Databricks (deploys, pull request and merge evals, publish and switch) needs network access to the workspace. GitHub-hosted runners use many changing IP addresses, so they cannot reach a workspace that has an IP access list. In that case, run those jobs on a self-hosted runner in an allowed network:
+
+1. Register a self-hosted runner for the repository with a label, for example `skillhub`.
+2. Set the repository variable: `gh variable set SKILLHUB_RUNNER --body skillhub`.
+
+Jobs without Databricks access (unit tests, lint, the publish plan) always run on GitHub-hosted runners. A pull request from a fork always runs on a GitHub-hosted runner, so code from a fork never reaches your runner. Also require approval for workflow runs from outside contributors (Settings → Actions → General). To go back to GitHub-hosted runners, delete the variable.
+
 ## Deploy
 
 ```bash

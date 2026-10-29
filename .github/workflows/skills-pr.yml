@@ -21,7 +21,7 @@ concurrency:
 jobs:
   skills-pr:
     name: skills-pr
-    runs-on: ubuntu-latest
+    runs-on: ${{ (github.event.pull_request.head.repo.fork && 'ubuntu-latest') || vars.SKILLHUB_RUNNER || 'ubuntu-latest' }}
     timeout-minutes: 90
     # No reviewers. Holds the ci_eval Databricks secrets; fork pull requests never receive them.
     environment: ci-eval
