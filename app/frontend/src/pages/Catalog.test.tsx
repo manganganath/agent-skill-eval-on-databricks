@@ -196,6 +196,17 @@ describe("Catalog", () => {
 });
 
 describe("Catalog candidates", () => {
+  it("lists live skills first and skills under review after them", async () => {
+    vi.mocked(api.me).mockResolvedValue(author);
+    vi.mocked(api.skills).mockResolvedValue(skills);
+    vi.mocked(api.candidates).mockResolvedValue([candidate]);
+    renderCatalog();
+    const review = await screen.findByRole("region", { name: /under review/i });
+    const live = screen.getByRole("region", { name: "common" });
+    // DOCUMENT_POSITION_FOLLOWING: the review section comes after the live section in the page.
+    expect(live.compareDocumentPosition(review) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
   it("lists candidates for an author, badged with their pull request, in the live card shape", async () => {
     vi.mocked(api.me).mockResolvedValue(author);
     vi.mocked(api.skills).mockResolvedValue(skills);
