@@ -26,19 +26,20 @@ from skillhub.naming import eval_schema
 log = logging.getLogger(__name__)
 VIEWS = ("matrix_all", "runs_all", "cases_all")
 
+# Each line ends with a newline: Genie joins the lines as they are.
 INSTRUCTIONS = [
     "Each row of matrix_all is the latest evaluation of one skill version, model profile and mode. "
     "verdict is one of pass, warn, fail, inconclusive or advisory. advisory means too few reviewed cases "
-    "to gate a merge; unreviewed_cases counts generated cases nobody has reviewed yet.",
+    "to gate a merge; unreviewed_cases counts generated cases nobody has reviewed yet.\n",
     "pass_rate is the share of passing cases. For trigger runs it is accuracy. uplift_task_quality and "
     "uplift_skill_format are the gain from the skill on with_skill runs. model_class shows whether a model "
-    "is frontier or fast; compare models only within a class.",
+    "is frontier or fast; compare models only within a class.\n",
     "cases_all holds one row per trace assessment. For trigger questions use "
     "assessment_name = 'skill_trigger'. trigger_outcome is correct, correct_reject, wrong_skill, missed or "
     "false_trigger. expected_skill is the skill that should have been invoked and invoked_skill is the one "
-    "that was.",
+    "that was.\n",
     "runs_all has one row per child run. parent_run_id is not null for child runs. Use started_at to "
-    "order versions and nightly runs.",
+    "order versions and nightly runs.\n",
 ]
 
 # "{ev}" is replaced with the eval schema (catalog.eval) from naming.eval_schema.

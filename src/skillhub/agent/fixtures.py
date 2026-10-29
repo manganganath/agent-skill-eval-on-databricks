@@ -59,29 +59,59 @@ class FixtureStore:
     def tools_for(self, case: EvalCase) -> list[ToolSpec]:
         if not case.fixtures:
             return []
+        # The model is told the exact paths: without them it guesses (`model.xlsx`) and every read is refused.
+        paths = sorted(case.fixtures)
+        listed = ", ".join(paths)
+
+        def path_param() -> dict:
+            return {
+                "type": "object",
+                "properties": {"path": {"type": "string", "enum": paths, "description": f"One of: {listed}"}},
+                "required": ["path"],
+            }
+
         return [
             ToolSpec(
                 "web_search",
                 "Search the fixture document set by keyword.",
                 {"type": "object", "properties": {"query": {"type": "string"}}, "required": ["query"]},
             ),
-            ToolSpec(
-                "read_file",
-                "Read a fixture file by its path under fixtures/.",
-                {"type": "object", "properties": {"path": {"type": "string"}}, "required": ["path"]},
-            ),
+            ToolSpec("read_file", f"Read one of this case's files as text. Files: {listed}.", path_param()),
             ToolSpec(
                 "read_workbook",
-                "Read an Excel workbook cell by cell (formulas and values).",
-                {"type": "object", "properties": {"path": {"type": "string"}}, "required": ["path"]},
+                f"Read one of this case's Excel workbooks cell by cell (formulas and values). Files: {listed}.",
+                path_param(),
             ),
         ]
 
+    @staticmethod
+    def _declared(rel: str, case: EvalCase) -> str | None:
+        """The declared fixture `rel` names: exact, then without a leading `fixtures/` or `./`, then ignoring
+        case, then a bare file name that matches exactly one declared fixture. None when nothing matches."""
+        if rel in case.fixtures:
+            return rel
+        want = rel.strip().replace("\\", "/")
+        while want.startswith("./"):
+            want = want[2:]
+        if want.lower().startswith("fixtures/"):
+            want = want[len("fixtures/") :]
+        by_lower = {f.lower(): f for f in case.fixtures}
+        if want.lower() in by_lower:
+            return by_lower[want.lower()]
+        if "/" not in want:
+            hits = [f for f in case.fixtures if f.rsplit("/", 1)[-1].lower() == want.lower()]
+            if len(hits) == 1:
+                return hits[0]
+        return None
+
     def _resolve(self, rel: str, case: EvalCase) -> Path:
         """Resolve a path the case declares in `fixtures`; raise ValueError for anything else."""
-        if rel not in case.fixtures:
-            raise ValueError(f"not a fixture of this case: {rel}")
-        p = (self.root / rel).resolve()
+        declared = self._declared(rel, case)
+        if declared is None:
+            raise ValueError(
+                f"not a fixture of this case: {rel}; this case's files: {', '.join(sorted(case.fixtures))}"
+            )
+        p = (self.root / declared).resolve()
         if self.root not in p.parents:
             raise ValueError(f"path escapes fixtures root: {rel}")
         return p

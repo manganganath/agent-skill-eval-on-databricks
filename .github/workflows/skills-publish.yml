@@ -92,7 +92,7 @@ jobs:
     name: re-evaluate merged content
     needs: [plan]
     if: ${{ needs.plan.outputs.reeval != '' }}
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.SKILLHUB_RUNNER || 'ubuntu-latest' }}
     timeout-minutes: 60
     environment: ci-eval # no reviewers; holds the Databricks secrets for the gate
     outputs:
@@ -205,7 +205,7 @@ jobs:
     name: publish and switch (production)
     needs: [plan, eval-merge]
     if: ${{ !cancelled() && needs.plan.result == 'success' && needs.plan.outputs.has_changes == 'true' && (needs.eval-merge.result == 'success' || needs.plan.outputs.publish == '[]') }}
-    runs-on: ubuntu-latest
+    runs-on: ${{ vars.SKILLHUB_RUNNER || 'ubuntu-latest' }}
     timeout-minutes: 240
     environment: production
     permissions:

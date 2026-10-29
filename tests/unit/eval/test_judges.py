@@ -131,6 +131,19 @@ def test_builtin_scorer_names_and_lists_by_mode():
     assert "safety" in [s.name for s in wo]
 
 
+def test_gemini_does_not_run_the_trace_reading_skill_use_judge():
+    """Seen live: Gemini 3 refuses MLflow's trace tools ("Function call is missing a thought signature"),
+    so every skill_use judgement by gemini-flash errored. It still judges the rubric and the assertions."""
+    from tests.fakes import make_cfg
+
+    ws = judges.scorers_for(
+        make_cfg(), RUBRIC, ["gpt", "gemini-flash"], "with_skill", skill_name="earnings-preview"
+    )
+    names = [s.name for s in ws]
+    assert "skill_use__gpt" in names and "skill_use__gemini-flash" not in names
+    assert "rubric_c1__gemini-flash" in names and "assertions__gemini-flash" in names
+
+
 def test_audit_xls_adds_planted_bugs_scorer(tmp_path):
     (tmp_path / "northwind").mkdir()
     (tmp_path / "northwind" / "model_bugs.json").write_text('{"bugs": [{"id": "x", "match": ["y"]}]}')

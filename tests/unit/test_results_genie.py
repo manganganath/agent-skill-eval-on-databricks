@@ -122,3 +122,8 @@ def test_hand_over_space_falls_back_to_can_manage_then_warns(caplog):
         line = hand_over_space(w, "s1", "ci-app")
     assert line.startswith("warning: could not give Genie space s1 to ci-app") and "CAN MANAGE" in line
     assert [c[3] for c in calls] == ["IS_OWNER", "CAN_MANAGE"]
+
+
+def test_instruction_lines_end_with_a_newline():
+    # Genie joins the lines of a text instruction as they are, so without a newline the sentences run together.
+    assert all(line.endswith("\n") for line in genie.INSTRUCTIONS)

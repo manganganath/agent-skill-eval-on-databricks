@@ -22,6 +22,28 @@ There are two flows.
 
 **Pull request.** CI runs `lint`, then `generate` for skills that lack test files (a bot commits them). CI uploads the checked-out `skills/` and `fixtures/` folders to a candidate folder scoped to the run (`<workspace_root>/<catalog>/candidates/<run key>`), then starts the `skill-eval` Job with a run key such as `pr12_ab12cd3_a1` (`pr<N>_<sha7>_a<attempt>`). The run stages its own `run_<key>_<schema_base>` schemas, which hold the candidate skills and the live skills in scope. Configuration always comes from the deployed bundle, never from the pull request. The Job evaluates, then runs `sync`. CI then posts a sticky pull request comment with the run key and the verdict table. The comment has no hosts or IDs unless the repository variable `SKILLHUB_PR_LINKS` is `true`. The gate (`check-verdict --expect-file`, fed by `skillhub eval-digests` on the checkout) passes only if every planned gating cell (each model times `trigger` and `with_skill`) has a trusted row, and every gating row evaluated exactly the content, the rubric, and the cases with their fixtures of the checkout.
 
+```mermaid
+sequenceDiagram
+  autonumber
+  actor A as Author
+  participant GH as GitHub Actions (skills-pr)
+  participant WS as Candidate folder
+  participant J as skill-eval Job (skillhub-ci-eval)
+  participant UG as Unity Gateway
+  participant ML as MLflow
+  participant D as Delta results
+  A->>GH: Open or update a pull request
+  GH->>GH: lint, then generate missing cases and rubrics
+  GH->>WS: Upload candidate skills and fixtures
+  GH->>J: Start with run key prN_sha7_aN
+  J->>J: Stage run schemas with candidates and live skills in scope
+  J->>UG: Agent runs through the skills MCP and serving endpoints
+  J->>ML: Traces, judge assessments and verdicts
+  J->>D: sync (trusted authors only)
+  GH->>D: check-verdict against the checkout's digests and planned cells
+  GH-->>A: Sticky comment with the verdict table
+```
+
 **Merge to `main`.** CI re-evaluates every changed skill that still exists on every merge. A change that moves a skill out of a quarantined department stops here: an operator must handle it. A `fail` or `inconclusive` verdict stops the run. `warn`, `advisory` and `pass` go on to approval in the `production` environment. After approval, CI starts the `skill-switch` Job (`publish`, then `switch`), which registers `<skill>-v<N+1>` in the versions schema and makes it live, and writes the journal. CI never registers a version itself; publishes run only in the `skill-switch` Job.
 
 **Publish gate.** Published content equals evaluated content, and the eval read the merged cases. The publish step takes the run key of the merge eval and the plan's eval digests and cells. It refuses, exits with code 2 and journals `publish_refused` unless all of these hold:
@@ -31,25 +53,59 @@ There are two flows.
 - The rows were computed on exactly the bundle being published, with the merge's rubric (`rubric_hash`) and cases and fixtures (`dataset_digest`).
 - None of the latest trigger or with-skill verdicts blocks it.
 
+```mermaid
+sequenceDiagram
+  autonumber
+  participant GH as GitHub Actions (skills-publish)
+  participant J as skill-eval Job
+  actor R as Reviewer
+  participant S as skill-switch Job (skillhub-ci)
+  participant UC as Unity Catalog
+  GH->>J: Re-evaluate changed skills with the merge run key
+  J-->>GH: Verdicts
+  alt fail or inconclusive
+    GH->>GH: Stop
+  else pass, warn or advisory
+    GH->>R: Wait for production approval
+    R-->>GH: Approve
+    GH->>S: publish, then switch (run key, digests, planned cells)
+    S->>S: Publish gate: started by skillhub-ci, every cell trusted, hashes match, no blocking verdict
+    S->>UC: Register skill-vN+1, copy it into live, write the journal
+  end
+```
+
 **Deleting a skill folder.** A merge that deletes `skills/<dept>/<name>/` retires the skill. After the `production` approval, CI starts the `skill-switch` Job with `action=retire`.
 
-```
- Developer / reviewer
-        |
-        v
- +--------------------------- skillhub package ----------------------------+
- |  lint | generate | eval engine | sync | publish | switch | reconcile     |
- +-----------------------------------------------------------------------------+
-        |  runs in                     |  runs in
-        v                              v
- +--------------------- Databricks Jobs and app ----------------------------+
- |  skill-eval | skill-switch | skillhub-nightly | Skill Hub app (REST + UI) |
- +-----------------------------------------------------------------------------+
-        |
-        v
- +------------- Unity Catalog, Unity Gateway and MLflow ------------------------+
- |  skills + volumes + Delta tables | skills MCP + serving | traces + judges |
- +-----------------------------------------------------------------------------+
+```mermaid
+flowchart TB
+  dev["Developer or reviewer"]
+  gh["GitHub Actions<br/>skills-pr · skills-publish · skills-switch · platform"]
+  subgraph dbx["Databricks Jobs and app (all run the skillhub package)"]
+    direction LR
+    jeval["skill-eval Job<br/>runs as skillhub-ci-eval"]
+    jswitch["skill-switch Job<br/>runs as skillhub-ci"]
+    jnight["skillhub-nightly Job"]
+    app["Skill Hub app<br/>REST API and React UI"]
+  end
+  subgraph plat["Databricks platform services"]
+    direction LR
+    ug["Unity Gateway<br/>skills MCP · model serving"]
+    ml["MLflow<br/>experiments · traces · judges · prompts"]
+    uc["Unity Catalog<br/>skills · volumes · Delta tables"]
+  end
+  dev -->|"pull request, merge"| gh
+  dev -->|"browse, Try, run evals, switch"| app
+  gh -->|"starts"| jeval
+  gh -->|"starts after production approval"| jswitch
+  app -->|"starts"| jeval
+  app -->|"starts: switch, retire"| jswitch
+  jeval -->|"call skills and models"| ug
+  jeval -->|"traces, verdicts"| ml
+  jeval -->|"sync results"| uc
+  jswitch -->|"publish, switch, journal"| uc
+  jnight -->|"evaluate live skills, reconcile"| uc
+  ug -->|"serves live skills under UC permissions"| uc
+  ml -->|"trace tables"| uc
 ```
 
 ## Unity Catalog layout

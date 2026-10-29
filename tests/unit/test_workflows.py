@@ -1270,3 +1270,34 @@ def test_publish_passes_the_planned_cells_as_one_comma_separated_job_parameter(t
     params = json.loads(saved.read_text())["job_parameters"]
     assert params["expect_cells"] == "gpt/trigger,claude-sonnet/with_skill"
     assert params["expect_rubric_hash"] == HASH and params["expect_dataset_digest"] == HASH
+
+
+# --- The runner is configurable: a workspace with an IP access list needs a runner on an allowed network ------
+
+RUNNER_DEFAULT = "${{ vars.SKILLHUB_RUNNER || 'ubuntu-latest' }}"
+FORK_SAFE_RUNNER = "${{ (github.event.pull_request.head.repo.fork && 'ubuntu-latest') || vars.SKILLHUB_RUNNER || 'ubuntu-latest' }}"
+DATABRICKS_JOBS = {
+    "platform.yml": ["deploy-dev", "deploy-prod"],
+    "skills-pr.yml": ["skills-pr"],
+    "skills-publish.yml": ["eval-merge", "release"],
+    "skills-switch.yml": ["switch"],
+}
+
+
+def test_jobs_that_call_databricks_run_on_the_configurable_runner():
+    for name, jobs in DATABRICKS_JOBS.items():
+        wf = load_workflow(name)
+        for job in jobs:
+            expected = FORK_SAFE_RUNNER if name == "skills-pr.yml" else RUNNER_DEFAULT
+            assert wf["jobs"][job]["runs-on"] == expected, (name, job)
+
+
+def test_a_fork_pull_request_never_reaches_the_configurable_runner():
+    """A self-hosted runner must never run code from a fork: forks always get a GitHub-hosted runner."""
+    runs_on = load_workflow("skills-pr.yml")["jobs"]["skills-pr"]["runs-on"]
+    assert runs_on.startswith("${{ (github.event.pull_request.head.repo.fork && 'ubuntu-latest') ||")
+
+
+def test_jobs_without_databricks_stay_on_github_hosted_runners():
+    for name, job in (("platform.yml", "platform"), ("skills-publish.yml", "plan")):
+        assert load_workflow(name)["jobs"][job]["runs-on"] == "ubuntu-latest", (name, job)

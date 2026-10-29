@@ -379,11 +379,17 @@ def _prompt(trace) -> str | None:
         return trace.info.request_preview
 
 
+def _skill_meta(meta: dict, key: str) -> str | None:
+    """A skill name from assessment metadata. MLflow keeps metadata as strings, so a missing skill reads "None"."""
+    v = meta.get(key)
+    return None if v in (None, "", "None") else str(v)
+
+
 def _invoked(trace, assessments) -> str | None:
     trig = next((a for a in assessments if a.name == "skill_trigger"), None)
     meta = (trig.metadata or {}) if trig else {}
-    if meta.get("invoked_skill"):
-        return meta["invoked_skill"]
+    if _skill_meta(meta, "invoked_skill"):
+        return _skill_meta(meta, "invoked_skill")
     for s in trace.data.spans or []:
         fqn = (s.attributes or {}).get("skill.fqn") if s.span_type == "TOOL" else None
         if fqn:
@@ -401,7 +407,7 @@ def case_rows(run_id: str, traces: list) -> list[dict]:
         assessments = latest_assessments(t)
         trig = next((a for a in assessments if a.name == "skill_trigger"), None)
         outcome = _value(trig) if trig else None
-        expected = (trig.metadata or {}).get("expected_skill") if trig else None
+        expected = _skill_meta(trig.metadata or {}, "expected_skill") if trig else None
         invoked = _invoked(t, assessments)
         for a in assessments:
             rows.append(

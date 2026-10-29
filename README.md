@@ -22,6 +22,20 @@ Configuration is in `config/hub.yaml`, and its `${VAR}` values come from the env
 - **CI/CD:** GitHub Actions evaluate every skill change on its pull request. A reviewer approves the new version before it goes live.
 - **Skill Hub:** a Databricks App for browsing skills, running evals, reviewing results and switching versions, governed by Unity Catalog permissions.
 
+```mermaid
+flowchart LR
+  author["Author edits a skill<br/>in a pull request"] --> pr["PR eval<br/>skills × models"]
+  pr --> review["Reviewer approves<br/>in GitHub"]
+  review --> publish["Publish and switch<br/>in Unity Catalog"]
+  publish --> serve["Unity Gateway serves<br/>the live version"]
+  serve --> agents["Agents load skills<br/>under UC permissions"]
+  pr --> results["MLflow and Delta<br/>results matrix"]
+  results --> hub["Skill Hub app<br/>browse · Try · switch · roll back"]
+  hub --> publish
+```
+
+See [docs/architecture.md](docs/architecture.md) for the components and the pull request and merge flows.
+
 ## Repository layout
 
 | Path | Contents |
