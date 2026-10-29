@@ -313,6 +313,7 @@ After an upgrade from a build that used `/Shared/skill-hub`, re-run bootstrap. I
 ## Access to the app
 
 - **App.** The bundle gives the group `users` `CAN_USE` on the Skill Hub app. The app reads with each user's own Unity Catalog permissions, so a wide group is safe. Change the group with the bundle variable `app_users_group`.
+- **Dashboard tab.** It needs no grant of its own. It reads the department eval tables with each user's permissions, so a user sees only the departments they can read; a refused department is named on the page. Its token section also needs `SELECT` on `system.serving.endpoint_usage` and `system.serving.served_entities`. Without that access the section says so, and the rest of the page still works.
 - The deploy resets permissions that you set by hand on the app. Change the bundle variables instead.
 
 ## Nightly

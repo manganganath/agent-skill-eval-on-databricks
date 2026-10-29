@@ -461,3 +461,56 @@ td.wide { min-width: 18rem; }
   .chip, .badge, .version, .tag, .count-pill { border: 1px solid CanvasText; }
   .card-link:focus-visible::after { outline-color: Highlight; }
 }
+
+/* Dashboard: KPI tiles, then charts drawn with CSS bars and inline SVG. Each chart has a table alternative.
+   Series slots and trigger outcome colours are the categorical palette in order; verdicts use the chip colours. */
+:root {
+  --series-1: #2a78d6; --series-2: #eb6834; --series-3: #1baf7a; --series-4: #eda100;
+  --series-5: #e87ba4; --series-6: #008300; --series-7: #6250d6; --series-8: #e34948;
+  --outcome-correct-reject: #6aa57f; --outcome-false-trigger: #d9622b;
+}
+.dash-tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(10.5rem, 1fr)); gap: 0.75rem; margin-bottom: 0.5rem; }
+.dash-tile {
+  background: var(--canvas); border: 1px solid var(--line); border-radius: var(--radius-card);
+  box-shadow: var(--shadow-card); padding: 0.85rem 1rem;
+}
+.dash-tile-label { margin: 0; font-size: 0.8125rem; color: var(--slate); }
+.dash-tile-value { margin: 0.15rem 0 0; font-size: 1.5rem; font-weight: 650; line-height: 1.2; }
+.dash-caption { font-size: 0.8125rem; margin: 0.5rem 0 1.25rem; }
+.dash-filters { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 0.75rem 1.25rem; margin: 0 0 1rem; }
+.dash-filters select { min-width: 11rem; }
+.dash-subhead { font-size: 0.9375rem; margin: 1.25rem 0 0.5rem; }
+.dash-table-alt { margin-top: 0.75rem; font-size: 0.875rem; }
+.dash-table-alt summary { cursor: pointer; color: var(--accent); font-weight: 600; }
+.dash-table-alt .table-scroll { margin-top: 0.5rem; }
+.panel .dash-table-alt .table-scroll { box-shadow: none; }
+.chart-legend {
+  list-style: none; padding: 0; margin: 0 0 0.75rem; display: flex; flex-wrap: wrap; gap: 0.35rem 1.25rem;
+  font-size: 0.8125rem; color: var(--slate);
+}
+.chart-legend li { display: inline-flex; align-items: center; gap: 0.4rem; }
+.legend-mark { display: inline-block; flex: none; }
+.legend-square { width: 0.75rem; height: 0.75rem; border-radius: 2px; }
+.legend-line { width: 1rem; height: 2px; }
+.hbars { display: grid; gap: 0.6rem; }
+.hbar-row { display: grid; grid-template-columns: minmax(7rem, 12rem) minmax(0, 1fr) 4.5rem; gap: 0.25rem 0.75rem; align-items: center; }
+.hbar-group { display: grid; grid-template-columns: minmax(7rem, 12rem) minmax(0, 1fr); gap: 0.25rem 0.75rem; align-items: start; }
+.hbar-bars { display: grid; gap: 0.3rem; }
+.hbar-label { font-size: 0.875rem; color: var(--ink); overflow-wrap: anywhere; }
+.hbar-track { position: relative; display: flex; height: 18px; background: var(--mist); border-radius: 3px; overflow: hidden; }
+.hbar-seg { display: block; height: 100%; min-width: 0; }
+.hbar-seg + .hbar-seg { box-shadow: inset 2px 0 0 var(--canvas); }
+.hbar-line { display: grid; grid-template-columns: minmax(0, 1fr) 4.5rem; gap: 0.5rem; align-items: center; }
+.hbar-line .hbar-track { height: 12px; }
+.hbar-zero { position: absolute; top: 0; bottom: 0; width: 1px; background: var(--line-strong); }
+.hbar-bar { position: absolute; top: 0; bottom: 0; border-radius: 3px; }
+.hbar-value { font-size: 0.8125rem; color: var(--slate); text-align: right; font-variant-numeric: tabular-nums; }
+.chart-svg { display: block; width: 100%; height: auto; }
+.chart-grid { stroke: var(--line); stroke-width: 1; }
+.chart-tick { font-size: 12px; fill: var(--slate); font-family: var(--font-sans); }
+@media (max-width: 720px) {
+  .dash-tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .hbar-row, .hbar-group { grid-template-columns: minmax(0, 1fr); }
+  .hbar-row .hbar-value { text-align: left; }
+  .dash-filters select { min-width: 0; width: 100%; }
+}

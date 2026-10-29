@@ -8,7 +8,7 @@ Skill Hub manages agent skills (`SKILL.md` bundles) as Unity Catalog objects. It
 |---|---|---|
 | `skillhub` package and CLI | Registry, versions, eval engine and results sync. The same code runs in CI, in Jobs and in the app. | Python package |
 | Jobs `skillhub-bootstrap`, `skill-eval`, `skill-switch`, `skillhub-nightly` | Set up the workspace, run evals, switch versions, run nightly checks | Declarative Automation Bundle, Jobs |
-| Skill Hub app | FastAPI REST API and React UI | Databricks Apps |
+| Skill Hub app | FastAPI REST API and React UI, with a Dashboard tab over the result tables | Databricks Apps |
 | Skills, schemas, volumes and Delta tables | Storage and permissions | Unity Catalog |
 | Skills MCP server (Beta) and model serving endpoints | Agents discover and load skills; models are called | Unity Gateway |
 | One experiment per skill, traces, judges, prompts | Evidence and scoring | MLflow 3 (tracing, `make_judge`, Prompt Registry) |
@@ -203,7 +203,7 @@ MLflow is the source of truth. Delta is synced from it.
 - `skillhub sync --run-key <key>` reads each run back from MLflow and inserts missing rows into `eval_runs` and `eval_cases`. It never updates or deletes rows. It skips runs by untrusted authors, runs with a runner field in the wrong place (for example a `verdict` param), runs whose department differs from their experiment's, and runs in badly named experiments, with a warning.
 - **Harness.** `eval_runs` has a `harness` column. The built-in agent loop is `reference`, and it is the only harness in this release. Other harnesses come later. The matrix, the alerts and the Skill Hub show the column.
 - `eval_matrix` shows the latest run per skill, version, model profile and mode. It carries the verdict, `n_reviewed` and `n_cases`, and the experiment ID so the UI can link to MLflow. The cross-department matrix shows `dept`.
-- The SQL alerts and the Genie space read these tables.
+- The SQL alerts and the Genie space read these tables. The Skill Hub Dashboard tab reads each department's `eval_matrix`, `eval_runs` and `eval_cases` with the signed-in user's permissions, and reads token usage from `system.serving`.
 - Retention: product code never deletes rows. Delta time travel is not an audit trail.
 - OpenTelemetry: traces are stored as OTel-shaped Delta tables in the customer's Unity Catalog account. The Unity Gateway unified trace table (Beta, enabled per workspace) can record skill usage across the workspace when it is available.
 

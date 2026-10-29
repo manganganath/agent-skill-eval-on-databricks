@@ -1,6 +1,6 @@
 import type {
   AppConfig, CandidateDetail, CandidateSummary, CaseRow, DraftIn, DraftOut, EvalRunIn, EvalRunOut, EvalRunStatus,
-  JournalRow, MatrixRow, Me, SkillDetail, SkillSummary, SwitchOut, TryIn, TryModelResult,
+  Dashboard, DashboardOut, JournalRow, MatrixRow, Me, SkillDetail, SkillSummary, SwitchOut, TryIn, TryModelResult,
 } from "./types";
 
 // `errors` carries the plain-language problems of a refused draft upload (reason draft_invalid).
@@ -80,6 +80,19 @@ function me(): Promise<Me> {
   return mePromise;
 }
 
+// The dashboard body plus the denied-departments header, as the matrix list has it.
+async function requestDashboard(): Promise<Dashboard> {
+  const res = await send("/results/dashboard");
+  let body: DashboardOut;
+  try {
+    body = (await res.json()) as DashboardOut;
+  } catch {
+    throw new ApiError(res.status, "bad_response");
+  }
+  const denied = res.headers.get("X-Eval-Denied-Departments") ?? "";
+  return { ...body, deniedDepartments: denied.split(",").map((d) => d.trim()).filter(Boolean) };
+}
+
 const enc = encodeURIComponent;
 const qs = (params: Record<string, string | undefined>) => {
   const p = new URLSearchParams();
@@ -100,6 +113,7 @@ export const api = {
   uploadDraft: (body: DraftIn) => request<DraftOut>("/drafts", { method: "POST", body: JSON.stringify(body) }),
   matrix: (params: { skill?: string; dept?: string; fqn?: string }) => requestList<MatrixRow>(`/results/matrix${qs(params)}`),
   cases: (runId: string) => requestList<CaseRow>(`/results/cases${qs({ run_id: runId })}`),
+  dashboard: () => requestDashboard(),
   startEval: (body: EvalRunIn) =>
     request<EvalRunOut>("/eval-runs", { method: "POST", body: JSON.stringify(body) }),
   evalRun: (jobRunId: number) => request<EvalRunStatus>(`/eval-runs/${jobRunId}`),

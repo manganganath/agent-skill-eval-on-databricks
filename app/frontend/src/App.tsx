@@ -6,6 +6,7 @@ import SkillDetail from "./pages/SkillDetail";
 import CandidateDetail from "./pages/CandidateDetail";
 import UploadDraft from "./pages/UploadDraft";
 import Matrix from "./pages/Matrix";
+import Dashboard from "./pages/Dashboard";
 import RunEval from "./pages/RunEval";
 import Switch from "./pages/Switch";
 
@@ -20,6 +21,7 @@ export function App() {
           <Route path="candidates/:runKey/:dept/:skill" element={<CandidateDetail />} />
           <Route path="drafts/new" element={<UploadDraft />} />
           <Route path="matrix" element={<Matrix />} />
+          <Route path="dashboard" element={<Dashboard />} />
           <Route path="run" element={<RunEval />} />
           <Route path="*" element={<EmptyState title="Page not found" />} />
         </Route>

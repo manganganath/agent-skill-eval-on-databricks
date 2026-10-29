@@ -43,6 +43,7 @@ export function Layout() {
             <NavLink to="/" end className={({ isActive }) => (isActive || inCatalog ? "active" : undefined)}>
               Catalog
             </NavLink>
+            <NavLink to="/dashboard">Dashboard</NavLink>
             <NavLink to="/matrix">Eval matrix</NavLink>
             <NavLink to="/run">Run eval</NavLink>
           </nav>

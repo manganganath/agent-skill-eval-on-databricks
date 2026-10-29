@@ -68,4 +68,14 @@ describe("api client", () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response("[]", { status: 200 }));
     expect(await api.matrix({})).toEqual({ rows: [], deniedDepartments: [], truncated: false });
   });
+
+  it("reads the dashboard body and the denied departments from the header", async () => {
+    const body = { summary: { skills: 0 }, verdicts: [], tokens: null };
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify(body), { status: 200, headers: { "X-Eval-Denied-Departments": "external, equity_research" } }),
+    );
+    const d = await api.dashboard();
+    expect(d.deniedDepartments).toEqual(["external", "equity_research"]);
+    expect(d.tokens).toBeNull();
+  });
 });
