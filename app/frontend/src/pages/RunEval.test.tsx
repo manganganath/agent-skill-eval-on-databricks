@@ -81,6 +81,14 @@ describe("RunEval", () => {
     }
   });
 
+  it("explains an empty skill list instead of showing an empty box", async () => {
+    vi.mocked(api.skills).mockResolvedValue([]);
+    render(<MemoryRouter><RunEval /></MemoryRouter>);
+    const skills = await screen.findByRole("group", { name: /skills/i });
+    expect(skills).toHaveTextContent(/no skills to evaluate/i);
+    expect(screen.getByRole("button", { name: /start evaluation/i })).toBeDisabled();
+  });
+
   it("blocks submit until at least one skill, model and mode are chosen", async () => {
     render(<MemoryRouter><RunEval /></MemoryRouter>);
     const button = await screen.findByRole("button", { name: /start evaluation/i });
