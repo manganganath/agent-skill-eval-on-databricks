@@ -43,7 +43,7 @@ resources:
           environment_variables_key: skillhub_env
           python_wheel_task:
             package_name: skillhub
-            entry_point: skillhub
+            entry_point: skillhub-job
             parameters: ["bootstrap", "--no-create-identities"]
 
     skill_eval:
@@ -75,7 +75,7 @@ resources:
           environment_variables_key: skillhub_env
           python_wheel_task:
             package_name: skillhub
-            entry_point: skillhub
+            entry_point: skillhub-job
             parameters:
               - eval
               - --run-key
@@ -105,7 +105,7 @@ resources:
           environment_variables_key: skillhub_env
           python_wheel_task:
             package_name: skillhub
-            entry_point: skillhub
+            entry_point: skillhub-job
             parameters: ["sync", "--run-key", "{{job.parameters.run_key}}"]
 
     skill_switch:
@@ -146,7 +146,7 @@ resources:
           environment_variables_key: skillhub_env
           python_wheel_task:
             package_name: skillhub
-            entry_point: skillhub
+            entry_point: skillhub-job
             parameters:
               - job-switch
               - --action
@@ -195,7 +195,7 @@ resources:
           environment_variables_key: skillhub_env
           python_wheel_task:
             package_name: skillhub
-            entry_point: skillhub
+            entry_point: skillhub-job
             parameters:
               - eval
               - --run-key
@@ -219,7 +219,7 @@ resources:
           environment_variables_key: skillhub_env
           python_wheel_task:
             package_name: skillhub
-            entry_point: skillhub
+            entry_point: skillhub-job
             parameters: ["sync", "--run-key", "nightly-{{job.run_id}}"]
         - task_key: reconcile
           depends_on:
@@ -228,7 +228,7 @@ resources:
           environment_variables_key: skillhub_env
           python_wheel_task:
             package_name: skillhub
-            entry_point: skillhub
+            entry_point: skillhub-job
             parameters: ["reconcile"]
         - task_key: check_permissions
           depends_on:
@@ -237,7 +237,7 @@ resources:
           environment_variables_key: skillhub_env
           python_wheel_task:
             package_name: skillhub
-            entry_point: skillhub
+            entry_point: skillhub-job
             parameters: ["check-permissions"]
         - task_key: cleanup
           depends_on:
@@ -247,5 +247,5 @@ resources:
           environment_variables_key: skillhub_env
           python_wheel_task:
             package_name: skillhub
-            entry_point: skillhub
+            entry_point: skillhub-job
             parameters: ["cleanup", "--older-than-hours", "24"]

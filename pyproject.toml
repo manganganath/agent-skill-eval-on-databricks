@@ -26,6 +26,7 @@ app = ["fastapi>=0.115", "uvicorn>=0.30"]
 
 [project.scripts]
 skillhub = "skillhub.cli:app"
+skillhub-job = "skillhub.cli:job_main"
 
 [dependency-groups]
 dev = ["pytest>=8", "pytest-asyncio>=0.24", "ruff>=0.6", "respx>=0.21", "httpx2>=2.15"]
