@@ -9,6 +9,10 @@ import { Loading } from "../components/Loading";
 const MAX_POLLS = 40;
 const POLL_MS = 5000;
 const TERMINAL = ["TERMINATED", "SKIPPED", "INTERNAL_ERROR"];
+const MODE_HINTS: Record<Mode, string> = {
+  trigger: "Checks that the agent picks the skill when it should, and only then.",
+  effectiveness: "Compares answers with and without the skill against the rubric.",
+};
 
 // One picker per selected skill. It lists the published versions from the skill's history. "Live" sends no pin.
 function VersionPicker({ fqn, name, liveVersion, value, onChange }: {
@@ -22,16 +26,14 @@ function VersionPicker({ fqn, name, liveVersion, value, onChange }: {
     .filter((r) => r.action === "published" && r.version != null)
     .map((r) => r.version!);
   return (
-    <p>
-      <label>
-        Version of {name}{" "}
-        <select aria-label={`Version of ${name}`} value={value ?? ""}
-          onChange={(e) => onChange(e.target.value ? Number(e.target.value) : undefined)}>
-          <option value="">{liveVersion == null ? "Live" : `Live (v${liveVersion})`}</option>
-          {published.map((v) => <option key={v} value={v}>v{v}</option>)}
-        </select>
-      </label>
-    </p>
+    <label className="field-inline">
+      <span className="field-label">Version of {name}</span>
+      <select aria-label={`Version of ${name}`} value={value ?? ""}
+        onChange={(e) => onChange(e.target.value ? Number(e.target.value) : undefined)}>
+        <option value="">{liveVersion == null ? "Live" : `Live (v${liveVersion})`}</option>
+        {published.map((v) => <option key={v} value={v}>v{v}</option>)}
+      </select>
+    </label>
   );
 }
 
@@ -125,45 +127,72 @@ export default function RunEval() {
 
   return (
     <>
-      <h1>Run an evaluation</h1>
-      <p className="muted">Each skill runs its live version unless you pick another registered version.</p>
-      <fieldset>
+      <div className="page-head">
+        <div>
+          <h1>Run an evaluation</h1>
+          <p className="lede">Each skill runs its live version unless you pick another registered version.</p>
+        </div>
+      </div>
+      <fieldset className="form-group">
         <legend>Skills</legend>
         {(skills.data ?? []).length === 0 && (
           <p className="muted">
             No skills to evaluate. Only published skills that you can read are listed here. Ask your team lead for access.
           </p>
         )}
-        {(skills.data ?? []).map((s) => (
-          <label key={s.fqn}><input type="checkbox" checked={picked.includes(s.fqn)}
-            onChange={() => toggle(picked, s.fqn, setPicked)} aria-label={`${s.dept}/${s.name}`} /> {s.dept}/{s.name}</label>
-        ))}
+        {(skills.data ?? []).length > 0 && (
+          <div className="choice-grid scroll">
+            {(skills.data ?? []).map((s) => (
+              <label key={s.fqn} className="choice"><input type="checkbox" checked={picked.includes(s.fqn)}
+                onChange={() => toggle(picked, s.fqn, setPicked)} aria-label={`${s.dept}/${s.name}`} />
+                <span className="choice-text"><strong>{s.name}</strong><span className="choice-sub">{s.dept}</span></span>
+              </label>
+            ))}
+          </div>
+        )}
       </fieldset>
-      {picked.map((fqn) => (
-        <VersionPicker key={fqn} fqn={fqn} name={fqn.split(".").pop() ?? fqn} liveVersion={liveOf(fqn)}
-          value={pins[fqn]} onChange={(v) => setPin(fqn, v)} />
-      ))}
-      <fieldset>
+      {picked.length > 0 && (
+        <fieldset className="form-group">
+          <legend>Versions</legend>
+          <div className="version-list">
+            {picked.map((fqn) => (
+              <VersionPicker key={fqn} fqn={fqn} name={fqn.split(".").pop() ?? fqn} liveVersion={liveOf(fqn)}
+                value={pins[fqn]} onChange={(v) => setPin(fqn, v)} />
+            ))}
+          </div>
+        </fieldset>
+      )}
+      <fieldset className="form-group">
         <legend>Models</legend>
-        {Object.entries(config.data?.models ?? {}).map(([name, cls]) => (
-          <label key={name}><input type="checkbox" checked={models.includes(name)}
-            onChange={() => toggle(models, name, setModels)} aria-label={name} /> {name} <span className="muted">{cls}</span></label>
-        ))}
+        <div className="choice-grid">
+          {Object.entries(config.data?.models ?? {}).map(([name, cls]) => (
+            <label key={name} className="choice"><input type="checkbox" checked={models.includes(name)}
+              onChange={() => toggle(models, name, setModels)} aria-label={name} />
+              <span className="choice-text"><strong>{name}</strong><span className="choice-sub">{cls}</span></span>
+            </label>
+          ))}
+        </div>
       </fieldset>
-      <fieldset>
+      <fieldset className="form-group">
         <legend>Modes</legend>
-        {MODES.map((m) => (
-          <label key={m}><input type="checkbox" checked={modes.includes(m)}
-            onChange={() => toggle(modes, m, setModes)} aria-label={m} /> {m}</label>
-        ))}
+        <div className="choice-grid">
+          {MODES.map((m) => (
+            <label key={m} className="choice"><input type="checkbox" checked={modes.includes(m)}
+              onChange={() => toggle(modes, m, setModes)} aria-label={m} />
+              <span className="choice-text"><strong>{m}</strong><span className="choice-sub">{MODE_HINTS[m]}</span></span>
+            </label>
+          ))}
+        </div>
       </fieldset>
-      <button type="button" disabled={!ready} onClick={submit}>Start evaluation</button>
+      <div className="form-actions">
+        <button type="button" className="btn-primary" disabled={!ready} onClick={submit}>Start evaluation</button>
+        <p role="status" aria-live="polite" className="status-line">
+          {run && <>Run {run.key} (job {run.jobRunId}): {status ? `${status.state}${status.result_state ? ` · ${status.result_state}` : ""}` : "starting"}</>}
+          {gaveUp && " Status checks stopped. Reload the page to check again."}
+        </p>
+      </div>
       {submitError ? <ErrorState error={submitError} /> : null}
       {pollError ? <ErrorState error={pollError} /> : null}
-      <p role="status" aria-live="polite">
-        {run && <>Run {run.key} (job {run.jobRunId}): {status ? `${status.state}${status.result_state ? ` · ${status.result_state}` : ""}` : "starting"}</>}
-        {gaveUp && " Status checks stopped. Reload the page to check again."}
-      </p>
     </>
   );
 }
