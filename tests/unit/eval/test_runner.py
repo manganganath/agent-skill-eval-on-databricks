@@ -958,7 +958,7 @@ def test_evaluate_runs_with_bounded_judges_and_restores_the_environment(wired, m
         assert k not in os.environ
     monkeypatch.setattr(CFG.defaults, "concurrency_per_endpoint", 15)
     run_eval(CFG, request(skills=["audit-xls"]))
-    assert (wired["env"][-1][runner.MAX_WORKERS], wired["env"][-1][runner.MAX_SCORER_WORKERS]) == ("15", "4")
+    assert (wired["env"][-1][runner.MAX_WORKERS], wired["env"][-1][runner.MAX_SCORER_WORKERS]) == ("15", "2")
     monkeypatch.setenv(runner.MAX_SCORER_WORKERS, "5")  # an operator's own setting is kept
     run_eval(CFG, request(skills=["audit-xls"]))
     assert wired["env"][-1][runner.MAX_SCORER_WORKERS] == "5"
