@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import copy
 import dataclasses
+import functools
 import hashlib
 import importlib
 import json
@@ -59,7 +60,7 @@ from skillhub.bundle import SkillBundle, SkillRefError, discover_bundles, find_b
 from skillhub.config import ConfigError
 from skillhub.eval.judges import scorers_for
 from skillhub.eval.outcomes import case_outcome
-from skillhub.eval.scorers import PLANTED_FIXTURE
+from skillhub.eval.scorers import PLANTED_FIXTURE, load_planted_bugs, planted_bugs_check
 from skillhub.eval.verdict import (
     CaseScore,
     Verdict,
@@ -1469,6 +1470,21 @@ def _judge_names(ctx: _SkillCtx, case: EvalCase) -> list[str]:
     return names
 
 
+def _planted_recall(ctx: _SkillCtx, trace) -> float | None:
+    """The planted-bug recall of one trace, computed from its final answer: the scorer's own code.
+
+    None when the trace holds no spans to read, or the case is misconfigured (an unknown bug_scope id)."""
+    if getattr(trace, "data", None) is None:
+        return None
+    fb = planted_bugs_check(trace, ctx.cases, _planted_bugs(str(ctx.fixtures.root)))
+    return None if fb is None or fb.value is None else float(fb.value)
+
+
+@functools.lru_cache(maxsize=8)
+def _planted_bugs(root: str) -> list[dict]:
+    return load_planted_bugs(Path(root))
+
+
 def _planted_case(case: EvalCase, planted_on: bool) -> bool:
     return planted_on and PLANTED_FIXTURE in case.fixtures  # Workbook cases only
 
@@ -1485,7 +1501,7 @@ def _ready(ctx: _SkillCtx, trace, mode: str, planted_on: bool) -> bool:
     if mode == "trigger":
         needed = {TRIGGER}
     else:
-        needed = set(_judge_names(ctx, case)) | ({PLANTED} if _planted_case(case, planted_on) else set())
+        needed = set(_judge_names(ctx, case))  # the planted-bug recall is computed here, from the trace
     return needed <= got
 
 
@@ -1540,7 +1556,11 @@ def _score(
             assertion_votes = (
                 [_vote(got.get(judge_name("assertions", p))) for p in ctx.judges] if case.assertions else None
             )
-            planted = _recall(got.get(PLANTED)) if _planted_case(case, planted_on) else None
+            planted = None
+            if _planted_case(case, planted_on):
+                planted = _recall(got.get(PLANTED))
+                if planted is None:  # MLflow sometimes does not log it; the scorer is code, so recompute it
+                    planted = _planted_recall(ctx, t)
             score = case_score_from_assessments(
                 case_id=cid,
                 repeat=rep,

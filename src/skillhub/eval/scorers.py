@@ -44,8 +44,16 @@ def _final_text(trace) -> str:
     """The final answer, from the root `agent_run` span outputs (`final_text`, written by the agent loop)."""
     text = ""
     for span in trace.data.spans:
-        if span.name == "agent_run" and isinstance(span.outputs, dict):
-            text = str(span.outputs.get("final_text") or "")
+        if span.name != "agent_run":
+            continue
+        outputs = span.outputs
+        if isinstance(outputs, str):  # a trace read back from Unity Catalog trace storage holds a JSON string
+            try:
+                outputs = json.loads(outputs)
+            except ValueError:
+                continue
+        if isinstance(outputs, dict):
+            text = str(outputs.get("final_text") or "")
     return text
 
 

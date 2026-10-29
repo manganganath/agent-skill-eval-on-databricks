@@ -2197,3 +2197,33 @@ def test_the_worker_module_runs_as_a_command_and_its_failure_reaches_the_parent(
         ),
     ]
     assert all(e.message.startswith("evaluation worker failed: ") for e in summary.errors)
+
+
+def _planted_trace(final_text: str, case_id: int, assessments=()):
+    span = SimpleNamespace(name="agent_run", outputs=json.dumps({"final_text": final_text}))
+    info = SimpleNamespace(tags={"case_id": str(case_id)}, assessments=list(assessments), state=None)
+    return SimpleNamespace(info=info, data=SimpleNamespace(spans=[span]))
+
+
+def test_planted_recall_is_recomputed_from_the_trace_when_its_assessment_is_missing(tmp_path):
+    """MLflow sometimes does not log the code scorer's assessment; the recall is then computed from the answer."""
+    (tmp_path / "northwind").mkdir()
+    (tmp_path / "northwind" / "model_bugs.json").write_text(
+        json.dumps({"bugs": [{"id": "a", "match": ["is!e8"]}, {"id": "b", "match": ["#ref"]}]})
+    )
+    case = EvalCase(
+        id=5, prompt="audit", should_trigger=True, fixtures=["northwind/model.xlsx"], bug_scope=None
+    )
+    ctx = _ctx(tmp_path, case)
+    assert runner._planted_recall(ctx, _planted_trace("IS!E8 is a hard-coded number", 5)) == 0.5
+    assert runner._planted_recall(ctx, SimpleNamespace(info=None)) is None  # no spans to read
+
+
+def test_ready_does_not_wait_for_the_planted_bug_assessment(tmp_path):
+    case = EvalCase(id=5, prompt="audit", should_trigger=True, fixtures=["northwind/model.xlsx"])
+    ctx = _ctx(tmp_path, case)
+    ctx.judges, ctx.rubric = ["gpt"], SimpleNamespace(criteria=[])
+    names = set(runner._judge_names(ctx, case))
+    trace = _planted_trace("x", 5, [SimpleNamespace(name=n) for n in names])
+    trace.info.state = SimpleNamespace(value="OK")
+    assert runner._ready(ctx, trace, "with_skill", planted_on=True)
