@@ -162,8 +162,11 @@ jobs:
           HEAD_SHA: ${{ github.sha }}
           REQUESTED_BY: ${{ github.actor }}
         run: |
+          # CLI v1.20 refuses a positional JOB_ID next to --json, so the ID goes in the request body.
           run_job() {
-            if ! databricks jobs run-now "$JOB_ID" --timeout 30m --json "$1" -o json > "$RUNNER_TEMP/run.json" </dev/null; then
+            local body
+            body=$(jq -c --argjson job_id "$JOB_ID" '{job_id: $job_id} + .' <<<"$1")
+            if ! databricks jobs run-now --timeout 30m --json "$body" -o json > "$RUNNER_TEMP/run.json" </dev/null; then
               url=$(jq -r '.run_page_url // empty' "$RUNNER_TEMP/run.json" 2>/dev/null || true)
               echo "::error::run-now failed. ${url:-Job: $DATABRICKS_HOST/jobs/$JOB_ID}"
               exit 1
@@ -253,8 +256,11 @@ jobs:
         run: |
           [ -n "$SKILLS_ROOT" ] || { echo "::error::No evaluated skills folder to publish from."; exit 1; }
           jq -e 'type == "array" and all(.[]; (.dept | type) == "string" and (.skill | type) == "string" and (.hash | test("^sha256:[0-9a-f]{64}$")) and (.rubric_hash | test("^(none|sha256:[0-9a-f]{64})$")) and (.dataset_digest | test("^sha256:[0-9a-f]{64}$")) and ((.cells | type) == "array") and all(.cells[]; type == "string" and test("^[A-Za-z0-9_.-]+/(trigger|with_skill)$")))' <<<"$ROWS" > /dev/null || { echo "::error::The plan output is not a valid list of skills."; exit 1; }
+          # CLI v1.20 refuses a positional JOB_ID next to --json, so the ID goes in the request body.
           run_job() {
-            if ! databricks jobs run-now "$JOB_ID" --timeout 30m --json "$1" -o json > "$RUNNER_TEMP/run.json" </dev/null; then
+            local body
+            body=$(jq -c --argjson job_id "$JOB_ID" '{job_id: $job_id} + .' <<<"$1")
+            if ! databricks jobs run-now --timeout 30m --json "$body" -o json > "$RUNNER_TEMP/run.json" </dev/null; then
               url=$(jq -r '.run_page_url // empty' "$RUNNER_TEMP/run.json" 2>/dev/null || true)
               echo "::error::run-now failed. ${url:-Job: $DATABRICKS_HOST/jobs/$JOB_ID}"
               exit 1
@@ -291,8 +297,11 @@ jobs:
         run: |
           [ -n "$SKILLS_ROOT" ] || { echo "::error::No evaluated skills folder to switch from."; exit 1; }
           jq -e 'type == "array" and all(.[]; (.dept | type) == "string" and (.skill | type) == "string" and (.hash | test("^sha256:[0-9a-f]{64}$")) and (.rubric_hash | test("^(none|sha256:[0-9a-f]{64})$")) and (.dataset_digest | test("^sha256:[0-9a-f]{64}$")) and ((.cells | type) == "array") and all(.cells[]; type == "string" and test("^[A-Za-z0-9_.-]+/(trigger|with_skill)$")))' <<<"$ROWS" > /dev/null || { echo "::error::The plan output is not a valid list of skills."; exit 1; }
+          # CLI v1.20 refuses a positional JOB_ID next to --json, so the ID goes in the request body.
           run_job() {
-            if ! databricks jobs run-now "$JOB_ID" --timeout 30m --json "$1" -o json > "$RUNNER_TEMP/run.json" </dev/null; then
+            local body
+            body=$(jq -c --argjson job_id "$JOB_ID" '{job_id: $job_id} + .' <<<"$1")
+            if ! databricks jobs run-now --timeout 30m --json "$body" -o json > "$RUNNER_TEMP/run.json" </dev/null; then
               url=$(jq -r '.run_page_url // empty' "$RUNNER_TEMP/run.json" 2>/dev/null || true)
               echo "::error::run-now failed. ${url:-Job: $DATABRICKS_HOST/jobs/$JOB_ID}"
               exit 1
@@ -323,8 +332,11 @@ jobs:
           ACTOR: ${{ github.actor }}
         run: |
           jq -e 'type == "array" and all(.[]; (.dept | type) == "string" and (.skill | type) == "string")' <<<"$ROWS" > /dev/null || { echo "::error::The plan output is not a valid list of skills."; exit 1; }
+          # CLI v1.20 refuses a positional JOB_ID next to --json, so the ID goes in the request body.
           run_job() {
-            if ! databricks jobs run-now "$JOB_ID" --timeout 30m --json "$1" -o json > "$RUNNER_TEMP/run.json" </dev/null; then
+            local body
+            body=$(jq -c --argjson job_id "$JOB_ID" '{job_id: $job_id} + .' <<<"$1")
+            if ! databricks jobs run-now --timeout 30m --json "$body" -o json > "$RUNNER_TEMP/run.json" </dev/null; then
               url=$(jq -r '.run_page_url // empty' "$RUNNER_TEMP/run.json" 2>/dev/null || true)
               echo "::error::run-now failed. ${url:-Job: $DATABRICKS_HOST/jobs/$JOB_ID}"
               exit 1

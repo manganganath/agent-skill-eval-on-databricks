@@ -540,6 +540,71 @@ def test_failed_run_now_prints_a_non_empty_url(tmp_path, workflow, prefix, body)
     assert line.endswith(expected)
 
 
+# Behaves like `databricks jobs run-now` in CLI v1.20: a positional JOB_ID next to --json is an error.
+# Saves the request body to $SAVED.
+_RUN_NOW_CLI = r"""
+databricks() {
+  [ "$1 $2" = "jobs run-now" ] || return 0
+  shift 2
+  local body="" pos=""
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --json | --timeout | -o) [ "$1" = --json ] && body=$2; shift 2 ;;
+      -*) shift ;;
+      *) pos=$1; shift ;;
+    esac
+  done
+  if [ -n "$body" ] && [ -n "$pos" ]; then
+    echo "Error: when --json flag is specified, no positional arguments are allowed." >&2
+    return 1
+  fi
+  printf '%s' "$body" > "$SAVED"
+  echo '{"state": {"result_state": "SUCCESS"}}'
+}
+uv() { echo pr12_ab12cd3; }
+"""
+
+
+@pytest.mark.parametrize(
+    ("workflow", "prefix"),
+    [
+        ("skills-publish.yml", "Start skill-eval Job"),
+        ("skills-publish.yml", "Publish"),
+        ("skills-publish.yml", "Switch"),
+        ("skills-publish.yml", "Retire"),
+        ("skills-switch.yml", "Run skill-switch Job"),
+    ],
+)
+def test_run_job_sends_the_job_id_in_the_request_body(tmp_path, workflow, prefix):
+    fn = _run_job_function(_step_script(workflow, prefix))
+    script = f"""{_RUN_NOW_CLI}\n{fn}\nrun_job '{{"job_parameters": {{"k": "v"}}}}'"""
+    saved = tmp_path / "body.json"
+    env = {"PATH": "/usr/bin:/bin:/usr/local/bin:/opt/homebrew/bin", "RUNNER_TEMP": str(tmp_path)}
+    env |= {"DATABRICKS_HOST": "https://ws.example", "JOB_ID": "42", "SAVED": str(saved)}
+    proc = subprocess.run(["bash", "-e", "-c", script], env=env, capture_output=True, text=True)
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert json.loads(saved.read_text()) == {"job_id": 42, "job_parameters": {"k": "v"}}
+
+
+def test_pr_eval_sends_the_job_id_in_the_request_body(tmp_path):
+    (tmp_path / "skills").mkdir()
+    saved = tmp_path / "body.json"
+    env = {"PATH": "/usr/bin:/bin:/usr/local/bin:/opt/homebrew/bin", "RUNNER_TEMP": str(tmp_path)}
+    env |= {"SAVED": str(saved), "GITHUB_OUTPUT": str(tmp_path / "out")}
+    env |= {
+        "SKILLHUB_JOB_ID_EVAL": "42",
+        "RUN_LABEL": "pr12-ab12cd3",
+        "SKILLS": "common/a",
+        "HEAD_SHA": "f" * 40,
+    }
+    env |= {"SKILLHUB_WORKSPACE_ROOT": "/Users/ci-app/skill-hub", "SKILLHUB_CATALOG": "skill_hub"}
+    script = _RUN_NOW_CLI + _step_script("skills-pr.yml", "Start skill-eval Job")
+    proc = subprocess.run(["bash", "-e", "-c", script], cwd=tmp_path, env=env, capture_output=True, text=True)
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    body = json.loads(saved.read_text())
+    assert body["job_id"] == 42 and body["job_parameters"]["run_key"] == "pr12-ab12cd3"
+
+
 def _row_check(prefix: str) -> str:
     run = _step_script("skills-publish.yml", prefix)
     return next(ln.strip() for ln in run.splitlines() if ln.strip().startswith("jq -e 'type"))
@@ -901,15 +966,17 @@ def test_every_run_now_result_is_checked_for_success_and_uses_a_validated_job_id
             where = (name, job_name, step.get("name"))
             assert "--json" in run and "-o json" in run, where
             assert '.state.result_state == "SUCCESS"' in run, where
-            job_id_var = re.search(r'jobs run-now "\$(\w+)"', run)
+            # CLI v1.20 refuses a positional job ID next to --json: the ID goes in the request body.
+            assert not re.search(r"jobs run-now +[^-\s]", run), where
+            job_id_var = re.search(r'--argjson job_id "\$(\w+)"', run)
             assert job_id_var, where
             var = job_id_var.group(1)
             assert re.fullmatch(r"\$\{\{ vars\.SKILLHUB_JOB_ID_(EVAL|SWITCH) \}\}", step["env"][var]), where
             validation = re.search(r'\[\[ "\$' + var + r'" =~ \^\[0-9\]\+\$ \]\]', run)
             assert validation, where
-            # The check precedes the call site: the direct run-now, or the run_job helper invocation.
+            # The check precedes the call site: the body built for run-now, or the run_job helper invocation.
             helper = run.find("run_job() {")
-            call = run.index("run_job ", helper) if helper >= 0 else run.index("jobs run-now")
+            call = run.index("run_job ", helper) if helper >= 0 else job_id_var.start()
             assert validation.start() < call, where
     assert found >= 5  # skills-pr eval, eval-merge, publish, switch, retire (+ skills-switch)
 

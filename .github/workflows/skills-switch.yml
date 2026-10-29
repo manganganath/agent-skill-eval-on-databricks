@@ -61,8 +61,11 @@ jobs:
           ACTOR: ${{ github.actor }}
           DISPATCH_SHA: ${{ github.sha }}
         run: |
+          # CLI v1.20 refuses a positional JOB_ID next to --json, so the ID goes in the request body.
           run_job() {
-            if ! databricks jobs run-now "$JOB_ID" --timeout 30m --json "$1" -o json > "$RUNNER_TEMP/run.json" </dev/null; then
+            local body
+            body=$(jq -c --argjson job_id "$JOB_ID" '{job_id: $job_id} + .' <<<"$1")
+            if ! databricks jobs run-now --timeout 30m --json "$body" -o json > "$RUNNER_TEMP/run.json" </dev/null; then
               url=$(jq -r '.run_page_url // empty' "$RUNNER_TEMP/run.json" 2>/dev/null || true)
               echo "::error::run-now failed. ${url:-Job: $DATABRICKS_HOST/jobs/$JOB_ID}"
               exit 1

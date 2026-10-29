@@ -223,13 +223,14 @@ jobs:
           databricks workspace import "$root/.uploaded_at" --file "$RUNNER_TEMP/uploaded_at" --format RAW --overwrite
           [[ "$SKILLHUB_JOB_ID_EVAL" =~ ^[0-9]+$ ]] || { echo "::error::The SKILLHUB_JOB_ID_EVAL variable must be a numeric Job ID."; exit 1; }
           # The Job's pin parameter is for the Skill Hub; CI leaves it at its default.
-          params=$(jq -n \
+          # CLI v1.20 refuses a positional JOB_ID next to --json, so the ID goes in the request body.
+          params=$(jq -n --argjson job_id "$SKILLHUB_JOB_ID_EVAL" \
             --arg run_key "$RUN_LABEL" --arg skills "$SKILLS" --arg source "git:$HEAD_SHA" \
             --arg actor "$REQUESTED_BY" --arg skills_root "$root/skills" --arg fixtures_root "$fixtures_root" \
-            '{job_parameters: {run_key: $run_key, skills: $skills, models: "default",
+            '{job_id: $job_id, job_parameters: {run_key: $run_key, skills: $skills, models: "default",
               modes: "trigger,effectiveness", source: $source, trigger_source: "pr",
               requested_by: $actor, skills_root: $skills_root, fixtures_root: $fixtures_root}}')
-          databricks jobs run-now "$SKILLHUB_JOB_ID_EVAL" --timeout 30m --json "$params" -o json > "$RUNNER_TEMP/run.json"
+          databricks jobs run-now --timeout 30m --json "$params" -o json > "$RUNNER_TEMP/run.json"
           echo "Job run: $(jq -r '.run_page_url // "unknown"' "$RUNNER_TEMP/run.json")"
           jq -e '.state.result_state == "SUCCESS"' "$RUNNER_TEMP/run.json" > /dev/null
 
