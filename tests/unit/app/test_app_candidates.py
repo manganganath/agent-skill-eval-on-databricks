@@ -546,3 +546,10 @@ def test_a_run_with_neither_skills_nor_a_candidate_is_422(make_client):
     assert (
         c.post("/api/eval-runs", json={"models": ["claude-sonnet"], "modes": ["trigger"]}).status_code == 422
     )
+
+
+def test_a_skill_name_longer_than_unity_catalog_allows_is_not_a_candidate_name():
+    from backend import candidates
+
+    assert candidates.valid_skill_name("a" * 64)
+    assert not candidates.valid_skill_name("a" * 65)

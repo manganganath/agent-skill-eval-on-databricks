@@ -200,7 +200,7 @@ export default function Dashboard() {
     </table>
   );
 
-  // Health by model: error and inconclusive rates over the latest gating rows, weighted by row count.
+  // Health by model: error and inconclusive rates over each skill's live-version rows, weighted by row count.
   const healthRows = models.filter((m) => health.some((r) => r.model_profile === m)).map((m) => {
     const rows = health.filter((r) => r.model_profile === m);
     const cells = rows.reduce((n, r) => n + r.cells, 0);
@@ -272,7 +272,7 @@ export default function Dashboard() {
 
           <section className="panel" aria-labelledby="verdicts-heading">
             <h2 id="verdicts-heading">Verdicts by model</h2>
-            <p className="muted">Latest result of each skill, model and mode, without the baseline runs.</p>
+            <p className="muted">Each skill's live version, by model and mode, without the baseline runs.</p>
             {verdictRows.length === 0 ? <p className="muted">No verdicts for this selection.</p> : (
               <>
                 <Legend items={VERDICTS.map((v) => ({ name: verdictText(v), color: VERDICT_FILL[v], shape: "square" as const }))} />
@@ -435,7 +435,7 @@ export default function Dashboard() {
 
           <section className="panel" aria-labelledby="health-heading">
             <h2 id="health-heading">Health by model</h2>
-            <p className="muted">Share of the latest gating rows with an error, and share that came out inconclusive.</p>
+            <p className="muted">Each skill's live version: the share of runs with an error, and the share of results that came out inconclusive.</p>
             {healthRows.length === 0 ? <p className="muted">No results for this selection.</p> : (
               <>
                 <Legend items={[

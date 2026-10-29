@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import re
 from typing import Annotated
 
@@ -13,6 +14,7 @@ from backend.deps import get_cfg, get_sql, get_user_client, problem
 from backend.schemas import DashboardOut
 from skillhub.config import HubConfig
 
+log = logging.getLogger("skillhub.app.results")
 router = APIRouter(tags=["results"])
 _RUN_ID = re.compile(r"^[0-9a-f]{32}$")  # an MLflow run ID
 DENIED_HEADER = "X-Eval-Denied-Departments"  # the departments left out of the result
@@ -120,7 +122,12 @@ def _read_dashboard(sql: UserSql, cfg: HubConfig, response: Response) -> dict[st
         except SqlDenied:
             refused.append(d)
             continue
-        section["uplift"] = dashboard.live_uplift(section["uplift"], section.pop("journal"))
+        journal = section.pop("journal")
+        cells = dashboard.live_rows(section.pop("cells"), journal)
+        section["uplift"] = dashboard.live_rows(section["uplift"], journal)
+        section["summary"] = [dashboard.department_summary(cells)]
+        section["verdicts"] = dashboard.verdict_counts(cells)
+        section["health"] = dashboard.health(cells)
         for name, rows in section.items():
             out.setdefault(name, []).extend({**r, "dept": d} for r in rows)
     if refused and not out.get("verdicts"):
@@ -138,6 +145,9 @@ def _tokens(sql: UserSql, cfg: HubConfig) -> list[dict] | None:
     try:
         rows = sql.query(*queries.tokens_sql(sorted(profiles)))
     except (SqlDenied, SqlError):
+        return None
+    except Exception as exc:  # any other failure of this optional read leaves the rest of the page answering
+        log.warning("token usage read failed: %s", type(exc).__name__)
         return None
     return [{**r, "model_profile": profiles.get(r["endpoint_name"])} for r in rows]
 

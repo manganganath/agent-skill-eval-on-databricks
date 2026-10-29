@@ -17,12 +17,8 @@ def section(statement: str, params: dict) -> str:
         return "journal"
     if "eval_cases" in statement:
         return "routing"
-    if "COUNT(DISTINCT skill)" in statement:
-        return "summary"
-    if "GROUP BY model_profile, verdict" in statement:
-        return "verdicts"
-    if "AVG(CASE" in statement:
-        return "health"
+    if "uplift_task_quality, error_rate" in statement:
+        return "cells"
     if "pass_rate_without" in statement:
         return "uplift"
     if params.get("mode") == "trigger":
@@ -75,16 +71,29 @@ def summary_row(**kw):
     return {**base, **kw}
 
 
+def cell(skill, version, mode, verdict, **kw):
+    return {
+        "skill": skill,
+        "skill_version": version,
+        "model_profile": "claude-sonnet",
+        "mode": mode,
+        "verdict": verdict,
+        "accuracy": None,
+        "uplift_task_quality": None,
+        "error_rate": 0.0,
+        **kw,
+    }
+
+
 def common_data():
     return {
-        "summary": [
-            summary_row(
-                skills=2, accuracy_sum=1.5, accuracy_n=2, uplift_sum=0.4, uplift_n=2, error_sum=0.1, error_n=4
-            )
-        ],
-        "verdicts": [
-            {"model_profile": "claude-sonnet", "verdict": "pass", "n": 3},
-            {"model_profile": "claude-sonnet", "verdict": "inconclusive", "n": 1},
+        # sales-brief is live at v2, so its v1 row never counts; audit-xls has no live version and keeps its newest.
+        "cells": [
+            cell("sales-brief", 1, "trigger", "fail", accuracy=0.1, error_rate=0.5),
+            cell("sales-brief", 2, "trigger", "pass", accuracy=0.75),
+            cell("sales-brief", 2, "with_skill", "pass", uplift_task_quality=0.3),
+            cell("audit-xls", 1, "trigger", "pass", accuracy=0.75),
+            cell("audit-xls", 1, "with_skill", "inconclusive", uplift_task_quality=0.1, error_rate=0.2),
         ],
         "uplift": [
             {
@@ -127,9 +136,6 @@ def common_data():
                 "runs": 1,
             },
         ],
-        "health": [
-            {"model_profile": "claude-sonnet", "cells": 4, "error_rate": 0.05, "inconclusive_rate": 0.25},
-        ],
     }
 
 
@@ -153,7 +159,10 @@ def test_dashboard_returns_every_section_tagged_with_its_department(make_client)
         "health",
         "tokens",
     }
-    assert body["verdicts"][0] == {
+    assert {"dept": "common", "model_profile": "claude-sonnet", "verdict": "inconclusive", "n": 1} in body[
+        "verdicts"
+    ]
+    assert next(v for v in body["verdicts"] if v["verdict"] == "pass") == {
         "dept": "common",
         "model_profile": "claude-sonnet",
         "verdict": "pass",
@@ -163,7 +172,13 @@ def test_dashboard_returns_every_section_tagged_with_its_department(make_client)
     assert body["routing"][0]["n"] == 4 and body["routing"][0]["invoked_skill"] == "sales-brief"
     assert body["trigger_trend"][0]["accuracy"] == 0.75 and body["trigger_trend"][0]["day"] == "2026-10-01"
     assert body["pass_rate_trend"][0]["pass_rate"] == 0.8
-    assert body["health"][0]["cells"] == 4
+    assert body["health"][0] == {
+        "dept": "common",
+        "model_profile": "claude-sonnet",
+        "cells": 4,
+        "error_rate": 0.05,
+        "inconclusive_rate": 0.25,
+    }
     assert body["tokens"] == [
         {
             "model_profile": "claude-sonnet",
@@ -175,7 +190,7 @@ def test_dashboard_returns_every_section_tagged_with_its_department(make_client)
     ]
 
 
-def test_summary_counts_latest_gating_verdicts_and_means(make_client):
+def test_summary_counts_the_live_version_only(make_client):
     sql = DashSql({COMMON: common_data(), SERVING: {"tokens": []}})
     c = make_client(user_w=FakeWorkspace(), cfg=make_cfg(), sql=sql)
     summary = c.get("/api/results/dashboard").json()["summary"]
@@ -183,7 +198,7 @@ def test_summary_counts_latest_gating_verdicts_and_means(make_client):
     assert summary["verdicts"] == {"pass": 3, "warn": 0, "fail": 0, "inconclusive": 1, "advisory": 0}
     assert summary["trigger_accuracy"] == 0.75
     assert summary["uplift_task_quality"] == 0.2
-    assert summary["error_rate"] == 0.025
+    assert summary["error_rate"] == 0.05
 
 
 def test_every_statement_reads_only_the_departments_the_user_can_read_by_schema(make_client):
@@ -229,7 +244,7 @@ def test_every_department_refused_is_403(make_client):
 
 
 def test_refusal_with_no_matrix_rows_read_is_403_not_an_empty_dashboard(make_client):
-    sql = DashSql({COMMON: {"verdicts": []}}, denied={EQ, EXTERNAL})
+    sql = DashSql({COMMON: {"cells": []}}, denied={EQ, EXTERNAL})
     c = make_client(user_w=FakeWorkspace(), cfg=make_cfg(), sql=sql)
     r = c.get("/api/results/dashboard")
     assert r.status_code == 403 and r.json() == {"detail": {"reason": "evals_not_readable"}}
@@ -295,16 +310,7 @@ def test_tokens_statement_binds_endpoints_and_the_window():
 def test_dashboard_statements_bind_values_and_name_only_the_department_schema():
     cfg = make_cfg()
     statements = queries.dashboard_sql(cfg, "equity_research")
-    assert set(statements) == {
-        "summary",
-        "verdicts",
-        "uplift",
-        "journal",
-        "routing",
-        "trigger_trend",
-        "pass_rate_trend",
-        "health",
-    }
+    assert set(statements) == {"cells", "uplift", "journal", "routing", "trigger_trend", "pass_rate_trend"}
     for name, (stmt, params) in statements.items():
         assert EQ in stmt and COMMON not in stmt and EXTERNAL not in stmt, name
         assert set(params) <= {"mode"}, name
@@ -323,7 +329,7 @@ def test_summary_combines_departments_as_exact_means():
     assert got["trigger_accuracy"] == 1.5 / 4
 
 
-def test_live_uplift_keeps_the_live_version_and_falls_back_to_the_newest_tested():
+def test_live_rows_keeps_the_live_version_and_falls_back_to_the_newest_tested():
     rows = [
         {"skill": "a", "skill_version": 1, "model_profile": "m"},
         {"skill": "a", "skill_version": 2, "model_profile": "m"},
@@ -335,11 +341,11 @@ def test_live_uplift_keeps_the_live_version_and_falls_back_to_the_newest_tested(
         {"skill": "a", "action": "switched", "to_version": 2},
         {"skill": "a", "action": "switched", "to_version": 1},  # rolled back to 1
     ]
-    live = dashboard.live_uplift(rows, journal)
+    live = dashboard.live_rows(rows, journal)
     assert [(r["skill"], r["skill_version"]) for r in live] == [("a", 1), ("b", 3)]
 
 
-def test_live_uplift_drops_a_retired_skill_back_to_the_newest_version():
+def test_live_rows_drops_a_retired_skill_back_to_the_newest_version():
     rows = [
         {"skill": "a", "skill_version": 1, "model_profile": "m"},
         {"skill": "a", "skill_version": 2, "model_profile": "m"},
@@ -348,4 +354,18 @@ def test_live_uplift_drops_a_retired_skill_back_to_the_newest_version():
         {"skill": "a", "action": "switched", "to_version": 1},
         {"skill": "a", "action": "retired", "to_version": None},
     ]
-    assert [r["skill_version"] for r in dashboard.live_uplift(rows, journal)] == [2]
+    assert [r["skill_version"] for r in dashboard.live_rows(rows, journal)] == [2]
+
+
+def test_verdict_counts_and_health_count_a_null_verdict_as_inconclusive():
+    cells = [
+        cell("a", 1, "trigger", None, error_rate=None),
+        cell("a", 1, "with_skill", "pass", error_rate=0.2),
+    ]
+    assert dashboard.verdict_counts(cells) == [
+        {"model_profile": "claude-sonnet", "verdict": "inconclusive", "n": 1},
+        {"model_profile": "claude-sonnet", "verdict": "pass", "n": 1},
+    ]
+    assert dashboard.health(cells) == [
+        {"model_profile": "claude-sonnet", "cells": 2, "error_rate": 0.2, "inconclusive_rate": 0.5}
+    ]

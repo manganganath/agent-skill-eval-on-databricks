@@ -175,19 +175,11 @@ def dashboard_sql(cfg: HubConfig, dept: str) -> dict[str, tuple[str, dict[str, o
     runs = f"{ev}.eval_runs"
     return {
         # Sums and counts, so the route can combine the departments into exact means.
-        "summary": (
-            "SELECT COUNT(DISTINCT skill) AS skills, "
-            "SUM(CASE WHEN mode = 'trigger' THEN accuracy END) AS accuracy_sum, "
-            "COUNT(CASE WHEN mode = 'trigger' THEN accuracy END) AS accuracy_n, "
-            "SUM(CASE WHEN mode = 'with_skill' THEN uplift_task_quality END) AS uplift_sum, "
-            "COUNT(CASE WHEN mode = 'with_skill' THEN uplift_task_quality END) AS uplift_n, "
-            "SUM(error_rate) AS error_sum, COUNT(error_rate) AS error_n "
+        # One row per skill, version, model and mode. The route keeps each skill's live version
+        # (dashboard.live_rows), then counts the summary tiles, the verdicts and the health from those rows.
+        "cells": (
+            "SELECT skill, skill_version, model_profile, mode, verdict, accuracy, uplift_task_quality, error_rate "
             f"FROM {matrix} WHERE {_GATING}",
-            {},
-        ),
-        "verdicts": (
-            f"SELECT model_profile, verdict, COUNT(*) AS n FROM {matrix} WHERE {_GATING} "
-            "GROUP BY model_profile, verdict",
             {},
         ),
         "uplift": (
@@ -209,12 +201,6 @@ def dashboard_sql(cfg: HubConfig, dept: str) -> dict[str, tuple[str, dict[str, o
         ),
         "trigger_trend": _run_trend_sql(runs, "trigger", "accuracy"),
         "pass_rate_trend": _run_trend_sql(runs, "with_skill", "pass_rate"),
-        "health": (
-            "SELECT model_profile, COUNT(*) AS cells, AVG(error_rate) AS error_rate, "
-            "AVG(CASE WHEN verdict = 'inconclusive' THEN 1.0 ELSE 0.0 END) AS inconclusive_rate "
-            f"FROM {matrix} WHERE {_GATING} GROUP BY model_profile",
-            {},
-        ),
     }
 
 

@@ -171,15 +171,17 @@ class _Hidden:
 
     def __init__(self, inner: Any, fqns: frozenset[str], error: type[Exception]):
         self._inner = inner
-        self._fqns = fqns
-        self._tools = frozenset(f"skill_{f}" for f in fqns)
+        # Unity Catalog names are case-insensitive, so the match is too.
+        self._fqns = frozenset(f.casefold() for f in fqns)
+        self._tools = frozenset(f"skill_{f}" for f in self._fqns)
         self._error = error
 
     def list_tools(self) -> list:
-        return [t for t in self._inner.list_tools() if t.name not in self._tools]
+        return [t for t in self._inner.list_tools() if t.name.casefold() not in self._tools]
 
     def call_tool(self, name: str, arguments: dict) -> str:
-        if name in self._tools or (name == "load_skill" and arguments.get("full_name") in self._fqns):
+        full_name = str(arguments.get("full_name") or "").casefold()
+        if name.casefold() in self._tools or (name == "load_skill" and full_name in self._fqns):
             raise self._error("this skill is not available in this run")
         return self._inner.call_tool(name, arguments)
 
@@ -435,10 +437,9 @@ def _run_try(
                 tags=dict(tags or {}),
             )
             if setup is not None:
-                with (
-                    lease.exclusive()
-                ):  # staging holds the lock: a timed-out request frees it when staging ends
-                    setup(lease.check)
+                # Staging uses no MLflow state, so it does not hold the lock exclusively: a timed-out request
+                # frees the lock at once, and staging stops at its next check, before the next upload.
+                setup(lease.check)
             for m in models:
                 lease.check()
                 out.append(_run_one(run, m))
@@ -566,13 +567,12 @@ def try_candidate(
     uc = UCSkills(app_w)
 
     def setup(check: Callable[[], None]) -> None:
-        _sweep(cfg, app_w)
         try:
             uc.ensure_schema(schema)
         except PermissionDenied:  # the app has not been granted CREATE SCHEMA on the catalog yet
             raise problem(503, Reason.TRY_SETUP_REQUIRED) from None
         check()
-        stage_candidate(cfg, uc, schema, skill, dept, files)
+        stage_candidate(cfg, uc, schema, skill, dept, files, check=check)
         check()
         app_w.grants.update(
             securable_type="schema",
@@ -584,6 +584,9 @@ def try_candidate(
                 )
             ],
         )
+
+    # Dead runs' schemas, swept beside this run and outside the Try lock. Best effort, and never this run's schema.
+    threading.Thread(target=_sweep, args=(cfg, app_w), daemon=True, name="try-sweep").start()
 
     def teardown() -> None:
         try:

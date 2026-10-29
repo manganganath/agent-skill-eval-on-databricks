@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 import re
 import time
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import Literal
 
@@ -53,6 +53,8 @@ def _stage_one(
     dept: str,
     files: dict[str, bytes],
     origin: Literal["candidate", "live", "version"],
+    *,
+    check: Callable[[], None] | None = None,
 ) -> StagedSkill:
     fqn = f"{schema}.{name}"
     # evals and rubrics are never uploaded; every path is checked before anything is written
@@ -62,6 +64,8 @@ def _stage_one(
         uc.delete(fqn, etag=existing.etag)
     uc.create(schema, name)
     for rel, data in sorted(files.items()):
+        if check is not None:
+            check()
         uc.upload_file(fqn, rel, data)
     info = uc.finalize(fqn)  # agents load un-finalized content, so finalize before the eval
     return StagedSkill(
@@ -198,13 +202,20 @@ def drop_run_schema(cfg: HubConfig, w, full: str) -> None:
 
 
 def stage_candidate(
-    cfg: HubConfig, uc: UCSkills, schema: str, name: str, dept: str, files: dict[str, bytes]
+    cfg: HubConfig,
+    uc: UCSkills,
+    schema: str,
+    name: str,
+    dept: str,
+    files: dict[str, bytes],
+    *,
+    check: Callable[[], None] | None = None,
 ) -> StagedSkill:
     """Stage one candidate skill into a run schema of its own, as the eval does, for Try. The caller creates the
-    schema. evals/ is left out, as in the eval."""
+    schema. evals/ is left out, as in the eval. `check` runs before each write and may raise to stop staging."""
     if not schema.startswith(f"{cfg.catalog}.") or not RUN_SCHEMA_RE.fullmatch(schema.partition(".")[2]):
         raise StageError(f"refusing to stage into {schema!r}: not a run schema of {cfg.catalog}")
-    return _stage_one(cfg, uc, schema, name, dept, files, "candidate")
+    return _stage_one(cfg, uc, schema, name, dept, files, "candidate", check=check)
 
 
 def _marker_ms(w, folder: str, now_ms: float) -> int | None:

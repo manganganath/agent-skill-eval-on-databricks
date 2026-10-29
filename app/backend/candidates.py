@@ -52,7 +52,7 @@ from backend.deps import problem
 from skillhub.bundle import BundleError, is_ignored, parse_frontmatter
 from skillhub.config import HubConfig
 from skillhub.lint import MAX_BUNDLE_BYTES, NAME_RE
-from skillhub.naming import candidates_root, drafts_root, live_schema, make_run_key
+from skillhub.naming import SKILL_RE, candidates_root, drafts_root, live_schema, make_run_key
 from skillhub.registry.stage import CANDIDATE_MARKER, CANDIDATE_MAX_AGE_HOURS
 
 log = logging.getLogger("skillhub.app.candidates")
@@ -152,7 +152,9 @@ def owns_run_key(key: str, run_key: str) -> bool:
 
 
 def valid_skill_name(name: object) -> bool:
-    return isinstance(name, str) and bool(NAME_RE.fullmatch(name))
+    # The lint rule, and the Unity Catalog name rule (SKILL_RE, which also bounds the length), so a name that
+    # passes here never fails later in live_fqn.
+    return isinstance(name, str) and bool(NAME_RE.fullmatch(name)) and bool(SKILL_RE.fullmatch(name))
 
 
 # --- who sees candidates ----------------------------------------------------------------------------------

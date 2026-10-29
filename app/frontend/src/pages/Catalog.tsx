@@ -224,7 +224,9 @@ export default function Catalog() {
           </select>
         </div>
         <p className="result-count" aria-live="polite">
-          {showLive && settled && filtering && !noMatches ? `Showing ${visible.length} of ${total ?? all.length}` : ""}
+          {showLive && settled && filtering && !noMatches
+            ? `Showing ${visible.length + visibleCandidates.length} of ${(total ?? all.length) + (showCandidates ? candidates.length : 0)}`
+            : ""}
         </p>
       </div>
       {showLive && loading && <Loading label="Loading skills" />}

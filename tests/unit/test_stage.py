@@ -563,6 +563,21 @@ def test_stage_candidate_stages_the_upload_without_its_evals(reg):
     assert sorted(reg.uc.read_files(staged.staged_fqn)) == ["SKILL.md"]
 
 
+def test_stage_candidate_checks_before_each_upload_and_stops_when_the_check_raises(reg):
+    reg.uc.ensure_schema(TRY_SCHEMA)
+    files = {"SKILL.md": b"---\nname: new-skill\ndescription: d\n---\nbody\n", "a.md": b"a", "b.md": b"b"}
+    calls = []
+
+    def check():
+        calls.append(1)
+        if len(calls) == 2:
+            raise TimeoutError("the request timed out")
+
+    with pytest.raises(TimeoutError):
+        stage_candidate(reg.cfg, reg.uc, TRY_SCHEMA, "new-skill", "common", files, check=check)
+    assert len(reg.uc.read_files(f"{TRY_SCHEMA}.new-skill")) == 1  # one upload, then the check stopped it
+
+
 def test_stage_candidate_refuses_a_schema_that_is_not_a_run_schema(reg):
     files = {"SKILL.md": b"x"}
     with pytest.raises(StageError):

@@ -777,7 +777,7 @@ def test_candidate_try_drops_its_schema_after_the_worker_stops_on_timeout(
     assert eventually(lambda: [b.closed for b in wired["bridges"]] == [1])
 
 
-def test_a_timeout_during_staging_frees_the_lock_only_when_staging_ends(
+def test_a_timeout_during_staging_frees_the_lock_at_once_and_staging_stops(
     make_client, wired, staging, monkeypatch
 ):
     from tests.fakes import FakeUCSkills
@@ -794,12 +794,13 @@ def test_a_timeout_during_staging_frees_the_lock_only_when_staging_ends(
     app = cand_app(pr_tree())
     try:
         assert cpost(make_client, app=app).status_code == 504
-        assert not try_panel._TRY_LOCK.acquire(timeout=0.1)  # staging still holds the lock
+        # Staging does not hold the lock, so another Try can start while it winds down.
+        assert try_panel._TRY_LOCK.acquire(timeout=1)
+        try_panel._TRY_LOCK.release()
     finally:
         gate.set()
-    assert try_panel._TRY_LOCK.acquire(timeout=5)
-    try_panel._TRY_LOCK.release()
-    assert eventually(lambda: len(app.schemas.deleted) == 1)  # the schema it did create is dropped
+    # Staging stops at its next check: nothing is uploaded, and the schema it did create is dropped.
+    assert eventually(lambda: len(app.schemas.deleted) == 1)
     assert wired["agent"] == []
 
 
@@ -899,3 +900,22 @@ def test_candidate_try_sweeps_only_its_own_old_try_schemas(make_client, wired, s
     old = "skill_hub.run_try_aaaaaaaaaa_common"
     run = try_schema(app, before=[old])
     assert app.schemas.deleted == [old, run]
+
+
+def test_the_live_copy_is_hidden_whatever_the_case_of_its_name():
+    class Inner:
+        def list_tools(self):
+            return [
+                SimpleNamespace(name="skill_cat.dept_x.skill"),
+                SimpleNamespace(name="skill_cat.dept_x.other"),
+            ]
+
+        def call_tool(self, name, arguments):
+            return "ok"
+
+    hidden = try_panel._Hidden(Inner(), frozenset({"cat.dept_x.skill"}), RuntimeError)
+    assert [t.name for t in hidden.list_tools()] == ["skill_cat.dept_x.other"]
+    for name, args in (("SKILL_CAT.DEPT_X.SKILL", {}), ("load_skill", {"full_name": "CAT.Dept_X.Skill"})):
+        with pytest.raises(RuntimeError):
+            hidden.call_tool(name, args)
+    assert hidden.call_tool("load_skill", {"full_name": "cat.dept_x.other"}) == "ok"

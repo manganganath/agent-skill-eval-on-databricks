@@ -320,7 +320,11 @@ Trying a candidate or draft needs one catalog-level grant, `CREATE SCHEMA`, for 
 GRANT CREATE SCHEMA ON CATALOG <catalog> TO `<app service principal application id>`
 ```
 
-A skill under review is not in Unity Catalog, so the app stages it for each run into a private schema `run_try_<id>_<dept>`, which it creates. Only the user who runs the Try gets `USE SCHEMA` and `READ VOLUME` on that schema. The app drops the schema when the run ends, including when it times out. Before each Try, the app also drops its own `run_try_*` schemas that are more than an hour old, which are left only when a run died with its process. Until the grant is in place, a Try answers 503 `try_setup_required`.
+A skill under review is not in Unity Catalog, so the app stages it for each run into a private schema `run_try_<id>_<dept>`, which it creates. Only the user who runs the Try gets `USE SCHEMA` and `READ VOLUME` on that schema. The app drops the schema when the run ends, including when it times out. Each candidate Try also drops, beside the run, the app's own `run_try_*` schemas that are more than an hour old. They are left only when a run died with its process. Until the grant is in place, a Try answers 503 `try_setup_required`.
+
+Two things to know:
+- `CREATE SCHEMA` cannot be limited to a name pattern, so the app's principal can create any schema in the catalog. The app's own code creates and drops only `run_try_*` names. A schema with a production name that someone else pre-creates is caught by bootstrap's owner checks.
+- A Try writes its trace, including the skill text the agent loaded, to the skill's experiment and the `<d>_evals` trace tables. The department's eval readers can read those traces, as they can read the traces of a candidate's pull request eval. Don't put anything in a skill under review that the department's readers must not see.
 
 - **App.** The bundle gives the group `users` `CAN_USE` on the Skill Hub app. The app reads with each user's own Unity Catalog permissions, so a wide group is safe. Change the group with the bundle variable `app_users_group`.
 - **Dashboard tab.** It needs no grant of its own. It reads the department eval tables with each user's permissions, so a user sees only the departments they can read; a refused department is named on the page. Its token section also needs `SELECT` on `system.serving.endpoint_usage` and `system.serving.served_entities`. Without that access the section says so, and the rest of the page still works.
