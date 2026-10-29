@@ -352,6 +352,45 @@ def test_detail_reads_an_empty_expected_skill_as_none(make_client, uc):
     assert case["id"] == 2 and case["expected_skill"] is None
 
 
+def test_detail_reads_dataset_rows_in_the_table_layout_with_wrapped_expectations(make_client, uc):
+    """The MLflow dataset table stores each expectation as {"value": ...} and case_id as a float. These rows have
+    the layout of a real ds_<skill> table."""
+    rows = [
+        {
+            "inputs": '{"prompt":"Draft a polite email to my landlord.","case_id":15.0}',
+            "expectations": '{"should_trigger":{"value":false},"expected_skill":{"value":""},"reviewed":{"value":true}}',
+            "tags": '{"kind":"trigger","origin":"generated"}',
+            "last_update_time": "2026-10-29T00:43:12.351Z",
+        },
+        {
+            "inputs": '{"prompt":"Audit the cash flow sheet.","case_id":101.0}',
+            "expectations": json.dumps(
+                {
+                    "expected_skill": {"value": "audit-xls"},
+                    "reviewed": {"value": False},
+                    "should_trigger": {"value": True},
+                    "fixtures": {"value": ["northwind/model.xlsx"]},
+                    "guidelines": {"value": ["Finds the sign error at CF!E7"]},
+                    "bug_scope": {"value": ["wc_sign"]},
+                }
+            ),
+            "tags": '{"kind":"effectiveness","origin":"generated"}',
+            "last_update_time": "2026-10-29T00:43:12.351Z",
+        },
+    ]
+    c = make_client(
+        user_w=user_w(), app_w=app_w(), cfg=make_cfg(), sql=FakeUserSql(datasets={"audit-xls": rows})
+    )
+    body = c.get("/api/skills/skill_hub.common.audit-xls").json()
+    assert body["eval_access"] == "ok"
+    trigger, effect = body["evals"]["evals"]
+    assert (trigger["id"], trigger["should_trigger"], trigger["expected_skill"]) == (15, False, None)
+    assert trigger["kind"] == "trigger" and trigger["reviewed"] is True
+    assert (effect["id"], effect["kind"], effect["should_trigger"]) == (101, "effectiveness", True)
+    assert effect["expected_skill"] == "audit-xls" and effect["reviewed"] is False
+    assert effect["assertions"] == ["Finds the sign error at CF!E7"]
+
+
 def test_detail_shows_one_case_per_id_when_the_dataset_holds_an_edited_prompt(make_client, uc, caplog):
     """Dataset records are keyed by their inputs, so editing a case's prompt leaves two rows with one case_id.
     EvalFile refuses repeated ids, so the detail keeps one row per id instead of failing with a 500."""

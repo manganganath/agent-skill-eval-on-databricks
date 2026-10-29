@@ -108,10 +108,19 @@ def _json(value: object) -> dict:
     return dict(value or {})
 
 
+def _expectations(value: object) -> dict:
+    """Expectations by name. The dataset table stores each one as {"value": ...}; a bare value is read as is."""
+    return {k: v["value"] if isinstance(v, dict) and "value" in v else v for k, v in _json(value).items()}
+
+
 def _case(row: dict) -> EvalCase | None:
     """One ds_<skill> row (the eval dataset layout) as an EvalCase. A malformed row is skipped and logged."""
     try:
-        inputs, exp, tags = _json(row.get("inputs")), _json(row.get("expectations")), _json(row.get("tags"))
+        inputs, exp, tags = (
+            _json(row.get("inputs")),
+            _expectations(row.get("expectations")),
+            _json(row.get("tags")),
+        )
         return EvalCase(
             id=int(inputs["case_id"]),
             kind=tags.get("kind", "trigger"),
