@@ -1687,35 +1687,37 @@ def test_the_runner_produces_exactly_the_planned_gating_cells(wired):
         assert ran == sorted(plan) and plan
 
 
-# --- models in parallel inside one skill ---------------------------------------------------------------------
+# --- models one after another, repeats at once ----------------------------------------------------------------
 
 
-def _profile_of_active_run():
-    return MlflowClient().get_run(mlflow.active_run().info.run_id).data.params["model_profile"]
+def test_models_run_one_after_another_from_a_rotated_start_and_children_keep_plan_order(wired, monkeypatch):
+    """Skills that start together begin on different models. Child runs never overlap in one process."""
+    real = runner._run_child
+    started, active = [], []
 
+    def spy(ctx, client, profile, mode, without_scores):
+        assert not active, "two child runs at once"
+        active.append(1)
+        try:
+            if mode == "trigger":
+                started.append((ctx.skill.name, profile))
+            return real(ctx, client, profile, mode, without_scores)
+        finally:
+            active.pop()
 
-def test_models_of_a_skill_run_at_once_and_each_keeps_its_mode_order(wired, monkeypatch):
-    inner = mlflow.genai.evaluate
-    started = {"gpt": threading.Event(), "claude": threading.Event()}
-    order: dict[str, list[str]] = {"gpt": [], "claude": []}
-    overlapped = []
-
-    def evaluate(data, predict_fn, scorers):
-        profile = _profile_of_active_run()
-        mode = MlflowClient().get_run(mlflow.active_run().info.run_id).data.params["mode"]
-        if not order[profile] or order[profile][-1] != mode:
-            order[profile].append(mode)
-        started[profile].set()
-        other = "claude" if profile == "gpt" else "gpt"
-        overlapped.append(started[other].wait(timeout=10))  # sequential models would time out here
-        return inner(data=data, predict_fn=predict_fn, scorers=scorers)
-
-    monkeypatch.setattr(mlflow.genai, "evaluate", evaluate)
-    summary = run_eval(CFG, request(skills=["earnings-preview"], models=["gpt", "claude"]))
-    assert all(overlapped)
-    assert order == {p: ["trigger", "without_skill", "with_skill"] for p in ("gpt", "claude")}
-    assert [(c.model_profile, c.mode) for c in summary.children] == [
-        (p, m) for p in ("gpt", "claude") for m in ("trigger", "without_skill", "with_skill")
+    monkeypatch.setattr(runner, "_run_child", spy)
+    summary = run_eval(CFG, request(models=["gpt", "claude"]))
+    assert started == [  # audit-xls is skill 0 of the run, earnings-preview skill 1
+        ("audit-xls", "gpt"),
+        ("audit-xls", "claude"),
+        ("earnings-preview", "claude"),
+        ("earnings-preview", "gpt"),
+    ]
+    assert [(c.skill, c.model_profile, c.mode) for c in summary.children] == [
+        (s, p, m)
+        for s in ("audit-xls", "earnings-preview")
+        for p in ("gpt", "claude")
+        for m in ("trigger", "without_skill", "with_skill")
     ]
     assert not summary.errors
 
@@ -1737,32 +1739,7 @@ def test_with_skill_gets_the_without_skill_scores_of_its_own_model(wired, monkey
         assert mine["without_skill"][0] is None and mine["trigger"][0] is None
 
 
-def test_children_come_back_in_plan_order_when_a_later_model_finishes_first(wired, monkeypatch):
-    inner = mlflow.genai.evaluate
-    claude_done = threading.Event()
-
-    def evaluate(data, predict_fn, scorers):
-        if _profile_of_active_run() == "gpt":
-            claude_done.wait(timeout=10)
-        return inner(data=data, predict_fn=predict_fn, scorers=scorers)
-
-    real = runner._run_child
-
-    def child_run(ctx, client, profile, mode, without_scores):
-        got = real(ctx, client, profile, mode, without_scores)
-        if profile == "claude" and mode == "with_skill":
-            claude_done.set()
-        return got
-
-    monkeypatch.setattr(mlflow.genai, "evaluate", evaluate)
-    monkeypatch.setattr(runner, "_run_child", child_run)
-    summary = run_eval(CFG, request(skills=["earnings-preview"], models=["gpt", "claude"]))
-    assert [(c.model_profile, c.mode) for c in summary.children] == [
-        (p, m) for p in ("gpt", "claude") for m in ("trigger", "without_skill", "with_skill")
-    ]
-
-
-def test_set_experiment_runs_once_per_skill_before_its_model_threads(wired, monkeypatch):
+def test_set_experiment_runs_once_per_skill(wired, monkeypatch):
     real = mlflow.set_experiment
     calls = []
 
@@ -1778,36 +1755,94 @@ def test_set_experiment_runs_once_per_skill_before_its_model_threads(wired, monk
     assert all(main for main, _ in calls)
 
 
-def test_an_interrupt_while_models_run_closes_their_open_child_runs_and_starts_no_more(
-    wired, monkeypatch, tmp_path
-):
-    """The model threads cannot be interrupted, so the waiting thread closes their open child runs with a
-    verdict (sync can finish the run key) and they start no further mode."""
-    import _thread
+def _terminations(monkeypatch):
+    """(set by the main thread, status) per run, in call order."""
+    real = MlflowClient.set_terminated
+    seen: dict[str, list[tuple[bool, str]]] = {}
 
-    release = threading.Event()
-    threads = []
+    def spy(self, run_id, status=None, end_time=None):
+        seen.setdefault(run_id, []).append((threading.current_thread() is threading.main_thread(), status))
+        return real(self, run_id, status, end_time)
+
+    monkeypatch.setattr(MlflowClient, "set_terminated", spy)
+    return seen
+
+
+def _repeat_of(monkeypatch):
+    """The repeat each predict_fn was built for."""
+    real = runner._predict_fn
+    repeat_of = {}
+
+    def spy(ctx, client, mode, repeat, sem, skills):
+        fn = real(ctx, client, mode, repeat, sem, skills)
+        repeat_of[id(fn)] = repeat
+        return fn
+
+    monkeypatch.setattr(runner, "_predict_fn", spy)
+    return repeat_of
+
+
+def test_the_repeats_of_a_child_run_at_once_each_with_the_child_run_active(wired, monkeypatch):
+    inner = mlflow.genai.evaluate
+    together = threading.Barrier(REPEATS)
+    seen = []
 
     def evaluate(data, predict_fn, scorers):
-        if not threads:
-            _thread.interrupt_main()  # a Ctrl-C or a Job cancel reaches the waiting main thread
-        threads.append(threading.current_thread())
-        release.wait(timeout=10)
-        raise RuntimeError("the endpoint went away")
+        together.wait(timeout=10)  # breaks unless every repeat is evaluating at the same time
+        seen.append((threading.current_thread() is threading.main_thread(), mlflow.active_run().info.run_id))
+        return inner(data=data, predict_fn=predict_fn, scorers=scorers)
 
     monkeypatch.setattr(mlflow.genai, "evaluate", evaluate)
-    try:
-        with pytest.raises(KeyboardInterrupt):
-            run_eval(CFG, request(skills=["earnings-preview"]))
-        [run] = _runs(tmp_path, "earnings-preview")
-        assert run.info.status == "FAILED"
-        assert run.data.tags["verdict"] == "inconclusive" and "interrupted" in run.data.tags["error"]
-        assert wired["dropped"] == [RUN_KEY]
-    finally:
-        release.set()
-        for t in threads:
-            t.join(timeout=10)
-    assert [r.data.params["mode"] for r in _runs(tmp_path, "earnings-preview")] == ["trigger"]
+    ends = _terminations(monkeypatch)
+    summary = run_eval(CFG, request(skills=["earnings-preview"]))
+    assert not summary.errors and len(summary.children) == 3
+    for c in summary.children:
+        assert [main for main, run_id in seen if run_id == c.run_id] == [False] * REPEATS
+        mine = ends[c.run_id]
+        assert [m for m, _ in mine].count(True) == 1 and mine[-1] == (True, "FINISHED")  # set last, once
+        assert MlflowClient().get_run(c.run_id).info.status == "FINISHED"
+
+
+def test_one_failing_repeat_fails_the_child_as_before(wired, monkeypatch, tmp_path):
+    inner = mlflow.genai.evaluate
+    repeat_of = _repeat_of(monkeypatch)
+
+    def evaluate(data, predict_fn, scorers):
+        if repeat_of[id(predict_fn)] == 1:
+            raise RuntimeError("judge endpoint down")
+        return inner(data=data, predict_fn=predict_fn, scorers=scorers)
+
+    monkeypatch.setattr(mlflow.genai, "evaluate", evaluate)
+    ends = _terminations(monkeypatch)
+    summary = run_eval(CFG, request(skills=["earnings-preview"], modes=["trigger"]))
+    [c] = summary.children
+    [e] = summary.errors
+    assert (e.message, e.run_id, e.mode, c.verdict) == (
+        "RuntimeError: judge endpoint down",
+        c.run_id,
+        "trigger",
+        "inconclusive",
+    )
+    run = MlflowClient().get_run(c.run_id)
+    assert (run.info.status, run.data.tags["error"]) == ("FAILED", "RuntimeError: judge endpoint down")
+    assert ends[c.run_id][-1] == (True, "FAILED")
+
+
+def test_the_first_failing_repeat_is_the_error_whichever_fails_first(wired, monkeypatch):
+    repeat_of = _repeat_of(monkeypatch)
+    second_failed = threading.Event()
+
+    def evaluate(data, predict_fn, scorers):
+        repeat = repeat_of[id(predict_fn)]
+        if repeat == 0:
+            second_failed.wait(timeout=10)
+        else:
+            second_failed.set()
+        raise RuntimeError(f"repeat {repeat} failed")
+
+    monkeypatch.setattr(mlflow.genai, "evaluate", evaluate)
+    summary = run_eval(CFG, request(skills=["earnings-preview"], modes=["trigger"]))
+    assert [e.message for e in summary.errors] == ["RuntimeError: repeat 0 failed"]
 
 
 # --- skills in worker processes ------------------------------------------------------------------------------
@@ -1973,9 +2008,9 @@ def test_the_worker_rebuilds_the_run_skill_call_the_parent_planned(wired, worker
     planned = {}
     real_spec = runner._worker_spec
 
-    def spec_spy(cfg, req, run, *, prompts, fixtures):
+    def spec_spy(cfg, req, run, *, prompts, fixtures, index):
         planned[run.skill.name] = (cfg, req, run, prompts, fixtures)
-        return real_spec(cfg, req, run, prompts=prompts, fixtures=fixtures)
+        return real_spec(cfg, req, run, prompts=prompts, fixtures=fixtures, index=index)
 
     monkeypatch.setattr(runner, "_worker_spec", spec_spy)
     cfg = _hub_cfg(2)
@@ -2011,6 +2046,7 @@ def test_the_worker_rebuilds_the_run_skill_call_the_parent_planned(wired, worker
     assert (w_scope, w_skill) == (run.scope, run.skill)
     assert set(kw["clients"]) == {"gpt"} and kw["judges"] == runner._judges(parent_cfg, parent_req) == ["gpt"]
     assert (kw["exp_id"], kw["parent_id"], kw["version"]) == (run.exp_id, run.parent_id, 3)
+    assert kw["index"] == 1  # earnings-preview is the run's second skill: it starts on its second model
     assert kw["prompts"] == prompts and isinstance(kw["prompts"], tuple)
     assert kw["fixtures"].root == fixtures.root
     assert kw["sql"] is not None
@@ -2175,20 +2211,3 @@ def test_the_worker_module_runs_as_a_command_and_its_failure_reaches_the_parent(
         ),
     ]
     assert all(e.message.startswith("evaluation worker failed: ") for e in summary.errors)
-
-
-def test_model_threads_record_the_rubric_one_at_a_time(wired, monkeypatch):
-    """record_rubric inserts unless the hash is recorded; two at once could both insert."""
-    both = threading.Barrier(2)
-    met = []
-
-    def record(cfg, sql, dept, rubric):
-        try:
-            both.wait(timeout=2)  # passes only when the two models' calls overlap
-            met.append(True)
-        except threading.BrokenBarrierError:
-            met.append(False)
-
-    monkeypatch.setattr(runner, "record_rubric", record)
-    run_eval(CFG, request(skills=["earnings-preview"], models=["gpt", "claude"], modes=["trigger"]))
-    assert met == [False, False]

@@ -100,9 +100,9 @@ def test_skills_pr_eval_step_contract():
     wf = load_workflow("skills-pr.yml")
     run = step_named(wf, "Start skill-eval Job and wait")["run"]
     # Skills run in parallel workers, but a large PR still takes hours: the full gate, not a 30 min cut-off.
-    assert "--timeout 180m" in run and "databricks jobs run-now" in run
-    assert step_named(wf, "Start skill-eval Job and wait")["name"].endswith("(3 h)")
-    assert wf["jobs"]["skills-pr"]["timeout-minutes"] == 210  # the wait plus the steps around it
+    assert "--timeout 300m" in run and "databricks jobs run-now" in run
+    assert step_named(wf, "Start skill-eval Job and wait")["name"].endswith("(5 h)")
+    assert wf["jobs"]["skills-pr"]["timeout-minutes"] == 330  # the wait plus the steps around it
     assert "-t prod" not in run and "SKILLHUB_JOB_ID_EVAL" in run
     assert "workspace import-dir skills" in run and "--overwrite" in run
     assert 'root="/Workspace$ws_root/$SKILLHUB_CATALOG/candidates/$key"' in run
@@ -373,8 +373,8 @@ def test_eval_merge_uploads_once_and_exposes_one_candidate_path():
     step = step_named(load_workflow("skills-publish.yml"), "Start skill-eval Job and wait")
     run = step["run"]
     assert 'trigger_source: "merge"' in run and "skills_root: $skills_root" in run
-    assert "-t prod" not in run and "--timeout 180m" in run and "run_page_url" in run
-    assert step["name"].endswith("(3 h)") and evalj["timeout-minutes"] == 210
+    assert "-t prod" not in run and "--timeout 300m" in run and "run_page_url" in run
+    assert step["name"].endswith("(5 h)") and evalj["timeout-minutes"] == 330
 
 
 def test_release_workflows_security_hygiene():

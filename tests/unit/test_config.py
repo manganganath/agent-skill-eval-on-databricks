@@ -28,7 +28,7 @@ def test_example_config_loads(cfg):
     assert cfg.judges_pr == ["gpt"]
     assert cfg.generator == "claude-opus"
     assert cfg.defaults.min_reviewed_cases == 5
-    assert cfg.defaults.skill_workers == 6 and cfg.defaults.concurrency_per_endpoint == 4
+    assert cfg.defaults.skill_workers == 8 and cfg.defaults.concurrency_per_endpoint == 15
     assert cfg.workspace.host == "https://example.invalid"
     assert cfg.departments["external"].quarantine is True
     assert cfg.models["gpt"].provider == "gpt"
@@ -79,7 +79,7 @@ def test_common_department_is_required(tmp_path):
         ("repeats: 3", "repeats: 0"),
         ("max_error_rate: 0.1", "max_error_rate: 2"),
         ("pass_score: 0.7", "pass_score: 0"),
-        ("skill_workers: 6", "skill_workers: 0"),
+        ("skill_workers: 8", "skill_workers: 0"),
     ],
 )
 def test_defaults_out_of_range_are_rejected(tmp_path, old, new):

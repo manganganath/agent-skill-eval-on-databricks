@@ -93,7 +93,7 @@ jobs:
     needs: [plan]
     if: ${{ needs.plan.outputs.reeval != '' }}
     runs-on: ${{ vars.SKILLHUB_RUNNER || 'ubuntu-latest' }}
-    timeout-minutes: 210 # the eval wait (3 h) plus the steps around it
+    timeout-minutes: 330 # the eval wait (5 h) plus the steps around it
     environment: ci-eval # no reviewers; holds the Databricks secrets for the gate
     outputs:
       skills_root: ${{ steps.upload.outputs.skills_root }}
@@ -149,7 +149,7 @@ jobs:
             echo "fixtures_root=$fixtures_root"
           } >> "$GITHUB_OUTPUT"
 
-      - name: Start skill-eval Job and wait (3 h)
+      - name: Start skill-eval Job and wait (5 h)
         env:
           DATABRICKS_HOST: ${{ secrets.DATABRICKS_HOST }}
           DATABRICKS_CLIENT_ID: ${{ secrets.DATABRICKS_CLIENT_ID }}
@@ -166,7 +166,7 @@ jobs:
           run_job() {
             local body
             body=$(jq -c --argjson job_id "$JOB_ID" '{job_id: $job_id} + .' <<<"$1")
-            if ! databricks jobs run-now --timeout 180m --json "$body" -o json > "$RUNNER_TEMP/run.json" </dev/null; then
+            if ! databricks jobs run-now --timeout 300m --json "$body" -o json > "$RUNNER_TEMP/run.json" </dev/null; then
               url=$(jq -r '.run_page_url // empty' "$RUNNER_TEMP/run.json" 2>/dev/null || true)
               echo "::error::run-now failed. ${url:-Job: $DATABRICKS_HOST/jobs/$JOB_ID}"
               exit 1

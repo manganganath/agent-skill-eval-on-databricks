@@ -54,6 +54,7 @@ def _rebuild(spec: dict) -> tuple[tuple, dict]:
         "version": spec["version"],
         "fixtures": FixtureStore(spec["fixtures"]),
         "sql": runner.SqlClient(runner.workspace_client(), cfg.workspace.sql_warehouse_id),
+        "index": spec["index"],
     }
     return (cfg, req, plan, scope, skill), kwargs
 

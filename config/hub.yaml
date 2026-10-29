@@ -37,8 +37,8 @@ defaults:
   fail_rate: 0.5
   warn_rate: 0.8
   max_error_rate: 0.1
-  concurrency_per_endpoint: 4       # agent runs at once per serving endpoint, in each worker process
-  skill_workers: 6                  # skills evaluated at once, each in its own process (about 24 runs per endpoint)
+  concurrency_per_endpoint: 15      # agent runs at once per endpoint, per worker process; one skill's 3 repeats x 5 effectiveness cases run at once
+  skill_workers: 8                  # skills evaluated at once, each in its own worker process (about 290 MB each at start)
   min_reviewed_cases: 5             # per mode, needed for a gating verdict
 
 import:

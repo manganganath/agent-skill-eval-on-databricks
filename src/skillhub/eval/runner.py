@@ -14,8 +14,8 @@ The run schemas are dropped in `finally`. `sync` copies the verdict tag, so it c
   `RunSummary.errors`. A child run that fails after it started is closed with verdict `inconclusive` and an
   `error` tag, so sync completes and the gate blocks (fail closed).
 - The model sees production names only: the `ToolNameMap` rewrite covers every staged FQN of the scope.
-- Up to `defaults.skill_workers` skills run at once, each in its own worker process (`skillhub.eval.worker`);
-  within a skill the models run at once, one thread each. Results keep the plan order.
+- Up to `defaults.skill_workers` skills run at once, each in its own worker process (`skillhub.eval.worker`).
+  In a process, child runs run one at a time; the repeats of a child run run at once. Results keep plan order.
 """
 
 from __future__ import annotations
@@ -515,10 +515,6 @@ class _SkillCtx:
     parent_id: str
     version: int | None
     sql: Any
-    stop: threading.Event = field(default_factory=threading.Event)  # set on an interrupt: no new child runs
-    open_runs: set[str] = field(default_factory=set)  # child runs started and not closed yet
-    # record_rubric inserts unless the hash is recorded, so the model threads must not run it at once
-    rubric_lock: threading.Lock = field(default_factory=threading.Lock)
 
 
 @dataclass
@@ -665,8 +661,9 @@ def _run_skills(
                 version=r.version,
                 fixtures=fixtures,
                 sql=sql,
+                index=i,
             )
-            for r in runs
+            for i, r in enumerate(runs)
         ]
     return _run_in_workers(cfg, req, runs, prompts=prompts, fixtures=fixtures, w=w)
 
@@ -780,7 +777,9 @@ def _worker_env(w) -> dict[str, str]:
     return env
 
 
-def _worker_spec(cfg, req: RunRequest, run: _SkillRun, *, prompts, fixtures: FixtureStore) -> dict:
+def _worker_spec(
+    cfg, req: RunRequest, run: _SkillRun, *, prompts, fixtures: FixtureStore, index: int
+) -> dict:
     """Everything skillhub.eval.worker needs to rebuild this skill's `_run_skill` call."""
     key = f"{run.scope.dept}/{run.skill.name}"
     narrowed = dataclasses.replace(req, skills=[key], versions={key: run.version} if run.pinned else None)
@@ -800,6 +799,7 @@ def _worker_spec(cfg, req: RunRequest, run: _SkillRun, *, prompts, fixtures: Fix
         "prompts": list(prompts),
         "version": run.version,
         "fixtures": str(fixtures.root),
+        "index": index,
     }
 
 
@@ -809,13 +809,14 @@ def _read_worker_result(path: Path) -> tuple[list[ChildRunSummary], list[RunErro
 
 
 def _run_in_worker(
-    cfg, req: RunRequest, run: _SkillRun, base: Path, *, prompts, fixtures, w, procs: _Workers
+    cfg, req: RunRequest, run: _SkillRun, workdir: Path, index: int, *, prompts, fixtures, w, procs: _Workers
 ) -> tuple[list[ChildRunSummary], list[RunError]]:
     """One skill in a worker process. A worker that fails or leaves no result is one error of the skill."""
     label = f"{run.scope.dept}/{run.skill.name}"
-    spec, out = base.with_suffix(".spec.json"), base.with_suffix(".out.json")
+    spec, out = workdir / f"{index}.spec.json", workdir / f"{index}.out.json"
     try:
-        spec.write_text(json.dumps(_worker_spec(cfg, req, run, prompts=prompts, fixtures=fixtures)), "utf-8")
+        body = _worker_spec(cfg, req, run, prompts=prompts, fixtures=fixtures, index=index)
+        spec.write_text(json.dumps(body), "utf-8")
         code, tail = _launch_worker(_worker_command(spec, out), _worker_env(w), label, procs)
     except Exception as e:
         code, tail = None, _describe(e)
@@ -845,7 +846,8 @@ def _run_in_workers(
                     cfg,
                     req,
                     r,
-                    workdir / str(i),
+                    workdir,
+                    i,
                     prompts=prompts,
                     fixtures=fixtures,
                     w=w,
@@ -952,9 +954,12 @@ def _run_skill(
     version: int | None,
     fixtures: FixtureStore,
     sql,
+    index: int = 0,
 ) -> tuple[list[ChildRunSummary], list[RunError]]:
-    """Every child run of one skill. The models run at once, one thread each; each model runs its modes in
-    order (trigger, without_skill, with_skill). Children come back in plan order.
+    """Every child run of one skill: per model, its modes in order (trigger, without_skill, with_skill).
+
+    The models run one after another, starting at model `index % len(models)`: `index` is the skill's place in
+    the run, so skills that start together begin on different endpoints. Children come back in plan order.
 
     The setup every child needs (rubric, dataset rows, scorers) is done first. If it fails, no child run is
     created and the skill is recorded as an error."""
@@ -986,35 +991,20 @@ def _run_skill(
     except Exception as e:
         message = names.to_production(f"setup failed: {_describe(e)}")[:ERROR_MAX]
         return [], [RunError(scope.dept, skill.name, message)]
-    # Once per skill, before the model threads: set_experiment resets the process's trace destination (traces
-    # follow the skill experiment's trace location), and _evaluating changes os.environ and sys.stdout.
+    first = index % len(plan.models)
+    by_model: dict[str, tuple[list[ChildRunSummary], list[RunError]]] = {}
+    # Once per skill: set_experiment resets the process's trace destination (traces follow the skill
+    # experiment's trace location), and _evaluating changes os.environ and sys.stdout for every child.
     mlflow.set_experiment(experiment_id=ctx.exp_id)
     with _evaluating(cfg.defaults.concurrency_per_endpoint):
-        per_model = _run_models(ctx, [(p, clients[p]) for p in plan.models], modes)
+        for profile in plan.models[first:] + plan.models[:first]:
+            by_model[profile] = _run_model(ctx, clients[profile], profile, modes)
     children: list[ChildRunSummary] = []
     errors: list[RunError] = []
-    for ran, failed in per_model:
-        children += ran
-        errors += failed
+    for profile in plan.models:
+        children += by_model[profile][0]
+        errors += by_model[profile][1]
     return children, errors
-
-
-def _run_models(ctx: _SkillCtx, models: list[tuple[str, Any]], modes: list[str]) -> list[tuple[list, list]]:
-    """(children, errors) per model, in the given order. Each model runs in its own thread.
-
-    The threads cannot be interrupted, so on an interrupt their open child runs are closed here and they
-    start no more. Otherwise every model finishes, and a model that raised re-raises after them."""
-    pool = ThreadPoolExecutor(max_workers=len(models), thread_name_prefix=f"{ctx.skill.name}-model")
-    futures = [pool.submit(_run_model, ctx, client, profile, modes) for profile, client in models]
-    try:
-        _wait_all(futures)
-    except BaseException:
-        ctx.stop.set()
-        _close_open_runs(ctx)
-        raise
-    finally:
-        pool.shutdown(wait=False, cancel_futures=True)
-    return [f.result() for f in futures]
 
 
 def _run_model(ctx: _SkillCtx, client, profile: str, modes: list[str]) -> tuple[list, list]:
@@ -1022,8 +1012,6 @@ def _run_model(ctx: _SkillCtx, client, profile: str, modes: list[str]) -> tuple[
     errors: list[RunError] = []
     without: list[CaseScore] | None = None  # with_skill reads this model's without_skill scores
     for mode in modes:
-        if ctx.stop.is_set():
-            break
         child, scores, failed = _run_child(ctx, client, profile, mode, without)
         if mode == "without_skill":
             without = scores
@@ -1031,15 +1019,6 @@ def _run_model(ctx: _SkillCtx, client, profile: str, modes: list[str]) -> tuple[
             children.append(child)
         errors += failed
     return children, errors
-
-
-def _close_open_runs(ctx: _SkillCtx) -> None:
-    for run_id in list(ctx.open_runs):
-        try:
-            _fail_child(run_id, "interrupted before the verdict was logged")
-            MlflowClient().set_terminated(run_id, "FAILED")
-        except Exception:
-            log.warning("could not close interrupted child run %s", run_id, exc_info=True)
 
 
 def _prepare(
@@ -1202,6 +1181,31 @@ def _open_skills(ctx: _SkillCtx) -> _CachedSkills:
     return _CachedSkills(bridge, ctx.names)
 
 
+def _evaluate_repeats(run_id: str, repeats: int, evaluate: Callable[[int], object]) -> None:
+    """`evaluate(repeat)` for every repeat at once, each in its own thread with the child run active there.
+
+    Repeats of one child run may run at once; two child runs in one process may not. MLflow links a new trace
+    to the newest active run of any thread (`SOURCE_RUN`), and `mlflow.genai.evaluate` keeps one evaluation
+    context per process and sets its run ID. Two child runs active at once would take each other's traces;
+    the repeats all belong to one run in one experiment, so both lookups still find it.
+
+    Each thread's `with` ends the run as it leaves; the caller sets the final status after every repeat. The
+    first failing repeat raises, as a loop over the repeats would have."""
+
+    def one(repeat: int) -> None:
+        with mlflow.start_run(run_id=run_id):  # the active run is per thread
+            evaluate(repeat)
+
+    pool = ThreadPoolExecutor(max_workers=repeats, thread_name_prefix="repeat")
+    futures = [pool.submit(one, r) for r in range(repeats)]
+    try:
+        _wait_all(futures)
+    finally:
+        pool.shutdown(wait=False, cancel_futures=True)
+    for f in futures:
+        f.result()
+
+
 def _fail_child(run_id: str, message: str) -> VerdictResult:
     """Close a child run that failed after it started so that sync can read it and the gate blocks: verdict
     `inconclusive`, no cases, and an `error` tag (fail closed).
@@ -1233,7 +1237,7 @@ def _run_child(ctx: _SkillCtx, client, profile: str, mode: str, without_scores: 
     skills = None
     if mode != "without_skill":
         try:
-            skills = _open_skills(ctx)  # set_experiment ran in _run_skill, so it cannot leak the bridge
+            skills = _open_skills(ctx)  # after set_experiment (in _run_skill), so it cannot leak the bridge
         except Exception as e:  # before the child run exists: nothing is left for sync to read
             return None, None, [error(str(e))]
     params = {
@@ -1264,7 +1268,6 @@ def _run_child(ctx: _SkillCtx, client, profile: str, mode: str, without_scores: 
         if skills is not None:
             skills.close()
         raise
-    ctx.open_runs.add(run_id)
     status, errors, scores = "FINISHED", [], None
     try:
         mlflow.log_params(params)
@@ -1278,12 +1281,15 @@ def _run_child(ctx: _SkillCtx, client, profile: str, mode: str, without_scores: 
         if mode != "trigger" and ctx.rubric is not None and ctx.rubric.source_hash != ctx.skill.content_hash:
             mlflow.set_tag("rubric_stale", "true")  # The rubric was generated from other skill content
         sem = _endpoint_semaphore(endpoint, cfg.defaults.concurrency_per_endpoint)
-        for repeat in range(repeats):  # one evaluate per repeat, over the same data
-            mlflow.genai.evaluate(
+        _evaluate_repeats(  # one evaluate per repeat, over the same data
+            run_id,
+            repeats,
+            lambda repeat: mlflow.genai.evaluate(
                 data=md.data,
                 predict_fn=_predict_fn(ctx, client, mode, repeat, sem, skills),
                 scorers=scorers,
-            )
+            ),
+        )
         traces = read_child_traces(
             ctx.exp_id,
             run_id,
@@ -1326,12 +1332,10 @@ def _run_child(ctx: _SkillCtx, client, profile: str, mode: str, without_scores: 
                 skills.close()
             except Exception:
                 log.warning("could not close the skills bridge of run %s", run_id, exc_info=True)
-        mlflow.end_run(status)
-        ctx.open_runs.discard(run_id)
+        mlflow.end_run(status)  # after every repeat thread ended the run: this status is the final one
     if ctx.rubric is not None:  # Once per child run, after the verdict
         try:
-            with ctx.rubric_lock:
-                record_rubric(cfg, ctx.sql, ctx.scope.dept, ctx.rubric)
+            record_rubric(cfg, ctx.sql, ctx.scope.dept, ctx.rubric)
         except Exception as e:
             errors.append(error(f"record_rubric: {type(e).__name__}: {e}", run_id))
     child = ChildRunSummary(
