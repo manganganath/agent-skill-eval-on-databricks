@@ -132,9 +132,10 @@ class RowsSql:
     """Stands in for UserSql: `rows` maps a department to its eval_runs rows. It returns every row of the
     department (narrowed by `skill`), so the route itself must keep only the candidate's run keys."""
 
-    def __init__(self, rows=None, denied=()):
+    def __init__(self, rows=None, denied=(), journal=None):
         self.rows = rows or {}
         self.denied = set(denied)
+        self.journal = journal or {}  # a department to its skill_versions rows
         self.calls: list[tuple[str, dict]] = []
 
     def query(self, statement, params=None):
@@ -143,10 +144,17 @@ class RowsSql:
         for dept in self.denied:
             if f".{schema_base(dept)}_evals." in statement:
                 raise SqlDenied("no SELECT")
+        if "skill_versions" in statement:
+            return list(self.journal.get(params.get("dept"), []))
         for dept, rows in self.rows.items():
             if f"skill_hub.{schema_base(dept)}_evals.eval_runs" in statement:
                 return [r for r in rows if params.get("skill") in (None, r["skill"])]
         return []
+
+
+def switched(skill, content_hash, version=1):
+    """One skill_versions row that makes a version live, with its content hash."""
+    return {"skill": skill, "action": "switched", "to_version": version, "content_hash": content_hash}
 
 
 def names(body):
@@ -285,9 +293,62 @@ def test_the_listing_joins_the_latest_eval_rows_of_the_candidates_run_key(make_c
     new = next(x for x in c.get("/api/candidates").json() if x["name"] == "new-skill")
     assert new["verdicts"] == {"claude-sonnet": "warn", "gemini-flash": "pass"}
     assert new["content_hash"] == "sha256:c1"
-    statements = [s for s, _ in sql.calls]
-    assert statements and all(".eval_runs" in s and "requested_by" not in s for s in statements)
-    assert all(KEY in p.values() for _, p in sql.calls)  # the key is a parameter, never part of the SQL text
+    runs = [(s, p) for s, p in sql.calls if "skill_versions" not in s]  # the journal is read on its own
+    assert runs and all(".eval_runs" in s and "requested_by" not in s for s, _ in runs)
+    assert all(KEY in p.values() for _, p in runs)  # the key is a parameter, never part of the SQL text
+
+
+def test_a_pull_request_skill_already_released_with_the_same_content_is_left_out(make_client):
+    tree = FakeTree(pr_folder())
+    sql = RowsSql(
+        {"common": [row("new-skill", "claude-sonnet", "trigger", "pass")]},
+        journal={"common": [switched("new-skill", "sha256:c1")]},
+    )
+    c = make_client(user_w=reviewer(), app_w=app(tree), cfg=make_cfg(), sql=sql)
+    body = c.get("/api/candidates").json()
+    assert ("common", "new-skill") not in names(body)
+    assert sorted(names(body)) == sorted(CHANGED[1:])  # the other changed skills still list
+    # The candidate page of a released skill still answers, from the same upload.
+    assert c.get(f"/api/candidates/{KEY}/common/new-skill").status_code == 200
+
+
+def test_a_pull_request_skill_whose_content_differs_from_the_live_version_stays_listed(make_client):
+    sql = RowsSql(
+        {"common": [row("new-skill", "claude-sonnet", "trigger", "pass")]},
+        journal={"common": [switched("new-skill", "sha256:other")]},
+    )
+    c = make_client(user_w=reviewer(), app_w=app(FakeTree(pr_folder())), cfg=make_cfg(), sql=sql)
+    assert ("common", "new-skill") in names(c.get("/api/candidates").json())
+
+
+def test_a_candidate_with_no_eval_rows_or_a_retired_skill_is_not_left_out(make_client):
+    # No eval rows: the candidate's content hash is not known, so it stays. A retired skill has no live content.
+    journal = {"common": [switched("new-skill", "sha256:c1"), {"skill": "new-skill", "action": "retired"}]}
+    c = make_client(
+        user_w=reviewer(), app_w=app(FakeTree(pr_folder())), cfg=make_cfg(), sql=RowsSql(journal=journal)
+    )
+    assert ("common", "new-skill") in names(c.get("/api/candidates").json())
+    sql = RowsSql({"common": [row("new-skill", "claude-sonnet", "trigger", "pass")]}, journal=journal)
+    c = make_client(user_w=reviewer(), app_w=app(FakeTree(pr_folder())), cfg=make_cfg(), sql=sql)
+    assert ("common", "new-skill") in names(c.get("/api/candidates").json())
+
+
+def test_the_journal_is_read_once_per_visible_department(make_client):
+    sql = RowsSql()
+    make_client(user_w=reviewer(), app_w=app(FakeTree(pr_folder())), cfg=make_cfg(), sql=sql).get(
+        "/api/candidates"
+    )
+    reads = [p["dept"] for s, p in sql.calls if "skill_versions" in s]
+    assert sorted(reads) == ["common", "equity_research", "external"]
+
+
+def test_an_author_reads_the_journal_of_only_the_departments_they_see(make_client):
+    sql = RowsSql()
+    c = make_client(
+        user_w=author(), app_w=app(FakeTree(pr_folder()), readable=("common",)), cfg=make_cfg(), sql=sql
+    )
+    c.get("/api/candidates")
+    assert [p["dept"] for s, p in sql.calls if "skill_versions" in s] == ["common"]
 
 
 def test_skills_with_eval_rows_are_candidates_even_when_the_job_run_is_no_longer_listed(make_client):
