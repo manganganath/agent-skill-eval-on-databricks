@@ -2,7 +2,7 @@
 
 ## Bootstrap
 
-Prerequisites: a workspace with Unity Catalog and a SQL warehouse, serverless jobs, Python 3.12 with `uv`, and a GitHub repository.
+Prerequisites: a workspace with Unity Catalog and a SQL warehouse, serverless jobs, Python 3.11 or later with `uv`, and a GitHub repository. The Skill Hub app runs on the Databricks Apps runtime, which is Python 3.11.
 
 Follow this order.
 

@@ -877,6 +877,17 @@ def test_bootstrap_grants_the_app_principal_when_it_is_set(cfg, tmp_path, monkey
     assert any(line.startswith("granted the app principal app-9 ") for line in log)
 
 
+def test_a_person_after_the_hand_over_still_grants_the_app_use_catalog(cfg, tmp_path, monkeypatch):
+    """Only the catalog owner can grant USE CATALOG, and a person's run after the hand-over stops early."""
+    monkeypatch.setenv("SKILLHUB_APP_PRINCIPAL", "app-9")
+    cat = _Catalog(cfg, owner=CI)  # ci already owns the hub schemas
+    w, sql = _owned_w(cfg, cat), cat.sql()
+    bootstrap(cfg, w, sql, create_identities=False, skills_root=tmp_path, results=_steps())
+    stmts = _stmts(sql)
+    assert f"GRANT USE CATALOG ON CATALOG {cfg.catalog} TO `app-9`" in stmts
+    assert not any("READ VOLUME" in s and "`app-9`" in s for s in stmts)  # schema-level: the ci Job's part
+
+
 def test_bootstrap_warns_and_grants_nothing_to_an_unset_app_principal(cfg, tmp_path, monkeypatch):
     monkeypatch.delenv("SKILLHUB_APP_PRINCIPAL", raising=False)
     sql = _TraceSql()

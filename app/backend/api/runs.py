@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 import uuid
 from collections.abc import Callable
-from typing import Annotated, Literal
+from typing import Annotated, Literal, TypeVar
 
 from databricks.sdk import WorkspaceClient
 from databricks.sdk.errors import (
@@ -22,6 +22,8 @@ from backend.data import SqlDenied, UserSql
 from backend.deps import get_app_client, get_cfg, get_sql, get_user_client, problem
 from skillhub.config import HubConfig
 from skillhub.naming import make_run_key, version_fqn
+
+T = TypeVar("T")  # a TypeVar, not PEP 695 syntax: the Databricks Apps runtime is Python 3.11
 
 log = logging.getLogger("skillhub.app.runs")
 router = APIRouter(tags=["runs"])
@@ -57,7 +59,7 @@ class SwitchOut(BaseModel):
     job_run_id: int
 
 
-def _jobs_call[T](fn: Callable[[], T]) -> T:
+def _jobs_call(fn: Callable[[], T]) -> T:
     """Run one Jobs call and map SDK failures to reason codes. SDK error text is logged by type only."""
     try:
         return fn()

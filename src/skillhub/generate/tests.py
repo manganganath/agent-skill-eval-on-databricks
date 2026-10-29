@@ -9,7 +9,7 @@ from __future__ import annotations
 import json
 import re
 from collections.abc import Callable
-from typing import Literal
+from typing import Literal, TypeVar
 
 from pydantic import BaseModel, Field, ValidationError
 
@@ -18,6 +18,8 @@ from skillhub.bundle import SkillBundle
 from skillhub.evalspec import EvalCase
 from skillhub.gateway.models import ModelClient
 from skillhub.prompts import load_packaged
+
+T = TypeVar("T", bound=BaseModel)  # a TypeVar, not PEP 695 syntax: the Databricks Apps runtime is Python 3.11
 
 MAX_TRIES = 3
 
@@ -85,7 +87,7 @@ def _validate(parsed: GeneratedCases, siblings: set[str], skill_name: str) -> No
             raise ValueError("unrelated case must have should_trigger=false and no expected_skill")
 
 
-def ask_json[T: BaseModel](
+def ask_json(
     model: ModelClient,
     instructions: str,
     user_text: str,
