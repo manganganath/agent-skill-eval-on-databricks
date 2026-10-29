@@ -8,7 +8,7 @@ version = "0.1.0"
 description = "Agent skill registry and evaluation on Databricks"
 readme = "README.md"
 license = { text = "Apache-2.0" }
-requires-python = ">=3.12"
+requires-python = ">=3.11"
 dependencies = [
   "databricks-sdk>=0.157.0",
   "mlflow[databricks]>=3.17.2",
@@ -36,7 +36,7 @@ packages = ["src/skillhub"]  # ships every file under src/skillhub, including *.
 
 [tool.ruff]
 line-length = 110
-target-version = "py312"
+target-version = "py311"
 extend-exclude = ["skills"]
 
 [tool.ruff.lint]
