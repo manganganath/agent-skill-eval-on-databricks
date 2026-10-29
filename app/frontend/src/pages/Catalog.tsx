@@ -219,6 +219,32 @@ export default function Catalog() {
       </div>
       {showLive && loading && <Loading label="Loading skills" />}
       {showLive && error ? <ErrorState error={error} onRetry={reload} /> : null}
+      {nothingLoaded && (
+        <EmptyState title="No skills are live yet">
+          <p>
+            A skill appears here after its pull request merges and a reviewer approves the release.
+            If you expected to see skills, ask your team lead for access to your department.
+          </p>
+        </EmptyState>
+      )}
+      {noMatches && (
+        <EmptyState title="No skills match your filters">
+          <p>Try another search or filter, or clear them to see every skill you can use.</p>
+          <button type="button" onClick={clearFilters}>Clear filters</button>
+        </EmptyState>
+      )}
+      {!error && [...groups.entries()].map(([d, items]) => (
+        <section key={d} aria-labelledby={`dept-${d}`} className="dept-group">
+          <div className="group-head">
+            <h2 id={`dept-${d}`}>{d}</h2>
+            <span>{plural(items.length, "skill")}</span>
+          </div>
+          <ul className="cards">
+            {items.map((s) => <SkillCard key={s.fqn} s={s} showDept={false} />)}
+          </ul>
+        </section>
+      ))}
+      {/* Live skills first; skills under review after them. */}
       {showCandidates && cands.loading && <Loading label="Loading candidates" />}
       {showCandidates && cands.error ? <ErrorState error={cands.error} onRetry={cands.reload} /> : null}
       {visibleCandidates.length > 0 && (
@@ -246,31 +272,6 @@ export default function Catalog() {
           <button type="button" onClick={clearFilters}>Clear filters</button>
         </EmptyState>
       )}
-      {nothingLoaded && (
-        <EmptyState title="No skills are live yet">
-          <p>
-            A skill appears here after its pull request merges and a reviewer approves the release.
-            If you expected to see skills, ask your team lead for access to your department.
-          </p>
-        </EmptyState>
-      )}
-      {noMatches && (
-        <EmptyState title="No skills match your filters">
-          <p>Try another search or filter, or clear them to see every skill you can use.</p>
-          <button type="button" onClick={clearFilters}>Clear filters</button>
-        </EmptyState>
-      )}
-      {!error && [...groups.entries()].map(([d, items]) => (
-        <section key={d} aria-labelledby={`dept-${d}`} className="dept-group">
-          <div className="group-head">
-            <h2 id={`dept-${d}`}>{d}</h2>
-            <span>{plural(items.length, "skill")}</span>
-          </div>
-          <ul className="cards">
-            {items.map((s) => <SkillCard key={s.fqn} s={s} showDept={false} />)}
-          </ul>
-        </section>
-      ))}
     </>
   );
 }
