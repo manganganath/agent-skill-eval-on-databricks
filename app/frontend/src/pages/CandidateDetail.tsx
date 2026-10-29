@@ -1,0 +1,129 @@
+import { Link, useParams } from "react-router-dom";
+import { api, ApiError } from "../api/client";
+import type { CandidateDetail as CandidateDetailT, CandidateResult } from "../api/types";
+import { runCandidatePath } from "../candidates";
+import { CandidateBadge } from "../components/CandidateBadge";
+import { EmptyState } from "../components/EmptyState";
+import { ErrorState } from "../components/ErrorState";
+import { Loading } from "../components/Loading";
+import { EvalEmpty, FilesSection, RubricSection, SkillMdSection, TestCasesSection } from "../components/SkillParts";
+import { VerdictChip } from "../components/VerdictChip";
+import { useAsync } from "../hooks/useAsync";
+
+const FROM_PR = "From evals/ in the pull request. Change them there.";
+const SOURCES: Record<string, string> = { pr: "Pull request", manual: "Skill Hub" };
+
+// "2026-10-28 09:00 UTC". The API sends ISO times.
+export function utcMinute(iso: string | null): string {
+  if (!iso) return "unknown";
+  const d = new Date(iso);
+  return Number.isNaN(d.getTime()) ? iso : `${d.toISOString().slice(0, 16).replace("T", " ")} UTC`;
+}
+
+const percent = (x: number | null) => (x === null ? "-" : `${Math.round(x * 100)}%`);
+
+function Results({ s }: { s: CandidateDetailT }) {
+  return (
+    <section aria-labelledby="results" className="panel">
+      <h2 id="results">Eval results</h2>
+      <p className="muted">This upload's pull request eval and the Skill Hub runs started for it, newest first.</p>
+      {s.results.length > 0 ? (
+        <div className="table-scroll" role="region" aria-label="Eval results" tabIndex={0}>
+          <table>
+            <caption>Eval results</caption>
+            <thead>
+              <tr>
+                <th scope="col">Started</th><th scope="col">Run key</th><th scope="col">Started from</th>
+                <th scope="col">Model</th><th scope="col">Mode</th><th scope="col">Verdict</th>
+                <th scope="col" className="num">Pass rate</th><th scope="col" className="num">Cases</th>
+              </tr>
+            </thead>
+            <tbody>
+              {s.results.map((r: CandidateResult, i) => (
+                <tr key={r.run_id ?? `${r.run_key}-${r.model_profile}-${r.mode}-${i}`}>
+                  <td className="nowrap">{utcMinute(r.started_at)}</td>
+                  <td className="mono">{r.run_key}</td>
+                  <td>{SOURCES[r.trigger_source ?? ""] ?? r.trigger_source ?? "-"}</td>
+                  <td>{r.model_profile}</td><td>{r.mode}</td>
+                  <td><VerdictChip verdict={r.verdict ?? undefined} /></td>
+                  <td className="num">{percent(r.pass_rate)}</td><td className="num">{r.n_cases ?? "-"}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      ) : s.eval_access !== "ok" ? <EvalEmpty access={s.eval_access} ok="" /> : (
+        <EmptyState title="No eval results yet">
+          <p>Results appear when the pull request's eval finishes. You can also start an eval of this candidate.</p>
+        </EmptyState>
+      )}
+    </section>
+  );
+}
+
+export default function CandidateDetail() {
+  const { runKey = "", dept = "", skill = "" } = useParams(); // react-router has already decoded the params
+  const candidate = useAsync<CandidateDetailT>(() => api.candidate(runKey, dept, skill), [runKey, dept, skill]);
+
+  if (candidate.loading) return <Loading label="Loading candidate" />;
+  if (candidate.error) {
+    // Any 404 means "not found, or no access", whatever reason code the server gave.
+    const error = candidate.error instanceof ApiError && candidate.error.status === 404
+      ? new ApiError(404, "candidate_not_found") : candidate.error;
+    return <ErrorState error={error} onRetry={candidate.reload} />;
+  }
+  const s = candidate.data;
+  if (!s) return <EmptyState title="No candidate to show" />;
+  const { pr_number: pr, git_sha: sha, run_key: key, uploaded_at: uploaded } = s.candidate;
+  const verdicts = Object.entries(s.verdicts);
+
+  return (
+    <article>
+      <nav aria-label="Breadcrumb" className="breadcrumb">
+        <Link to="/">Catalog</Link><span aria-hidden="true">/</span><span>Under review</span>
+        <span aria-hidden="true">/</span><span>{s.dept}</span>
+      </nav>
+      <div className="candidate-banner" role="note" aria-label="Release status">
+        <p className="candidate-banner-title"><strong>Not released.</strong> Under review in PR #{pr}.</p>
+        <p className="candidate-banner-meta">
+          Commit <code title={sha}>{sha.slice(0, 7)}</code>, uploaded {utcMinute(uploaded)}. Run key <code>{key}</code>.
+          Agents cannot load this skill until the pull request merges and a reviewer approves the release.
+        </p>
+      </div>
+      <header className="panel summary">
+        <div>
+          <h1>{s.name}</h1>
+          <p className="summary-meta">
+            <span className="tag"><span className="visually-hidden">Department: </span>{s.dept}</span>
+            <CandidateBadge pr={pr} />
+          </p>
+          {s.description && <p className="summary-desc">{s.description}</p>}
+        </div>
+        <div className="summary-actions">
+          <Link className="btn btn-primary" to={runCandidatePath(key, s.dept, s.name)}>Run eval</Link>
+        </div>
+        <section className="summary-verdicts" aria-labelledby="summary-verdicts">
+          <h2 id="summary-verdicts">Latest verdicts on this candidate</h2>
+          {verdicts.length > 0 ? (
+            <ul className="chips" aria-label="Latest verdicts">
+              {verdicts.map(([model, verdict]) => (
+                <li key={model}><span className="muted">{model}</span> <VerdictChip verdict={verdict} /></li>
+              ))}
+            </ul>
+          ) : (
+            <p className="muted">
+              {s.eval_access === "denied" ? "You can't read eval results for this department"
+                : s.eval_access === "unavailable" ? "Eval results are temporarily unavailable" : "No results yet"}
+            </p>
+          )}
+        </section>
+      </header>
+
+      <SkillMdSection source={s.files["SKILL.md"]} />
+      <FilesSection files={s.files} />
+      <Results s={s} />
+      <TestCasesSection evals={s.evals} name={s.name} access="ok" note={FROM_PR} empty="This upload has no evals/evals.json" />
+      <RubricSection rubric={s.rubric} access="ok" note={FROM_PR} empty="This upload has no evals/rubric.json" />
+    </article>
+  );
+}

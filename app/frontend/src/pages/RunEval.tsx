@@ -1,8 +1,11 @@
 import { useEffect, useRef, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import { api } from "../api/client";
-import type { AppConfig, EvalRunStatus, JournalRow, Mode, SkillSummary } from "../api/types";
+import type { AppConfig, CandidateSummary, EvalRunIn, EvalRunStatus, JournalRow, Me, Mode, SkillSummary } from "../api/types";
 import { MODES } from "../api/types";
+import { canSeeCandidates, prNumberOf } from "../candidates";
 import { useAsync } from "../hooks/useAsync";
+import { CandidateBadge } from "../components/CandidateBadge";
 import { ErrorState } from "../components/ErrorState";
 import { Loading } from "../components/Loading";
 
@@ -37,10 +40,30 @@ function VersionPicker({ fqn, name, liveVersion, value, onChange }: {
   );
 }
 
+// A candidate choice: one skill of one upload. The run key names the upload's folder.
+type Choice = { run_key: string; pr_number: number; dept: string; name: string };
+const choiceId = (c: Choice) => `${c.run_key}|${c.dept}/${c.name}`;
+
+// The candidate a candidate page linked to (?candidate=<run key>&skill=<dept>/<name>), when the link is well formed.
+function linked(params: URLSearchParams): Choice | null {
+  const runKey = params.get("candidate") ?? "";
+  const [dept, name, ...rest] = (params.get("skill") ?? "").split("/");
+  const pr = prNumberOf(runKey);
+  return pr !== null && dept && name && rest.length === 0 ? { run_key: runKey, pr_number: pr, dept, name } : null;
+}
+
 export default function RunEval() {
+  const [params] = useSearchParams();
   const skills = useAsync<SkillSummary[]>(() => api.skills(), []);
   const config = useAsync<AppConfig>(() => api.config(), []);
+  // One /api/me request per page load, shared with the header. Candidates are asked for only by authors and reviewers.
+  const me = useAsync<Me>(() => api.me(), []);
+  const reviewing = canSeeCandidates(me.data);
+  const cands = useAsync<CandidateSummary[]>(
+    () => (reviewing ? api.candidates() : Promise.resolve([])), [reviewing],
+  );
   const [picked, setPicked] = useState<string[]>([]);
+  const [pickedCandidates, setPickedCandidates] = useState<string[]>([]);
   const [models, setModels] = useState<string[]>([]);
   const [modes, setModes] = useState<Mode[]>([]);
   const [pins, setPins] = useState<Record<string, number>>({});
@@ -55,9 +78,25 @@ export default function RunEval() {
   const inFlight = useRef(false);
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
 
+  // The listed candidates, plus the one a candidate page linked to if the list does not have it (an earlier upload).
+  const fromLink = reviewing ? linked(params) : null;
+  const listed: Choice[] = reviewing ? cands.data ?? [] : [];
+  const choices = fromLink && !listed.some((c) => choiceId(c) === choiceId(fromLink)) ? [fromLink, ...listed] : listed;
+  // One run evaluates live skills, or skills of one candidate upload: the Job reads one skills folder per run.
+  const candidateKey = pickedCandidates.length > 0 ? pickedCandidates[0].split("|")[0] : null;
+
+  // The linked candidate is picked once, when the candidates have loaded.
+  const preselected = useRef(false);
+  useEffect(() => {
+    if (preselected.current || !fromLink || cands.loading || !reviewing) return;
+    preselected.current = true;
+    setPickedCandidates([choiceId(fromLink)]);
+  }, [fromLink, cands.loading, reviewing]);
+
   const active = run !== null && !gaveUp && !pollError &&
     !(status && (status.result_state !== null || TERMINAL.includes(status.state)));
-  const ready = picked.length > 0 && models.length > 0 && modes.length > 0 && !submitting && !active;
+  const chosen = picked.length > 0 || pickedCandidates.length > 0;
+  const ready = chosen && models.length > 0 && modes.length > 0 && !submitting && !active;
 
   // Polls every 5 s. Stops on a result state, on unmount (the timer is cleared) or after MAX_POLLS.
   useEffect(() => {
@@ -104,10 +143,9 @@ export default function RunEval() {
     setRun(null);
     // Only pins for skills that are still picked are sent. With no pins the body has no versions field.
     const pinned = Object.fromEntries(Object.entries(pins).filter(([fqn]) => picked.includes(fqn)));
-    const body = {
-      skills: picked, models, modes,
-      ...(Object.keys(pinned).length > 0 ? { versions: pinned } : {}),
-    };
+    const body: EvalRunIn = candidateKey !== null
+      ? { candidate: { run_key: candidateKey, skills: pickedCandidates.map((id) => id.split("|")[1]) }, models, modes }
+      : { skills: picked, models, modes, ...(Object.keys(pinned).length > 0 ? { versions: pinned } : {}) };
     try {
       const out = await api.startEval(body);
       if (mounted.current) setRun({ key: out.run_key, jobRunId: out.job_run_id });
@@ -124,30 +162,76 @@ export default function RunEval() {
   if (config.error) return <ErrorState error={config.error} onRetry={config.reload} />;
 
   const liveOf = (fqn: string) => (skills.data ?? []).find((s) => s.fqn === fqn)?.live_version ?? null;
+  const liveChoices = (
+    <>
+      {(skills.data ?? []).length === 0 && (
+        <p className="muted">
+          No skills to evaluate. Only published skills that you can read are listed here. Ask your team lead for access.
+        </p>
+      )}
+      {(skills.data ?? []).length > 0 && (
+        <div className="choice-grid scroll">
+          {(skills.data ?? []).map((s) => (
+            <label key={s.fqn} className="choice"><input type="checkbox" checked={picked.includes(s.fqn)}
+              disabled={pickedCandidates.length > 0}
+              onChange={() => toggle(picked, s.fqn, setPicked)} aria-label={`${s.dept}/${s.name}`} />
+              <span className="choice-text"><strong>{s.name}</strong><span className="choice-sub">{s.dept}</span></span>
+            </label>
+          ))}
+        </div>
+      )}
+    </>
+  );
 
   return (
     <>
       <div className="page-head">
         <div>
           <h1>Run an evaluation</h1>
-          <p className="lede">Each skill runs its live version unless you pick another registered version.</p>
+          <p className="lede">
+            Each skill runs its live version unless you pick another registered version.
+            {reviewing && " A candidate runs the content of its pull request."}
+          </p>
         </div>
       </div>
       <fieldset className="form-group">
         <legend>Skills</legend>
-        {(skills.data ?? []).length === 0 && (
-          <p className="muted">
-            No skills to evaluate. Only published skills that you can read are listed here. Ask your team lead for access.
-          </p>
+        {reviewing && (
+          <p className="hint">One run evaluates live skills, or candidates from one pull request upload.</p>
         )}
-        {(skills.data ?? []).length > 0 && (
-          <div className="choice-grid scroll">
-            {(skills.data ?? []).map((s) => (
-              <label key={s.fqn} className="choice"><input type="checkbox" checked={picked.includes(s.fqn)}
-                onChange={() => toggle(picked, s.fqn, setPicked)} aria-label={`${s.dept}/${s.name}`} />
-                <span className="choice-text"><strong>{s.name}</strong><span className="choice-sub">{s.dept}</span></span>
-              </label>
-            ))}
+        {reviewing ? (
+          <div role="group" aria-labelledby="live-skills" className="choice-section">
+            <h3 id="live-skills" className="choice-section-title">Live skills</h3>
+            {liveChoices}
+          </div>
+        ) : liveChoices}
+        {reviewing && (
+          <div role="group" aria-labelledby="candidate-skills" className="choice-section">
+            <h3 id="candidate-skills" className="choice-section-title">Candidates under review</h3>
+            {cands.loading && <Loading label="Loading candidates" />}
+            {cands.error ? <ErrorState error={cands.error} onRetry={cands.reload} /> : null}
+            {!cands.loading && !cands.error && choices.length === 0 && (
+              <p className="muted">No skills are under review.</p>
+            )}
+            {choices.length > 0 && (
+              <div className="choice-grid scroll">
+                {choices.map((c) => {
+                  const id = choiceId(c);
+                  const blocked = picked.length > 0 || (candidateKey !== null && candidateKey !== c.run_key);
+                  return (
+                    <label key={id} className="choice choice-candidate">
+                      <input type="checkbox" checked={pickedCandidates.includes(id)} disabled={blocked}
+                        onChange={() => toggle(pickedCandidates, id, setPickedCandidates)}
+                        aria-label={`${c.dept}/${c.name}, candidate in PR #${c.pr_number}`} />
+                      <span className="choice-text">
+                        <strong>{c.name}</strong><span className="choice-sub">{c.dept}</span>
+                        <CandidateBadge pr={c.pr_number} />
+                      </span>
+                    </label>
+                  );
+                })}
+              </div>
+            )}
           </div>
         )}
       </fieldset>

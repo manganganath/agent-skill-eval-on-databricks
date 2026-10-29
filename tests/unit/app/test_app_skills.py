@@ -174,7 +174,12 @@ def uc(monkeypatch):
 def test_me_reports_reviewer(make_client):
     w = user_w(("skillhub-reviewers",))
     body = make_client(user_w=w, cfg=make_cfg()).get("/api/me").json()
-    assert body == {"user": "ana@example.com", "groups": ["skillhub-reviewers"], "is_reviewer": True}
+    assert body == {
+        "user": "ana@example.com",
+        "groups": ["skillhub-reviewers"],
+        "is_reviewer": True,
+        "is_author": False,
+    }
 
 
 def test_catalog_groups_by_schema_and_takes_worst_verdict(make_client, uc):

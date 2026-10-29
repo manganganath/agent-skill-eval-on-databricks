@@ -3,12 +3,15 @@ import { MemoryRouter } from "react-router-dom";
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import Catalog, { SkillCard } from "./Catalog";
 import { api, ApiError } from "../api/client";
-import type { SkillSummary } from "../api/types";
+import type { CandidateSummary, Me, SkillSummary } from "../api/types";
 
 vi.mock("../api/client", async (orig) => {
   const real = await orig<typeof import("../api/client")>();
-  return { ...real, api: { ...real.api, skills: vi.fn() } };
+  return { ...real, api: { ...real.api, skills: vi.fn(), me: vi.fn(), candidates: vi.fn() } };
 });
+
+const reader: Me = { user: "rae@example.com", groups: ["skillhub-users"], is_reviewer: false, is_author: false };
+const author: Me = { user: "ana@example.com", groups: ["skillhub-authors"], is_reviewer: false, is_author: true };
 
 const skills: SkillSummary[] = [
   { fqn: "skill_hub.common.audit-xls", dept: "common", name: "audit-xls", description: "Audit a workbook",
@@ -26,7 +29,19 @@ const more: SkillSummary[] = [
     live_version: 2, verdicts: { "claude-sonnet": "pass" }, eval_access: "ok" },
 ];
 
-beforeEach(() => vi.mocked(api.skills).mockReset());
+const candidate: CandidateSummary = {
+  run_key: "pr5_c7ecd3e_a1", pr_number: 5, git_sha: "c7ecd3e", uploaded_at: "2026-10-28T10:00:00Z",
+  dept: "common", name: "new-skill", description: "Drafts the quarterly note", content_hash: null,
+  verdicts: { "claude-sonnet": "pass" }, eval_access: "ok",
+};
+
+beforeEach(() => {
+  vi.mocked(api.skills).mockReset();
+  vi.mocked(api.me).mockReset();
+  vi.mocked(api.me).mockResolvedValue(reader);
+  vi.mocked(api.candidates).mockReset();
+  vi.mocked(api.candidates).mockResolvedValue([]);
+});
 
 function renderCatalog() {
   return render(<MemoryRouter><Catalog /></MemoryRouter>);
@@ -177,5 +192,81 @@ describe("Catalog", () => {
     expect(await screen.findByText("morning-note")).toBeTruthy();
     expect(box).toHaveValue("");
     expect(api.skills).toHaveBeenLastCalledWith(undefined);
+  });
+});
+
+describe("Catalog candidates", () => {
+  it("lists candidates for an author, badged with their pull request, in the live card shape", async () => {
+    vi.mocked(api.me).mockResolvedValue(author);
+    vi.mocked(api.skills).mockResolvedValue(skills);
+    vi.mocked(api.candidates).mockResolvedValue([candidate]);
+    renderCatalog();
+    const review = await screen.findByRole("region", { name: /under review/i });
+    const link = within(review).getByRole("link", { name: "new-skill" });
+    expect(link).toHaveAttribute("href", "/candidates/pr5_c7ecd3e_a1/common/new-skill");
+    const card = link.closest(".skill-card") as HTMLElement;
+    expect(within(card).getByText("Candidate · PR #5")).toBeTruthy();
+    expect(within(card).getByText("common")).toBeTruthy(); // the section spans departments
+    expect(within(card).getByText("Pass")).toBeTruthy();
+    expect(screen.getByText("1 under review")).toBeTruthy();
+    // The live catalog is still there.
+    expect(screen.getByRole("region", { name: "common" })).toBeTruthy();
+  });
+
+  it("does not ask for candidates for a reader, and offers no status filter", async () => {
+    vi.mocked(api.skills).mockResolvedValue(skills);
+    renderCatalog();
+    expect(await screen.findByRole("region", { name: "common" })).toBeTruthy();
+    expect(api.candidates).not.toHaveBeenCalled();
+    expect(screen.queryByRole("combobox", { name: /status/i })).toBeNull();
+    expect(screen.queryByRole("region", { name: /under review/i })).toBeNull();
+  });
+
+  it("filters by status: live skills only, or candidates only", async () => {
+    vi.mocked(api.me).mockResolvedValue(author);
+    vi.mocked(api.skills).mockResolvedValue(skills);
+    vi.mocked(api.candidates).mockResolvedValue([candidate]);
+    renderCatalog();
+    const status = await screen.findByRole("combobox", { name: /status/i });
+    await screen.findByRole("region", { name: /under review/i });
+    expect(within(status).getAllByRole("option").map((o) => o.textContent)).toEqual(["All", "Live", "Candidates"]);
+    fireEvent.change(status, { target: { value: "live" } });
+    expect(screen.queryByRole("region", { name: /under review/i })).toBeNull();
+    expect(screen.getByRole("region", { name: "common" })).toBeTruthy();
+    fireEvent.change(status, { target: { value: "candidate" } });
+    expect(screen.getByRole("region", { name: /under review/i })).toBeTruthy();
+    expect(screen.queryByRole("region", { name: "common" })).toBeNull();
+  });
+
+  it("applies the search and department filters to candidates too", async () => {
+    vi.mocked(api.me).mockResolvedValue(author);
+    vi.mocked(api.skills).mockResolvedValue(more);
+    vi.mocked(api.candidates).mockResolvedValue([candidate]);
+    renderCatalog();
+    await screen.findByRole("region", { name: /under review/i });
+    fireEvent.change(screen.getByRole("combobox", { name: /department/i }), { target: { value: "equity_research" } });
+    expect(screen.queryByRole("region", { name: /under review/i })).toBeNull();
+    fireEvent.change(screen.getByRole("combobox", { name: /department/i }), { target: { value: "" } });
+    fireEvent.change(screen.getByRole("searchbox", { name: /search skills/i }), { target: { value: "quarterly" } });
+    vi.mocked(api.skills).mockResolvedValue([]);
+    expect(await screen.findByText("new-skill")).toBeTruthy();
+    expect(screen.queryByRole("heading", { name: /no skills match/i })).toBeNull();
+  });
+
+  it("explains an empty candidates view", async () => {
+    vi.mocked(api.me).mockResolvedValue(author);
+    vi.mocked(api.skills).mockResolvedValue(skills);
+    renderCatalog();
+    fireEvent.change(await screen.findByRole("combobox", { name: /status/i }), { target: { value: "candidate" } });
+    expect(await screen.findByRole("heading", { name: /no skills are under review/i })).toBeTruthy();
+  });
+
+  it("keeps the live catalog when the candidates cannot load", async () => {
+    vi.mocked(api.me).mockResolvedValue(author);
+    vi.mocked(api.skills).mockResolvedValue(skills);
+    vi.mocked(api.candidates).mockRejectedValue(new ApiError(502, "candidate_unreadable"));
+    renderCatalog();
+    expect(await screen.findByRole("alert")).toHaveTextContent(/candidate/i);
+    expect(screen.getByRole("region", { name: "common" })).toBeTruthy();
   });
 });

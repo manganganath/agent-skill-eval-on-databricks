@@ -1,18 +1,29 @@
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import RunEval from "./RunEval";
 import { api, ApiError } from "../api/client";
+import type { CandidateSummary, Me } from "../api/types";
 
 vi.mock("../api/client", async (orig) => {
   const real = await orig<typeof import("../api/client")>();
   return {
     ...real,
-    api: { ...real.api, skills: vi.fn(), config: vi.fn(), startEval: vi.fn(), evalRun: vi.fn(), versions: vi.fn() },
+    api: {
+      ...real.api, skills: vi.fn(), config: vi.fn(), startEval: vi.fn(), evalRun: vi.fn(), versions: vi.fn(),
+      me: vi.fn(), candidates: vi.fn(),
+    },
   };
 });
 
 const FQN = "skill_hub.common.audit-xls";
+const KEY = "pr5_c7ecd3e_a1";
+const reader: Me = { user: "rae@example.com", groups: [], is_reviewer: false, is_author: false };
+const author: Me = { user: "ana@example.com", groups: ["skillhub-authors"], is_reviewer: false, is_author: true };
+const candidate: CandidateSummary = {
+  run_key: KEY, pr_number: 5, git_sha: "c7ecd3e", uploaded_at: null, dept: "common", name: "new-skill",
+  description: null, content_hash: null, verdicts: {}, eval_access: "ok",
+};
 
 function publishedRow(version: number) {
   return {
@@ -35,6 +46,9 @@ beforeEach(() => {
   vi.mocked(api.startEval).mockClear();
   vi.mocked(api.evalRun).mockClear();
   vi.mocked(api.evalRun).mockResolvedValue({ state: "RUNNING", result_state: null, run_key: "hub_0123abcd" });
+  vi.mocked(api.me).mockResolvedValue(reader);
+  vi.mocked(api.candidates).mockReset();
+  vi.mocked(api.candidates).mockResolvedValue([candidate]);
 });
 
 describe("RunEval", () => {
@@ -149,5 +163,47 @@ describe("RunEval", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+});
+
+describe("RunEval with candidates", () => {
+  it("lists an author's candidates in their own group, badged with the pull request", async () => {
+    vi.mocked(api.me).mockResolvedValue(author);
+    render(<MemoryRouter><RunEval /></MemoryRouter>);
+    const group = await screen.findByRole("group", { name: /candidates under review/i });
+    expect(within(group).getByRole("checkbox", { name: /common\/new-skill/i })).toBeTruthy();
+    expect(within(group).getByText("Candidate · PR #5")).toBeTruthy();
+    expect(within(screen.getByRole("group", { name: /live skills/i })).getByRole("checkbox", { name: /audit-xls/i })).toBeTruthy();
+  });
+
+  it("does not ask a reader for candidates", async () => {
+    render(<MemoryRouter><RunEval /></MemoryRouter>);
+    await screen.findByRole("checkbox", { name: /audit-xls/i });
+    expect(api.candidates).not.toHaveBeenCalled();
+    expect(screen.queryByRole("group", { name: /candidates under review/i })).toBeNull();
+  });
+
+  it("runs a picked candidate on its own, without live skills or versions", async () => {
+    vi.mocked(api.me).mockResolvedValue(author);
+    render(<MemoryRouter><RunEval /></MemoryRouter>);
+    fireEvent.click(await screen.findByRole("checkbox", { name: /common\/new-skill/i }));
+    // One run evaluates one candidate upload: live skills wait for another run.
+    expect(screen.getByRole("checkbox", { name: /common\/audit-xls/i })).toBeDisabled();
+    expect(screen.queryByRole("group", { name: /versions/i })).toBeNull();
+    fireEvent.click(screen.getByRole("checkbox", { name: /claude-sonnet/i }));
+    fireEvent.click(screen.getByRole("checkbox", { name: /trigger/i }));
+    fireEvent.click(screen.getByRole("button", { name: /start evaluation/i }));
+    await screen.findByText(/run hub_0123abcd/i);
+    expect(api.startEval).toHaveBeenCalledWith({
+      candidate: { run_key: KEY, skills: ["common/new-skill"] }, models: ["claude-sonnet"], modes: ["trigger"],
+    });
+  });
+
+  it("picks the candidate named in the link from its page", async () => {
+    vi.mocked(api.me).mockResolvedValue(author);
+    render(
+      <MemoryRouter initialEntries={[`/run?candidate=${KEY}&skill=common%2Fnew-skill`]}><RunEval /></MemoryRouter>,
+    );
+    expect(await screen.findByRole("checkbox", { name: /common\/new-skill/i })).toBeChecked();
   });
 });

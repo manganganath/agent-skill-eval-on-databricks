@@ -4,8 +4,8 @@ Authors write skills, reviewers mark cases as reviewed and switch versions, and 
 
 | Role | Group | Can do |
 |---|---|---|
-| Author | `skillhub-authors` | Open pull requests with skills and cases |
-| Reviewer | `skillhub-reviewers` | Mark generated cases and rubrics as reviewed, switch versions in the Skill Hub, and read the cross-department results and the dashboard |
+| Author | `skillhub-authors` | Open pull requests with skills and cases. See and evaluate candidates (skills under review) in the Skill Hub, in the departments they can read |
+| Reviewer | `skillhub-reviewers` | Mark generated cases and rubrics as reviewed, switch versions in the Skill Hub, see and evaluate the candidates of every department, and read the cross-department results and the dashboard |
 | Reader | The department group named in `config/hub.yaml` (for example `dept-equity-research`), or `skillhub-users` | Load skills through agents and browse them in the Skill Hub |
 
 The customer's administrator grants group membership.
@@ -20,8 +20,24 @@ The customer's administrator grants group membership.
 6. Add effectiveness cases (`kind: effectiveness`) only where the skill's output can be checked against fixtures. Each has a realistic `prompt`, two to four `assertions`, and `fixtures` under `fixtures/`.
 7. Add a unit test for the skill's files if it needs one. For example, `tests/unit/test_skill_<name>.py` asserts that the skill's cases load and that the rubric has 5 to 10 criteria.
 8. Run `uv run pytest tests/unit -q`.
-9. Open a pull request. Its description must say what the skill is for. The PR pipeline runs lint, the trigger tests, and the effectiveness tests for skills that have them. It then posts a matrix comment. A `fail` blocks merge. An `inconclusive` check needs a re-run. An `advisory` note means the skill lacks enough reviewed cases.
+9. Open a pull request. Its description must say what the skill is for. The PR pipeline runs lint, the trigger tests, and the effectiveness tests for skills that have them. It then posts a matrix comment. A `fail` blocks merge. An `inconclusive` check needs a re-run. An `advisory` note means the skill lacks enough reviewed cases. While the pull request is open, the skill is also a candidate in the Skill Hub; see [Evaluate a new skill](#evaluate-a-new-skill).
 10. After merge to `main`, the publish workflow re-evaluates every changed skill, and stops on `fail` or `inconclusive`. Otherwise it waits for approval in the `production` environment. After approval it starts the `skill-switch` Job, which registers a new version and switches it live. The Job publishes only content that the merge eval evaluated.
+
+## Evaluate a new skill
+
+A new or changed skill can be evaluated before it is released, in two ways. Both evaluate the content of the pull request.
+
+**In the pull request.** Open a pull request as in [Add a skill](#add-a-skill). CI uploads the pull request's skills to a candidate folder, `<workspace_root>/<catalog>/candidates/<run key>`, with a run key such as `pr12_ab12cd3_a1`. It then runs the eval and posts the matrix comment. This eval is the merge gate.
+
+**In the Skill Hub.** Authors and reviewers see the same upload as a candidate:
+
+1. In the catalog, the **Under review** section lists each skill that a pull request adds or changes, with a **Candidate · PR #N** badge. Use the **Status** filter to show live skills, candidates, or both. Only the newest upload of each pull request is listed.
+2. Open a candidate. The banner says **Not released. Under review in PR #N.** The page shows `SKILL.md` and the other files, the test cases and rubric from the pull request's `evals/` folder, and the eval results of this upload.
+3. Select **Run eval**. The run page opens with the candidate selected. Choose models and modes, then start the evaluation. One run evaluates live skills, or candidates from one upload, not both, and a candidate run cannot pin versions.
+
+A Skill Hub run gets its own run key (`<candidate run key>_h<8 hex digits>`) and `trigger_source` `manual`, so it never changes the pull request's gate. Its results appear on the candidate's page next to the pull request's own eval. To change the skill or its cases, push to the pull request; the next upload replaces the candidate.
+
+Who sees a candidate: reviewers see every department. An author sees a candidate only in a department whose live skills they can read. Everyone else sees no candidates. The nightly cleanup removes a candidate folder 7 days after its upload.
 
 ## Retire a skill
 

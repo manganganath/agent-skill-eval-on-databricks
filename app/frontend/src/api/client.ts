@@ -1,6 +1,6 @@
 import type {
-  AppConfig, CaseRow, EvalRunIn, EvalRunOut, EvalRunStatus, JournalRow, MatrixRow, Me, SkillDetail,
-  SkillSummary, SwitchOut, TryIn, TryModelResult,
+  AppConfig, CandidateDetail, CandidateSummary, CaseRow, EvalRunIn, EvalRunOut, EvalRunStatus, JournalRow,
+  MatrixRow, Me, SkillDetail, SkillSummary, SwitchOut, TryIn, TryModelResult,
 } from "./types";
 
 export class ApiError extends Error {
@@ -91,6 +91,9 @@ export const api = {
   skills: (q?: string) => request<SkillSummary[]>(`/skills${qs({ q })}`),
   skill: (fqn: string) => request<SkillDetail>(`/skills/${enc(fqn)}`),
   versions: (fqn: string) => request<JournalRow[]>(`/skills/${enc(fqn)}/versions`),
+  candidates: () => request<CandidateSummary[]>("/candidates"),
+  candidate: (runKey: string, dept: string, name: string) =>
+    request<CandidateDetail>(`/candidates/${enc(runKey)}/${enc(dept)}/${enc(name)}`),
   matrix: (params: { skill?: string; dept?: string; fqn?: string }) => requestList<MatrixRow>(`/results/matrix${qs(params)}`),
   cases: (runId: string) => requestList<CaseRow>(`/results/cases${qs({ run_id: runId })}`),
   startEval: (body: EvalRunIn) =>

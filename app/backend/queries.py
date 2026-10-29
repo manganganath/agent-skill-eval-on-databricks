@@ -114,3 +114,35 @@ def rubric_sql(cfg: HubConfig, dept: str, skill: str) -> tuple[str, dict[str, ob
         f"FROM {evals_schema(cfg, dept)}.rubrics WHERE skill = :skill ORDER BY ts DESC LIMIT 1"
     )
     return sql, {"skill": skill}
+
+
+# The eval_runs columns a candidate page shows. requested_by is never selected.
+CANDIDATE_RUN_COLUMNS = (
+    "run_key, skill, skill_version, content_hash, model_profile, mode, verdict, git_sha, trigger_source, run_id, "
+    "experiment_id, n_cases, pass_rate, error_rate, accuracy, started_at"
+)
+MAX_CANDIDATE_KEYS = 100
+
+
+def candidate_runs_sql(
+    cfg: HubConfig, dept: str, run_keys: list[str], skill: str | None = None
+) -> tuple[str, dict[str, object]]:
+    """Child-run rows of eval_runs whose run key starts with one of the candidate keys: each candidate's own PR eval
+    and the Hub runs started for it (`<key>_h<hex>`), newest first. A key such as pr5_x_a1 also starts pr5_x_a10,
+    so the caller keeps only the rows each candidate owns (backend.candidates.owns_run_key). eval_matrix keeps one
+    row per skill version, and candidates have none, so this reads the runs table. Keys are parameters."""
+    _check_dept(cfg, dept)
+    keys = list(dict.fromkeys(run_keys))
+    if not keys or len(keys) > MAX_CANDIDATE_KEYS:
+        raise ValueError(f"between 1 and {MAX_CANDIDATE_KEYS} run keys")
+    params: dict[str, object] = {f"k{i}": k for i, k in enumerate(keys)}
+    match = " OR ".join(f"startswith(run_key, :k{i})" for i in range(len(keys)))
+    where = f"parent_run_id IS NOT NULL AND ({match})"
+    if skill is not None:
+        where += " AND skill = :skill"
+        params["skill"] = skill
+    sql = (
+        f"SELECT {CANDIDATE_RUN_COLUMNS} FROM {evals_schema(cfg, dept)}.eval_runs WHERE {where} "
+        f"ORDER BY started_at DESC, run_id LIMIT {_FETCH}"
+    )
+    return sql, params

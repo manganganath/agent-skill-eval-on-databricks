@@ -19,5 +19,8 @@ def me(
 ) -> MeOut:
     profile = authz.fetch_me(user_w)
     return MeOut(
-        user=profile.user, groups=list(profile.groups), is_reviewer=cfg.roles.reviewers in profile.groups
+        user=profile.user,
+        groups=list(profile.groups),
+        is_reviewer=cfg.roles.reviewers in profile.groups,
+        is_author=cfg.roles.authors in profile.groups,
     )

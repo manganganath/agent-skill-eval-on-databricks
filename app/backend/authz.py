@@ -76,6 +76,10 @@ class Reason(StrEnum):
     TRY_BUSY = "try_busy"
     TRY_TIMEOUT = "try_timeout"
     PROMPT_TOO_LONG = "prompt_too_long"
+    NOT_AUTHOR = "not_author"
+    CANDIDATE_NOT_FOUND = "candidate_not_found"
+    CANDIDATE_UNREADABLE = "candidate_unreadable"
+    MIXED_SOURCES = "mixed_sources"
 
 
 class Forbidden(Exception):

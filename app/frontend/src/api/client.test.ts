@@ -51,7 +51,7 @@ describe("api client", () => {
     const fetchMe = vi.spyOn(globalThis, "fetch")
       .mockResolvedValueOnce(new Response("oops", { status: 502 }))
       .mockImplementation(async () =>
-        new Response(JSON.stringify({ user: "ana@example.com", groups: [], is_reviewer: false }), { status: 200 }));
+        new Response(JSON.stringify({ user: "ana@example.com", groups: [], is_reviewer: false, is_author: false }), { status: 200 }));
     const [a, b] = await Promise.allSettled([fresh.me(), fresh.me()]);
     expect(a.status).toBe("rejected");
     expect(b.status).toBe("rejected");

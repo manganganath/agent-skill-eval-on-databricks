@@ -16,6 +16,7 @@ DEFAULT_STATIC = Path(__file__).resolve().parent / "static"
 def _include_routers(app: FastAPI) -> None:
     # One include_router line per API module.
     # This runs before the SPA catch-all is registered, so API routes always win.
+    from backend.api import candidates as candidates_api
     from backend.api import config as config_api
     from backend.api import me as me_api
     from backend.api import results as results_api
@@ -26,6 +27,7 @@ def _include_routers(app: FastAPI) -> None:
     app.include_router(config_api.router, prefix="/api")
     app.include_router(me_api.router, prefix="/api")
     app.include_router(skills_api.router, prefix="/api")
+    app.include_router(candidates_api.router, prefix="/api")
     app.include_router(results_api.router, prefix="/api")
     app.include_router(runs_api.router, prefix="/api")
     app.include_router(try_api.router, prefix="/api")

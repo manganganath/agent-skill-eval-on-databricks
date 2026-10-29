@@ -1,11 +1,11 @@
 import { Link, useParams } from "react-router-dom";
 import { api, ApiError } from "../api/client";
-import type { EvalAccess, JournalRow, Me, SkillDetail as SkillDetailT } from "../api/types";
+import type { JournalRow, Me, SkillDetail as SkillDetailT } from "../api/types";
 import { useAsync } from "../hooks/useAsync";
 import { EmptyState } from "../components/EmptyState";
 import { ErrorState } from "../components/ErrorState";
 import { Loading } from "../components/Loading";
-import { Markdown } from "../components/Markdown";
+import { FilesSection, RubricSection, SkillMdSection, TestCasesSection } from "../components/SkillParts";
 import { TryPanel } from "../components/TryPanel";
 import { VerdictChip } from "../components/VerdictChip";
 
@@ -21,11 +21,7 @@ export function liveVersion(rows: JournalRow[]): number | null {
   return live;
 }
 
-function EvalEmpty({ access, ok }: { access: EvalAccess; ok: string }) {
-  if (access === "denied") return <EmptyState title="You can't read eval results for this department" />;
-  if (access === "unavailable") return <EmptyState title="Eval results are temporarily unavailable" />;
-  return <EmptyState title={ok} />;
-}
+const READ_ONLY = "Read only. Changes are reviewed in pull requests.";
 
 function VersionHistory({ fqn }: { fqn: string }) {
   const versions = useAsync(() => api.versions(fqn), [fqn]);
@@ -106,9 +102,6 @@ export default function SkillDetail() {
   const s = skill.data;
   if (!s) return <EmptyState title="No skill to show" />;
 
-  const skillMd = s.files["SKILL.md"];
-  const paths = Object.keys(s.files).sort();
-
   return (
     <article>
       <nav aria-label="Breadcrumb" className="breadcrumb">
@@ -135,28 +128,8 @@ export default function SkillDetail() {
         <SummaryVerdicts skill={s} />
       </header>
 
-      <section aria-labelledby="skill-md" className="panel">
-        <h2 id="skill-md">Skill</h2>
-        <p className="muted">SKILL.md: the instructions an agent follows when it uses this skill.</p>
-        {skillMd ? <div className="prose"><Markdown source={skillMd} /></div> : <EmptyState title="No SKILL.md found" />}
-      </section>
-
-      <section aria-labelledby="files" className="panel">
-        <h2 id="files">Files</h2>
-        <p className="muted">Open a file to read it.</p>
-        <ul aria-label="Files" className="file-list">
-          {paths.map((p) => (
-            <li key={p}>
-              {p === "SKILL.md" ? <>{p} <span className="muted">shown above</span></> : (
-                <details>
-                  <summary>{p}</summary>
-                  <pre>{s.files[p]}</pre>
-                </details>
-              )}
-            </li>
-          ))}
-        </ul>
-      </section>
+      <SkillMdSection source={s.files["SKILL.md"]} />
+      <FilesSection files={s.files} />
 
       <div className="panel">
         <TryPanel fqn={s.fqn} evalAccess={s.eval_access} />
@@ -164,51 +137,8 @@ export default function SkillDetail() {
 
       <VersionHistory fqn={fqn} />
 
-      <section aria-labelledby="tests" className="panel">
-        <h2 id="tests">Test cases</h2>
-        <p className="muted">Read only. Changes are reviewed in pull requests.</p>
-        {s.evals && s.evals.evals.length > 0 ? (
-          <div className="table-scroll" role="region" aria-label="Test cases" tabIndex={0}>
-            <table>
-              <caption>Test cases</caption>
-              <thead>
-                <tr><th scope="col" className="num">ID</th><th scope="col">Kind</th><th scope="col">Prompt</th><th scope="col">Expected skill</th></tr>
-              </thead>
-              <tbody>
-                {s.evals.evals.map((c) => (
-                  <tr key={c.id}>
-                    <td className="num">{c.id}</td><td>{c.kind}</td><td className="wide">{c.prompt}</td>
-                    <td>{c.expected_skill ?? (c.should_trigger ? s.name : "none")}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        ) : <EvalEmpty access={s.eval_access} ok="No test cases published" />}
-      </section>
-
-      <section aria-labelledby="rubric" className="panel">
-        <h2 id="rubric">Rubric</h2>
-        <p className="muted">Read only. Changes are reviewed in pull requests.</p>
-        {s.rubric ? (
-          <>
-            <p>{s.rubric.reviewed ? "Reviewed by a person." : "Not yet reviewed."}</p>
-            <div className="table-scroll" role="region" aria-label="Rubric criteria" tabIndex={0}>
-              <table>
-                <caption>Rubric criteria</caption>
-                <thead>
-                  <tr><th scope="col">ID</th><th scope="col">Type</th><th scope="col" className="num">Weight</th><th scope="col">Criterion</th></tr>
-                </thead>
-                <tbody>
-                  {s.rubric.criteria.map((c) => (
-                    <tr key={c.id}><td className="mono">{c.id}</td><td>{c.type}</td><td className="num">{c.weight}</td><td className="wide">{c.text}</td></tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </>
-        ) : <EvalEmpty access={s.eval_access} ok="No rubric published" />}
-      </section>
+      <TestCasesSection evals={s.evals} name={s.name} access={s.eval_access} note={READ_ONLY} empty="No test cases published" />
+      <RubricSection rubric={s.rubric} access={s.eval_access} note={READ_ONLY} empty="No rubric published" />
     </article>
   );
 }

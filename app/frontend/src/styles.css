@@ -20,6 +20,10 @@
   --fail: #a0201a; --fail-tint: #f8ccc8; --fail-wash: #fce5e3;
   --info: #4a5566; --info-tint: #dde3ea; --info-wash: #edf0f4;
 
+  /* Under review: content in a pull request, not released. Not a verdict colour and not the link blue, so a
+     candidate never reads as "warn" or as an action. Ink on tint is 6.2:1. A dashed edge marks unreleased content. */
+  --review: #5b3fa8; --review-tint: #f1edfb; --review-line: #b5a3e3; --review-rule: #d6cbf2;
+
   --radius-card: 10px;
   --radius-control: 8px;
   --radius-tile: 4px;
@@ -102,6 +106,7 @@ main:focus { outline: none; }
   font-size: 0.75rem; font-weight: 600; white-space: nowrap; border: 1px solid transparent;
 }
 .badge-accent { background: var(--accent-soft); color: var(--accent-hover); border-color: #c9d9f6; }
+.badge-review { background: var(--review-tint); color: var(--review); border-color: var(--review-rule); }
 
 /* Page heads, panels and notices */
 .page-head {
@@ -187,6 +192,12 @@ fieldset { border: 0; margin: 0; padding: 0; min-width: 0; }
 .try-models { margin: 1rem 0 1.25rem; }
 .try-models > legend { padding: 0; margin-bottom: 0.4rem; }
 .version-list { display: grid; gap: 0.6rem; }
+.choice-section + .choice-section { margin-top: 1.1rem; }
+.choice-section-title { font-size: 0.875rem; font-weight: 600; color: var(--slate); margin: 0.35rem 0 0.5rem; }
+.choice-candidate { border-style: dashed; border-color: var(--review-line); }
+.choice-candidate .badge-review { justify-self: start; margin-top: 0.2rem; }
+.choice-candidate:has(input:checked) { border-style: solid; border-color: var(--review); background: var(--review-tint); }
+.form-group > .hint { margin-bottom: 0.75rem; }
 .version-list select { min-width: 10rem; }
 .version-list .field-label { min-width: 15rem; }
 .form-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 0.75rem 1rem; margin-top: 0.5rem; }
@@ -270,6 +281,12 @@ fieldset { border: 0; margin: 0; padding: 0; min-width: 0; }
   display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; overflow: hidden;
 }
 .card-note { margin: 0; font-size: 0.8125rem; color: var(--slate); }
+.count-pill-review { background: var(--review-tint); color: var(--review); }
+.group-note { margin: -0.4rem 0 0.75rem; font-size: 0.875rem; color: var(--slate); max-width: 70ch; }
+.review-group .group-head h2 { color: var(--review); }
+.skill-card-candidate { border: 1px dashed var(--review-line); }
+.skill-card-candidate:hover { border-color: var(--review); }
+.skill-card-candidate .badge-review { flex: none; }
 .scorecard {
   list-style: none; margin: auto 0 0; padding: 0.6rem 0 0; border-top: 1px solid var(--line);
   display: grid; gap: 0.35rem;
@@ -277,6 +294,17 @@ fieldset { border: 0; margin: 0; padding: 0; min-width: 0; }
 .scorecard li { display: flex; align-items: center; justify-content: space-between; gap: 0.75rem; min-width: 0; }
 .scorecard .model { font-size: 0.8125rem; color: var(--slate); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .scorecard li.muted { font-size: 0.8125rem; }
+
+/* Candidate detail: the banner says first what this page is not. */
+.candidate-banner {
+  border: 1px dashed var(--review-line); border-left: 4px solid var(--review); background: var(--review-tint);
+  border-radius: var(--radius-control); padding: 0.85rem 1.1rem; margin-bottom: 1.25rem;
+}
+.candidate-banner p { margin: 0; max-width: 80ch; }
+.candidate-banner-title { font-size: 1rem; color: var(--ink); }
+.candidate-banner-title strong { color: var(--review); }
+.candidate-banner-meta { margin-top: 0.3rem !important; font-size: 0.875rem; color: var(--slate); }
+.candidate-banner code { color: var(--ink); }
 
 /* Skill detail */
 .breadcrumb { display: flex; flex-wrap: wrap; gap: 0.4rem; font-size: 0.875rem; color: var(--slate); margin-bottom: 0.75rem; }

@@ -31,6 +31,12 @@ const MESSAGES: Record<string, string> = {
   prompt_too_long: "The test input is too long. Keep it under 4000 characters.",
   too_many_models: "Pick at most 3 models.",
   unknown_model: "One of the selected models is not configured.",
+  not_author: "Only skill authors and reviewers can do this.",
+  candidate_not_found:
+    "This candidate was not found, or you do not have access to it. Candidate uploads are removed 7 days after upload.",
+  candidate_unreadable: "Skill Hub could not read the candidate skills. Try again later.",
+  mixed_sources:
+    "Evaluate live skills and candidates in separate runs, with candidates from one upload only. A candidate run cannot pin versions.",
 };
 
 export function ErrorState({ error, onRetry }: { error: unknown; onRetry?: () => void }) {

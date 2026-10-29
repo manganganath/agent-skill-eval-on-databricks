@@ -136,6 +136,7 @@ Naming rules:
 | See results | `SELECT` on `<d>_evals`, with the user's token, through the SQL warehouse |
 | Try a skill | The agent loop runs with the user's token, so only the user's own skills are offered. The app service principal writes the traces to the skill's experiment. Each trace has a `hub_try` root span and the tags `trigger_source=hub-try`, `mode` and `requested_by`. A Try request that runs longer than 180 seconds answers 504 `try_timeout`, and the next Try can start at once. |
 | Run an eval | The app checks that the user can read every requested skill, then starts `skill-eval` as the app's service principal and records who requested it |
+| See or evaluate a candidate | The user must be in the authors or reviewers group. Reviewers see every department; an author sees a department only when the effective-permissions API shows `USE CATALOG`, `USE SCHEMA` and `READ VOLUME` on its live schema for the user. Only then does the app read the candidate folder as its service principal. Eval rows are read with the user's token |
 | Switch a version | The app checks that the user is in the reviewers group, then starts `skill-switch` as the app's service principal |
 
 - Only `skillhub-ci-eval` and the app service principal may run `skill-eval`. Only `skillhub-ci` and the app service principal may run `skill-switch`, and a publish runs only in a `skill-switch` run that `skillhub-ci` started. Users cannot start these Jobs directly.
