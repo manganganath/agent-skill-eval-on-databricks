@@ -255,9 +255,13 @@ def ensure_experiment_root(cfg: HubConfig, w, *, ci: str, ci_eval: str, app: str
     want = root_acl(cfg, ci=ci, ci_eval=ci_eval, app=app)
     # The root first: a caller that is not an admin may lose its own access when the base is replaced.
     root_id = _set_dir_acl(w, cfg, root, want)
+    # CI creates a folder per run under candidates/, and creating a folder needs MANAGE. ci_eval gets MANAGE on
+    # candidates/ only, never on the experiment folders, so code holding its credentials cannot reopen their ACLs.
+    _set_dir_acl(w, cfg, f"{root}/{CANDIDATES}", {ci: "CAN_MANAGE", ci_eval: "CAN_MANAGE"})
     base_id = _set_dir_acl(w, cfg, base, _base_acl(ci=ci, ci_eval=ci_eval))
     lines = [
-        f"experiment root {root}: CAN_MANAGE ci, CAN_EDIT ci_eval and app, CAN_READ {cfg.roles.reviewers}"
+        f"experiment root {root}: CAN_MANAGE ci, CAN_EDIT ci_eval and app, CAN_READ {cfg.roles.reviewers}; "
+        f"{CANDIDATES}/: CAN_MANAGE ci and ci_eval"
     ]
     if not app:
         msg = f"{APP_ENV} is not set: the Skill Hub app has no access to {root}; set it and re-run bootstrap"
