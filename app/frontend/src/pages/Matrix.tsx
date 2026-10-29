@@ -56,43 +56,45 @@ export default function Matrix() {
           <p>No evaluation has run for this selection. Start one from Run eval.</p>
         </EmptyState>
       ) : (
-        <table>
-          <caption>Evaluation matrix: one row per version, model and mode</caption>
-          <thead>
-            <tr>
-              <th scope="col">Skill</th><th scope="col">Version</th><th scope="col">Model</th><th scope="col">Mode</th>
-              <th scope="col">Accuracy</th><th scope="col">Precision</th><th scope="col">Recall</th>
-              <th scope="col">Pass rate</th><th scope="col">Spread</th>
-              <th scope="col">Uplift (task)</th><th scope="col">Uplift (format)</th>
-              <th scope="col">Verdict</th><th scope="col">Unreviewed</th><th scope="col">Links</th>
-            </tr>
-          </thead>
-          <tbody>
-            {rows.map((r) => (
-              <tr key={`${r.dept}-${r.skill}-${r.skill_version}-${r.model_profile}-${r.mode}-${r.run_id}`}>
-                <td>{r.skill}</td>
-                <td>v{r.skill_version}</td>
-                <td>{r.model_profile} <span className="muted">{classes[r.model_profile] ?? r.model_class}</span>{r.harness && <> <span className="muted">{r.harness}</span></>}</td>
-                <td>{r.mode}</td>
-                <td>{pct(r.accuracy)}</td><td>{pct(r.precision)}</td><td>{pct(r.recall)}</td>
-                <td>{pct(r.pass_rate)}</td>
-                <td>{r.spread == null ? "-" : r.spread.toFixed(2)}</td>
-                <td>{pct(r.uplift_task_quality)}</td><td>{pct(r.uplift_skill_format)}</td>
-                <td><VerdictChip verdict={r.verdict} /></td>
-                <td>{Math.max(0, r.n_cases - r.n_reviewed)}</td>
-                <td>
-                  {host && (
-                    <><a href={mlflowRunUrl(host, r.experiment_id, r.run_id)} target="_blank" rel="noreferrer"
-                      aria-label={`MLflow run for ${r.model_profile} ${r.mode} v${r.skill_version}`}>MLflow run</a>{" "}</>
-                  )}
-                  <button type="button" aria-label={`Show cases for ${r.model_profile} ${r.mode} v${r.skill_version}`} onClick={() => setOpen({ runId: r.run_id, experimentId: r.experiment_id })}>
-                    Show cases
-                  </button>
-                </td>
+        <div className="table-scroll" role="region" aria-label="Evaluation matrix" tabIndex={0}>
+          <table>
+            <caption>Evaluation matrix: one row per version, model and mode</caption>
+            <thead>
+              <tr>
+                <th scope="col">Skill</th><th scope="col">Version</th><th scope="col">Model</th><th scope="col">Mode</th>
+                <th scope="col">Accuracy</th><th scope="col">Precision</th><th scope="col">Recall</th>
+                <th scope="col">Pass rate</th><th scope="col">Spread</th>
+                <th scope="col">Uplift (task)</th><th scope="col">Uplift (format)</th>
+                <th scope="col">Verdict</th><th scope="col">Unreviewed</th><th scope="col">Links</th>
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {rows.map((r) => (
+                <tr key={`${r.dept}-${r.skill}-${r.skill_version}-${r.model_profile}-${r.mode}-${r.run_id}`}>
+                  <td>{r.skill}</td>
+                  <td>v{r.skill_version}</td>
+                  <td>{r.model_profile} <span className="muted">{classes[r.model_profile] ?? r.model_class}</span>{r.harness && <> <span className="muted">{r.harness}</span></>}</td>
+                  <td>{r.mode}</td>
+                  <td>{pct(r.accuracy)}</td><td>{pct(r.precision)}</td><td>{pct(r.recall)}</td>
+                  <td>{pct(r.pass_rate)}</td>
+                  <td>{r.spread == null ? "-" : r.spread.toFixed(2)}</td>
+                  <td>{pct(r.uplift_task_quality)}</td><td>{pct(r.uplift_skill_format)}</td>
+                  <td><VerdictChip verdict={r.verdict} /></td>
+                  <td>{Math.max(0, r.n_cases - r.n_reviewed)}</td>
+                  <td>
+                    {host && (
+                      <><a href={mlflowRunUrl(host, r.experiment_id, r.run_id)} target="_blank" rel="noreferrer"
+                        aria-label={`MLflow run for ${r.model_profile} ${r.mode} v${r.skill_version}`}>MLflow run</a>{" "}</>
+                    )}
+                    <button type="button" aria-label={`Show cases for ${r.model_profile} ${r.mode} v${r.skill_version}`} onClick={() => setOpen({ runId: r.run_id, experimentId: r.experiment_id })}>
+                      Show cases
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       )}
       {open && (
         <section aria-labelledby="cases-heading">
@@ -102,30 +104,32 @@ export default function Matrix() {
           {!cases.loading && !cases.error && <HiddenNote departments={caseHidden} />}
           {!cases.loading && !cases.error && caseRows.length === 0 && <EmptyState title="No cases recorded for this run" />}
           {!cases.loading && caseRows.length > 0 && (
-            <table>
-              <caption>Cases in this run</caption>
-              <thead>
-                <tr>
-                  <th scope="col">Case</th><th scope="col">Repeat</th><th scope="col">Assessment</th>
-                  <th scope="col">Value</th><th scope="col">Outcome</th><th scope="col">Trace</th>
-                </tr>
-              </thead>
-              <tbody>
-                {caseRows.map((c, i) => (
-                  <tr key={`${c.trace_id}-${c.assessment_name}-${i}`}>
-                    <td>{c.case_id}</td><td>{c.repeat}</td><td>{c.assessment_name}</td>
-                    <td>{c.value ?? "-"}</td><td>{c.trigger_outcome ?? "-"}</td>
-                    <td>
-                      {host ? (
-                        <a href={traceUrl(host, open.experimentId, c.trace_id)} target="_blank" rel="noreferrer">
-                          Trace for case {c.case_id}
-                        </a>
-                      ) : "-"}
-                    </td>
+            <div className="table-scroll" role="region" aria-label="Cases in this run" tabIndex={0}>
+              <table>
+                <caption>Cases in this run</caption>
+                <thead>
+                  <tr>
+                    <th scope="col">Case</th><th scope="col">Repeat</th><th scope="col">Assessment</th>
+                    <th scope="col">Value</th><th scope="col">Outcome</th><th scope="col">Trace</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
+                </thead>
+                <tbody>
+                  {caseRows.map((c, i) => (
+                    <tr key={`${c.trace_id}-${c.assessment_name}-${i}`}>
+                      <td>{c.case_id}</td><td>{c.repeat}</td><td>{c.assessment_name}</td>
+                      <td>{c.value ?? "-"}</td><td>{c.trigger_outcome ?? "-"}</td>
+                      <td>
+                        {host ? (
+                          <a href={traceUrl(host, open.experimentId, c.trace_id)} target="_blank" rel="noreferrer">
+                            Trace for case {c.case_id}
+                          </a>
+                        ) : "-"}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           )}
         </section>
       )}
