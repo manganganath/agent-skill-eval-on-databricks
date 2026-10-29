@@ -122,6 +122,8 @@ jobs:
           # The Jobs and the app use the folder the workflows upload candidates to; never the bundle default.
           [ -n "$BUNDLE_VAR_workspace_root" ] || { echo "::error::Set the SKILLHUB_WORKSPACE_ROOT variable in the production environment (scripts/configure_github.sh)."; exit 1; }
           databricks bundle deploy -t dev --auto-approve
+          # A bundle deploy creates the app but neither starts it nor deploys its source; this does both.
+          databricks bundle run skill_hub -t dev
 
   # Pushes to main deploy prod after a reviewer approves the `production` environment (ci credentials).
   # Shares the release group so a deploy never changes Jobs while a publish or switch is running. A pending
@@ -226,3 +228,5 @@ jobs:
             fi
           fi
           databricks bundle deploy -t prod --auto-approve
+          # A bundle deploy creates the app but neither starts it nor deploys its source; this does both.
+          databricks bundle run skill_hub -t prod

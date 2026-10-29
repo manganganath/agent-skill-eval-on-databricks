@@ -1301,3 +1301,13 @@ def test_a_fork_pull_request_never_reaches_the_configurable_runner():
 def test_jobs_without_databricks_stay_on_github_hosted_runners():
     for name, job in (("platform.yml", "platform"), ("skills-publish.yml", "plan")):
         assert load_workflow(name)["jobs"][job]["runs-on"] == "ubuntu-latest", (name, job)
+
+
+def test_deploys_start_the_app_and_deploy_its_source():
+    """A bundle deploy creates the Databricks App but leaves it stopped with no deployment."""
+    wf = load_workflow("platform.yml")
+    for job, target in (("deploy-prod", "prod"), ("deploy-dev", "dev")):
+        runs = "\n".join(str(s.get("run", "")) for s in wf["jobs"][job]["steps"])
+        assert runs.index(f"databricks bundle deploy -t {target}") < runs.index(
+            f"databricks bundle run skill_hub -t {target}"
+        )
