@@ -66,6 +66,15 @@ describe("Matrix", () => {
     expect(screen.getByRole("region", { name: /cases in this run/i })).toContainElement(cases);
   });
 
+  it("labels version 0 (content that matches no published version) as unpublished, not v0", async () => {
+    vi.mocked(api.matrix).mockResolvedValue(listed([{ ...row, skill_version: 0 }]));
+    render(<MemoryRouter><Matrix /></MemoryRouter>);
+    const table = await screen.findByRole("table", { name: /evaluation matrix/i });
+    expect(within(table).getByText("unpublished")).toBeTruthy();
+    expect(within(table).queryByText("v0")).toBeNull();
+    expect(screen.getByRole("button", { name: "Show cases for claude-sonnet trigger unpublished" })).toBeTruthy();
+  });
+
   it("links to the MLflow run", async () => {
     render(<MemoryRouter><Matrix /></MemoryRouter>);
     const link = await screen.findByRole("link", { name: /mlflow run/i });

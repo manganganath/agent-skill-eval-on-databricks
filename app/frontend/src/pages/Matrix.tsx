@@ -10,6 +10,8 @@ import { VerdictChip } from "../components/VerdictChip";
 import { mlflowRunUrl, traceUrl } from "../links";
 
 const pct = (v: number | null) => (v == null ? "-" : `${Math.round(v * 100)}%`);
+// The eval engine records version 0 when the skill content matches no published version (a repo or PR run).
+const versionLabel = (v: number) => (v > 0 ? `v${v}` : "unpublished");
 
 function HiddenNote({ departments }: { departments: string[] }) {
   if (departments.length === 0) return null;
@@ -72,7 +74,7 @@ export default function Matrix() {
               {rows.map((r) => (
                 <tr key={`${r.dept}-${r.skill}-${r.skill_version}-${r.model_profile}-${r.mode}-${r.run_id}`}>
                   <td>{r.skill}</td>
-                  <td>v{r.skill_version}</td>
+                  <td>{versionLabel(r.skill_version)}</td>
                   <td>{r.model_profile} <span className="muted">{classes[r.model_profile] ?? r.model_class}</span>{r.harness && <> <span className="muted">{r.harness}</span></>}</td>
                   <td>{r.mode}</td>
                   <td>{pct(r.accuracy)}</td><td>{pct(r.precision)}</td><td>{pct(r.recall)}</td>
@@ -84,9 +86,9 @@ export default function Matrix() {
                   <td>
                     {host && (
                       <><a href={mlflowRunUrl(host, r.experiment_id, r.run_id)} target="_blank" rel="noreferrer"
-                        aria-label={`MLflow run for ${r.model_profile} ${r.mode} v${r.skill_version}`}>MLflow run</a>{" "}</>
+                        aria-label={`MLflow run for ${r.model_profile} ${r.mode} ${versionLabel(r.skill_version)}`}>MLflow run</a>{" "}</>
                     )}
-                    <button type="button" aria-label={`Show cases for ${r.model_profile} ${r.mode} v${r.skill_version}`} onClick={() => setOpen({ runId: r.run_id, experimentId: r.experiment_id })}>
+                    <button type="button" aria-label={`Show cases for ${r.model_profile} ${r.mode} ${versionLabel(r.skill_version)}`} onClick={() => setOpen({ runId: r.run_id, experimentId: r.experiment_id })}>
                       Show cases
                     </button>
                   </td>
