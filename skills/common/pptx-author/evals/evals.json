@@ -1,0 +1,160 @@
+{
+  "skill_name": "pptx-author",
+  "criteria": {},
+  "evals": [
+    {
+      "id": 1,
+      "kind": "trigger",
+      "prompt": "No Office app is open in this session, so please write a .pptx summarizing the DCF output in ./out/model.xlsx and save it under ./out/. Give me the path when you're done.",
+      "should_trigger": true,
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": false
+    },
+    {
+      "id": 2,
+      "kind": "trigger",
+      "prompt": "We're running as a batch job with no PowerPoint attached. Generate a 6-slide pitch deck for the Acme acquisition using the firm template in ./templates and save it as a file.",
+      "should_trigger": true,
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": false
+    },
+    {
+      "id": 3,
+      "kind": "trigger",
+      "prompt": "Use python-pptx to build a valuation summary deck and write it to ./out/pitch-target.pptx. This is headless, so there's no live doc to edit.",
+      "should_trigger": true,
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": false
+    },
+    {
+      "id": 4,
+      "kind": "trigger",
+      "prompt": "The orchestrator needs a PowerPoint file artifact it can collect: a football field slide, a comps table slide, and an exec summary. No live Office tools are available here.",
+      "should_trigger": true,
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": false
+    },
+    {
+      "id": 5,
+      "kind": "trigger",
+      "prompt": "Turn the LBO returns from ./out/model.xlsx into a short deck saved to disk. Footnote each number with its sheet and cell. We're in managed-agent mode.",
+      "should_trigger": true,
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": false
+    },
+    {
+      "id": 6,
+      "kind": "trigger",
+      "prompt": "I don't have PowerPoint open. Can you just produce a .pptx file for the board update with one takeaway per slide and save it in the out folder?",
+      "should_trigger": true,
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": false
+    },
+    {
+      "id": 7,
+      "kind": "trigger",
+      "prompt": "Headless run: render the revenue chart from the model as a PNG, embed it in a slide, and save the presentation to ./out/.",
+      "should_trigger": true,
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": false
+    },
+    {
+      "id": 8,
+      "kind": "trigger",
+      "prompt": "Create the presentation file for the Project Falcon teaser. No Cowork plugin is connected, so output a .pptx in ./out and return the relative path.",
+      "should_trigger": true,
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": false
+    },
+    {
+      "id": 9,
+      "kind": "trigger",
+      "prompt": "Headless session, no Excel open. Write the 3-statement model out to ./out/model.xlsx as a file.",
+      "should_trigger": false,
+      "expected_skill": "xlsx-author",
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": false
+    },
+    {
+      "id": 10,
+      "kind": "trigger",
+      "prompt": "Review this pitch deck for number inconsistencies, formatting errors, and footnote problems before it goes to the MD.",
+      "should_trigger": false,
+      "expected_skill": "ib-check-deck",
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": false
+    },
+    {
+      "id": 11,
+      "kind": "trigger",
+      "prompt": "Update last quarter's deck with the new Q3 numbers and refresh all the charts.",
+      "should_trigger": false,
+      "expected_skill": "deck-refresh",
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": false
+    },
+    {
+      "id": 12,
+      "kind": "trigger",
+      "prompt": "Build a reusable PowerPoint template with our firm's branding, fonts, and slide layouts.",
+      "should_trigger": false,
+      "expected_skill": "ppt-template-creator",
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": false
+    },
+    {
+      "id": 13,
+      "kind": "trigger",
+      "prompt": "What's the difference between enterprise value and equity value?",
+      "should_trigger": false,
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": false
+    },
+    {
+      "id": 14,
+      "kind": "trigger",
+      "prompt": "Write a bash script that renames all .jpg files in a folder by date taken.",
+      "should_trigger": false,
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": false
+    },
+    {
+      "id": 15,
+      "kind": "trigger",
+      "prompt": "Draft a polite email to a client rescheduling our Thursday meeting.",
+      "should_trigger": false,
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": false
+    }
+  ]
+}

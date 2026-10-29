@@ -1,0 +1,79 @@
+{
+  "skill_name": "ib-check-deck",
+  "source_hash": "sha256:bb2d4e46dba41bc13bb2a5062426635043e7d9d8b235bfae68585d083457c147",
+  "generated_by": "claude-opus",
+  "pass_score": 0.7,
+  "reviewed": false,
+  "criteria": [
+    {
+      "id": "c1",
+      "text": "Every reported issue is attributed to specific slide numbers, and cross-slide number conflicts list each conflicting value next to the slide where it appears (e.g., '$500M on slides 3 and 8, $485M on slide 15').",
+      "type": "task_quality",
+      "weight": 5,
+      "source": "Workflow > Read the deck (slide-level attribution); report-format.md Number Consistency template"
+    },
+    {
+      "id": "c2",
+      "text": "Treats unit variants of the same figure (e.g., $500M, $500MM, $500,000,000) as equal rather than flagging them as a numeric conflict. Separately flags inconsistent use of unit style ($M vs $MM) across the deck as a consistency issue.",
+      "type": "task_quality",
+      "weight": 4,
+      "source": "Workflow > 1. Number consistency"
+    },
+    {
+      "id": "c3",
+      "text": "Checks arithmetic and time-period alignment and reports any errors found. This covers totals that do not sum, percentages that do not add up, growth rates or CAGRs that do not match their endpoints, and FY/LTM/quarterly figures mixed without labels.",
+      "type": "task_quality",
+      "weight": 4,
+      "source": "Workflow > 1. Number consistency ('Beyond what the script flags')"
+    },
+    {
+      "id": "c4",
+      "text": "Tests narrative claims against the supporting data, including plausibility. Examples are a trend statement contradicted by its chart, or a '#1 player' claim that revenue and market size do not support. Any mismatch is reported as Critical, with the claim quoted and the contradicting data stated.",
+      "type": "task_quality",
+      "weight": 5,
+      "source": "Workflow > 2. Data-narrative alignment; Output severity definitions"
+    },
+    {
+      "id": "c5",
+      "text": "Flags language that breaks IB register, such as casual phrasing, contractions, exclamation points, first-person voice, vague quantifiers, and unsupported superlatives. Each finding quotes the current text and gives a specific professional replacement.",
+      "type": "task_quality",
+      "weight": 4,
+      "source": "Workflow > 3. Language polish; references/ib-terminology.md"
+    },
+    {
+      "id": "c6",
+      "text": "Covers visual and formatting QC beyond the text, including missing chart source citations, missing axis labels, number formatting drift (e.g., 1,000 vs 1K), date format drift, typography inconsistencies, and footnote or disclaimer gaps.",
+      "type": "task_quality",
+      "weight": 3,
+      "source": "Workflow > 4. Visual and formatting QC"
+    },
+    {
+      "id": "c7",
+      "text": "Assigns severity according to the skill's definitions. Number mismatches, calculation and factual errors, and data-vs-narrative contradictions are Critical. Language problems, missing sources, and terminology drift are Important. Fonts, spacing, and date formats are Minor.",
+      "type": "task_quality",
+      "weight": 4,
+      "source": "Output severity categories; report-format.md Issue Severity Classification"
+    },
+    {
+      "id": "c8",
+      "text": "The report lists Critical issues first. If there are none, it says so explicitly (e.g., 'no number inconsistencies found') and does not leave the section blank or omit it.",
+      "type": "task_quality",
+      "weight": 3,
+      "source": "Output ('Lead with criticals... is a finding, not an absence of one')"
+    },
+    {
+      "id": "c9",
+      "text": "The report follows the report-format.md structure. It opens with a Summary of issue counts by severity, then has Critical, Important, and Minor sections with the specified sub-headings, and ends with the Final Checklist.",
+      "type": "skill_format",
+      "weight": 3,
+      "source": "references/report-format.md Report Template"
+    },
+    {
+      "id": "c10",
+      "text": "The response is review and report only. It recommends fixes but does not claim to have edited, rewritten, or modified the deck.",
+      "type": "skill_format",
+      "weight": 2,
+      "source": "Environment check ('This is read-and-report only — no edits')"
+    }
+  ]
+}

@@ -1,0 +1,160 @@
+{
+  "skill_name": "comps-analysis",
+  "criteria": {},
+  "evals": [
+    {
+      "id": 1,
+      "kind": "trigger",
+      "prompt": "Put together a trading comps spreadsheet for CrowdStrike, Palo Alto Networks, Zscaler, Fortinet and SentinelOne — LTM revenue, growth, gross margin, EBITDA margin, plus EV/Revenue, EV/EBITDA and P/E with median and quartile rows.",
+      "should_trigger": true,
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": false
+    },
+    {
+      "id": 2,
+      "kind": "trigger",
+      "prompt": "We're evaluating an acquisition of a mid-cap specialty chemicals company. Can you benchmark its multiples against public peers like Albemarle, Ashland, and Huntsman in Excel so I can see if the asking price is rich or cheap?",
+      "should_trigger": true,
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": false
+    },
+    {
+      "id": 3,
+      "kind": "trigger",
+      "prompt": "Our Series C SaaS startup does $40M ARR growing 60%. Build me a peer table of public SaaS names with Rule of 40, EV/Revenue and gross margins so we can justify our round pricing.",
+      "should_trigger": true,
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": false
+    },
+    {
+      "id": 4,
+      "kind": "trigger",
+      "prompt": "I need a public peer valuation sheet for regional banks — ROE, ROA, efficiency ratio, P/E and price-to-book for about eight lenders, with max/min/median stats.",
+      "should_trigger": true,
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": false
+    },
+    {
+      "id": 5,
+      "kind": "trigger",
+      "prompt": "for the IC memo next week can you make an xlsx comparing Nike, Adidas, Lululemon, Under Armour and On on margins and valuation multiples? want to flag which ones look like outliers",
+      "should_trigger": true,
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": false
+    },
+    {
+      "id": 6,
+      "kind": "trigger",
+      "prompt": "We're advising on an IPO for a cloud data infrastructure company. Pull together a comparable public company set (Snowflake, Datadog, MongoDB, Confluent) with operating metrics and trading multiples to frame a valuation range.",
+      "should_trigger": true,
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": false
+    },
+    {
+      "id": 7,
+      "kind": "trigger",
+      "prompt": "I'm working in Excel right now — add a sheet that lays out the semiconductor peer group (NVDA, AMD, INTC, AVGO, QCOM) with EV/EBITDA, P/E, revenue growth, and 25th/75th percentile rows, using formulas not hardcodes.",
+      "should_trigger": true,
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": false
+    },
+    {
+      "id": 8,
+      "kind": "trigger",
+      "prompt": "Create a sector overview workbook for US airlines showing how Delta, United, American, Southwest and Alaska stack up on EBITDA margin, revenue growth and EV multiples.",
+      "should_trigger": true,
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": false
+    },
+    {
+      "id": 9,
+      "kind": "trigger",
+      "prompt": "Build me a discounted cash flow valuation for Adobe with a 5-year projection, WACC calculation, terminal value and sensitivity table on growth and discount rate.",
+      "should_trigger": false,
+      "expected_skill": "dcf-model",
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": false
+    },
+    {
+      "id": 10,
+      "kind": "trigger",
+      "prompt": "Model a leveraged buyout of a $500M EBITDA industrial business: 6x debt, sources and uses, debt schedule, and sponsor IRR over a 5-year hold.",
+      "should_trigger": false,
+      "expected_skill": "lbo-model",
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": false
+    },
+    {
+      "id": 11,
+      "kind": "trigger",
+      "prompt": "Write up a competitive landscape for the meal-kit delivery market — who the players are, their positioning, product differentiation, and strategic strengths and weaknesses.",
+      "should_trigger": false,
+      "expected_skill": "competitive-analysis",
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": false
+    },
+    {
+      "id": 12,
+      "kind": "trigger",
+      "prompt": "Here's a valuation workbook my analyst built. Can you go through it and check for broken formulas, hardcoded numbers, and #REF errors?",
+      "should_trigger": false,
+      "expected_skill": "audit-xls",
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": false
+    },
+    {
+      "id": 13,
+      "kind": "trigger",
+      "prompt": "Write a Python script that scrapes recipe titles from a cooking blog and saves them to a CSV.",
+      "should_trigger": false,
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": false
+    },
+    {
+      "id": 14,
+      "kind": "trigger",
+      "prompt": "Help me draft a polite email to my landlord asking to fix the heating before winter.",
+      "should_trigger": false,
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": false
+    },
+    {
+      "id": 15,
+      "kind": "trigger",
+      "prompt": "What's a good 3-day itinerary for Lisbon if I like museums and seafood?",
+      "should_trigger": false,
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": false
+    }
+  ]
+}

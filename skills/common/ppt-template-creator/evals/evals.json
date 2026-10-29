@@ -1,0 +1,160 @@
+{
+  "skill_name": "ppt-template-creator",
+  "criteria": {},
+  "evals": [
+    {
+      "id": 1,
+      "kind": "trigger",
+      "prompt": "I've attached our firm's branded PowerPoint template (Meridian_Template.pptx). Can you turn it into a reusable skill so that future decks automatically use our layouts and placeholders?",
+      "should_trigger": true,
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": false
+    },
+    {
+      "id": 2,
+      "kind": "trigger",
+      "prompt": "Here's our corporate .potx file. I want a packaged skill I can share with the team that knows exactly where the title, subtitle, footer and content area sit on each layout.",
+      "should_trigger": true,
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": false
+    },
+    {
+      "id": 3,
+      "kind": "trigger",
+      "prompt": "We just rebranded and have a new master slide deck. Please analyze its layouts and build a self-contained skill around it with the template bundled in assets, so Claude can generate on-brand presentations later.",
+      "should_trigger": true,
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": false
+    },
+    {
+      "id": 4,
+      "kind": "trigger",
+      "prompt": "Convert acme_board_template.pptx into a .skill file. Include placeholder idx mappings and safe content boundaries for the two-column and four-quadrant layouts.",
+      "should_trigger": true,
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": false
+    },
+    {
+      "id": 5,
+      "kind": "trigger",
+      "prompt": "Every time I ask for a pitch deck it ignores our bank's template. Can you make a dedicated skill out of this pptx template file so it's always used correctly going forward?",
+      "should_trigger": true,
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": false
+    },
+    {
+      "id": 6,
+      "kind": "trigger",
+      "prompt": "I need a 'northstar-ppt-template' skill built from the uploaded template. Extract the slide dimensions and layouts, write the SKILL.md, and produce a sample deck to validate it.",
+      "should_trigger": true,
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": false
+    },
+    {
+      "id": 7,
+      "kind": "trigger",
+      "prompt": "Our consulting practice uses a custom PowerPoint master with a reserved border line under the subtitle. Package this template as a reusable agent skill that respects where content actually starts.",
+      "should_trigger": true,
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": false
+    },
+    {
+      "id": 8,
+      "kind": "trigger",
+      "prompt": "Take the client's PowerPoint template I uploaded and wrap it into an installable skill with full instructions for cover slides, content slides and bullet hierarchy.",
+      "should_trigger": true,
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": false
+    },
+    {
+      "id": 9,
+      "kind": "trigger",
+      "prompt": "Using our company template, create a 10-slide pitch deck summarizing Q3 results and the expansion strategy.",
+      "should_trigger": false,
+      "expected_skill": "pptx-author",
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": false
+    },
+    {
+      "id": 10,
+      "kind": "trigger",
+      "prompt": "I want to build a new skill that helps analysts clean messy CSV exports. Can you help me set up the skill structure and package it?",
+      "should_trigger": false,
+      "expected_skill": "skill-creator",
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": false
+    },
+    {
+      "id": 11,
+      "kind": "trigger",
+      "prompt": "Update last quarter's board deck with the new revenue figures and refresh all the charts to the latest data.",
+      "should_trigger": false,
+      "expected_skill": "deck-refresh",
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": false
+    },
+    {
+      "id": 12,
+      "kind": "trigger",
+      "prompt": "Please review this banker pitch book for formatting inconsistencies, number mismatches and typos before it goes to the client.",
+      "should_trigger": false,
+      "expected_skill": "ib-check-deck",
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": false
+    },
+    {
+      "id": 13,
+      "kind": "trigger",
+      "prompt": "What's a good recipe for a vegetarian lasagna that serves eight?",
+      "should_trigger": false,
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": false
+    },
+    {
+      "id": 14,
+      "kind": "trigger",
+      "prompt": "Explain the difference between TCP and UDP in simple terms.",
+      "should_trigger": false,
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": false
+    },
+    {
+      "id": 15,
+      "kind": "trigger",
+      "prompt": "Write a short cover letter for a junior marketing coordinator position.",
+      "should_trigger": false,
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": false
+    }
+  ]
+}

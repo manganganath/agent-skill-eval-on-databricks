@@ -1,0 +1,79 @@
+{
+  "skill_name": "dcf-model",
+  "source_hash": "sha256:03b84cbd5a4520079ad8b2996d2b8171784b12d2e49dba480464989ed71bc083",
+  "generated_by": "claude-opus",
+  "pass_score": 0.7,
+  "reviewed": false,
+  "criteria": [
+    {
+      "id": "c1",
+      "text": "All derived cells (projections, margins, discount factors, PVs, terminal value, equity bridge, sensitivity outputs) are written as live Excel formula strings, not numbers computed in Python. The only hardcoded values are raw historical inputs, assumption drivers, and current market data.",
+      "type": "task_quality",
+      "weight": 5,
+      "source": "Critical Constraints: Formulas Over Hardcodes (NON-NEGOTIABLE)"
+    },
+    {
+      "id": "c2",
+      "text": "Three sensitivity tables (WACC vs Terminal Growth, Revenue Growth vs EBIT Margin, Beta vs Risk-Free Rate) sit at the bottom of the DCF sheet. They use odd dimensions (e.g., 5×5), and every cell holds a full DCF recalculation formula. Linear approximations, placeholder notes, empty cells, and Excel's Data Table feature are not acceptable.",
+      "type": "task_quality",
+      "weight": 5,
+      "source": "Critical Constraints: Sensitivity Tables; Step 10; Correct Sensitivity Table Implementation; common_mistakes"
+    },
+    {
+      "id": "c3",
+      "text": "In each sensitivity table, the middle row and middle column headers equal the model's base-case assumptions. The center cell is highlighted with #BDD7EE fill and bold font, and its value should match the valuation summary's implied share price.",
+      "type": "task_quality",
+      "weight": 4,
+      "source": "Critical Constraints: Sensitivity Tables (center cell = base case)"
+    },
+    {
+      "id": "c4",
+      "text": "The response works in stages and pauses for user confirmation at checkpoints instead of building end to end. The checkpoints include: the raw inputs block after data retrieval, revenue projections, the FCF schedule, WACC, and the EV-to-equity bridge before sensitivity tables.",
+      "type": "task_quality",
+      "weight": 4,
+      "source": "Critical Constraints: Verify Step-by-Step With the User"
+    },
+    {
+      "id": "c5",
+      "text": "Separate Bear/Base/Bull assumption blocks exist, each with a merged section header, a year column-header row, and assumptions laid out horizontally across projection years. A case selector (1/2/3) feeds a consolidation column of INDEX/OFFSET formulas, and projections reference that column rather than nested IF formulas.",
+      "type": "task_quality",
+      "weight": 4,
+      "source": "Scenario Block Selection Pattern; Correct Assumption Table Structure; Case Selector Implementation"
+    },
+    {
+      "id": "c6",
+      "text": "The FCF and valuation mechanics are correct, specifically: OpEx is a percentage of revenue (not gross profit); UFCF = NOPAT + D&A − CapEx − ΔNWC; the mid-year convention uses periods 0.5, 1.5, and so on; perpetuity-growth terminal value requires terminal g < WACC; and the equity bridge subtracts net debt (or adds net cash) and divides by diluted shares.",
+      "type": "task_quality",
+      "weight": 4,
+      "source": "Steps 4, 5, 7, 8, 9; common_mistakes: OpEx Based on Gross Profit"
+    },
+    {
+      "id": "c7",
+      "text": "WACC is calculated on a separate WACC sheet. Cost of equity comes from CAPM (risk-free rate from the current 10Y Treasury, beta, and an ERP of about 5–6%), cost of debt is after tax, and capital structure weights use market values. Net cash is handled correctly.",
+      "type": "task_quality",
+      "weight": 3,
+      "source": "Step 6: Cost of Capital; WACC Sheet Structure"
+    },
+    {
+      "id": "c8",
+      "text": "Every hardcoded input has a cell comment in the format \"Source: [System/Document], [Date], [Reference], [URL if applicable]\". Comments are added as each input is created, with no TODO placeholders.",
+      "type": "skill_format",
+      "weight": 3,
+      "source": "Critical Constraints: Cell Comments; Correct Cell Comment Format"
+    },
+    {
+      "id": "c9",
+      "text": "Formatting follows these conventions:\n- Font colors: blue for hardcoded inputs, black for formulas, green for cross-sheet links.\n- Fills: a minimal blue/grey palette (#1F4E79 headers, #D9E1F2 sub-headers, #BDD7EE outputs).\n- Thick, medium, and thin borders are applied around sections.\n- Number formats: percentages as 0.0%, negatives in parentheses, units shown in headers.",
+      "type": "skill_format",
+      "weight": 3,
+      "source": "Formatting Standards; Border Standards; Number Formats"
+    },
+    {
+      "id": "c10",
+      "text": "For a standalone .xlsx, the response runs `python recalc.py <file> 30` before delivery and fixes errors until status is \"success\" with zero formula errors. The file is named [Ticker]_DCF_Model_[Date].xlsx. If running inside Office JS, it uses `.formulas` instead and writes merged headers to the top-left cell before merging.",
+      "type": "skill_format",
+      "weight": 3,
+      "source": "Formula Recalculation (MANDATORY); Environment: Office JS vs Python; Office JS merged cell pitfall; Deliverables Structure"
+    }
+  ]
+}

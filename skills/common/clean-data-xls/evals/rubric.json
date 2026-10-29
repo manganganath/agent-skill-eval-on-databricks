@@ -1,0 +1,72 @@
+{
+  "skill_name": "clean-data-xls",
+  "source_hash": "sha256:640a2c1a4970abb976e831e9feb145ebc6db596ddcb2978067c0680252541bd5",
+  "generated_by": "claude-opus",
+  "pass_score": 0.7,
+  "reviewed": false,
+  "criteria": [
+    {
+      "id": "c1",
+      "text": "Before changing any data, the response presents a summary table with the columns Column, Issue, Count, and Proposed Fix. The table lists the detected issues per column.",
+      "type": "skill_format",
+      "weight": 5,
+      "source": "Step 3: Propose fixes"
+    },
+    {
+      "id": "c2",
+      "text": "Where a formula equivalent exists (e.g., TRIM, VALUE/SUBSTITUTE, UPPER/PROPER, DATEVALUE), the response writes cleaning formulas into adjacent helper columns. It does not overwrite the originals with hardcoded computed values, unless the user explicitly asked for in-place changes.",
+      "type": "task_quality",
+      "weight": 5,
+      "source": "Step 4: Prefer formulas over hardcoded cleaned values"
+    },
+    {
+      "id": "c3",
+      "text": "Before any destructive operation (removing duplicates, filling blanks, or overwriting original values), the response asks the user for confirmation. It does not perform the operation without that confirmation.",
+      "type": "task_quality",
+      "weight": 5,
+      "source": "Step 4: confirm destructive operations"
+    },
+    {
+      "id": "c4",
+      "text": "The response profiles each column's dominant type (text/number/date) and checks the relevant issue categories from the detection list: whitespace, casing, number-as-text, mixed date formats, duplicates (including near-duplicates), blanks, mixed types, encoding/mojibake, and error values like #REF!/#N/A.",
+      "type": "task_quality",
+      "weight": 4,
+      "source": "Step 1 profiling and Step 2: Detect issues table"
+    },
+    {
+      "id": "c5",
+      "text": "The response applies fixes one category at a time, in the order whitespace → casing → number conversion → dates → dedup. After each category it shows a sample of the changes and asks for confirmation before moving on.",
+      "type": "task_quality",
+      "weight": 4,
+      "source": "Step 4: After each category of fix..."
+    },
+    {
+      "id": "c6",
+      "text": "The response matches the tooling to the environment. Inside Excel it uses Office JS (Excel.run, range.values, range.formulas). For a standalone .xlsx file it uses Python/openpyxl.",
+      "type": "task_quality",
+      "weight": 3,
+      "source": "Environment section"
+    },
+    {
+      "id": "c7",
+      "text": "The response scopes its work correctly. It uses the user-specified range if one was given, and otherwise the full used range of the active sheet.",
+      "type": "task_quality",
+      "weight": 3,
+      "source": "Step 1: Scope"
+    },
+    {
+      "id": "c8",
+      "text": "After applying fixes, the response gives a before/after summary of what changed, such as counts per issue type and the cells or columns affected.",
+      "type": "skill_format",
+      "weight": 3,
+      "source": "Step 4: Report a before/after summary"
+    },
+    {
+      "id": "c9",
+      "text": "The response overwrites values in place with computed results only when no sensible formula equivalent exists (e.g., mojibake/encoding repair) or when the user explicitly asks for it. It notes when it does so.",
+      "type": "task_quality",
+      "weight": 3,
+      "source": "Step 4: Only overwrite in place..."
+    }
+  ]
+}

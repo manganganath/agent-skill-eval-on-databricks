@@ -1,0 +1,160 @@
+{
+  "skill_name": "lbo-model",
+  "criteria": {},
+  "evals": [
+    {
+      "id": 1,
+      "kind": "trigger",
+      "prompt": "I've attached our firm's buyout template (LBO_Model.xlsx). Can you fill in the sources & uses, debt schedule and returns tabs using the assumptions in the memo below? Entry at 9.5x LTM EBITDA of $82M, 5.0x total leverage split TLB and senior notes.",
+      "should_trigger": true,
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": false
+    },
+    {
+      "id": 2,
+      "kind": "trigger",
+      "prompt": "We're looking at taking a $40M EBITDA software company private with 60% debt financing. Build me a leveraged buyout model in Excel with IRR and MOIC over a 5-year hold.",
+      "should_trigger": true,
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": false
+    },
+    {
+      "id": 3,
+      "kind": "trigger",
+      "prompt": "The returns analysis in my PE deal model is blank — need formulas for exit equity value, sponsor IRR and cash-on-cash multiple. The exit is in year 5 at the entry multiple. Workbook is open in Excel.",
+      "should_trigger": true,
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": false
+    },
+    {
+      "id": 4,
+      "kind": "trigger",
+      "prompt": "Can you add a 5x5 sensitivity grid of sponsor IRR vs entry multiple and exit multiple to my buyout model? Base case is 11x in and 11x out.",
+      "should_trigger": true,
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": false
+    },
+    {
+      "id": 5,
+      "kind": "trigger",
+      "prompt": "IC is Thursday. I need the debt waterfall in our take-private model completed — revolver, term loan B with 1% amort, and a 100% excess cash sweep. Interest should be on beginning balance so we don't get circularity.",
+      "should_trigger": true,
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": false
+    },
+    {
+      "id": 6,
+      "kind": "trigger",
+      "prompt": "Populate this sponsor acquisition spreadsheet: sources are senior debt, mezz and sponsor equity (equity is the plug), uses are purchase price, refinanced debt and fees. Keep everything as live formulas with blue inputs.",
+      "should_trigger": true,
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": false
+    },
+    {
+      "id": 7,
+      "kind": "trigger",
+      "prompt": "My private equity model's IRR is coming out as #NUM! and the term loan balance goes negative in year 4. Can you fix the paydown formulas and the returns calc in the template?",
+      "should_trigger": true,
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": false
+    },
+    {
+      "id": 8,
+      "kind": "trigger",
+      "prompt": "Quick paper-LBO-style model for a dental roll-up: $25M EBITDA, 10x entry, 6x debt at 9%, 8% annual EBITDA growth, exit year 5. I want it as an xlsx file with the standard sections.",
+      "should_trigger": true,
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": false
+    },
+    {
+      "id": 9,
+      "kind": "trigger",
+      "prompt": "Build me a discounted cash flow valuation for this company with WACC, terminal value via Gordon growth, and an implied share price.",
+      "should_trigger": false,
+      "expected_skill": "dcf-model",
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": false
+    },
+    {
+      "id": 10,
+      "kind": "trigger",
+      "prompt": "I need an integrated income statement, balance sheet and cash flow statement projection for our company for the next 5 years, with the balance sheet balancing.",
+      "should_trigger": false,
+      "expected_skill": "3-statement-model",
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": false
+    },
+    {
+      "id": 11,
+      "kind": "trigger",
+      "prompt": "Pull together a trading comps table of EV/EBITDA and P/E multiples for 8 peer specialty chemical companies.",
+      "should_trigger": false,
+      "expected_skill": "comps-analysis",
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": false
+    },
+    {
+      "id": 12,
+      "kind": "trigger",
+      "prompt": "Review this finished financial model workbook for broken links, hardcodes inside formulas, and #REF errors — just audit it, don't rebuild anything.",
+      "should_trigger": false,
+      "expected_skill": "audit-xls",
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": false
+    },
+    {
+      "id": 13,
+      "kind": "trigger",
+      "prompt": "Write me a cover letter for a summer analyst role at a mid-market private equity fund.",
+      "should_trigger": false,
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": false
+    },
+    {
+      "id": 14,
+      "kind": "trigger",
+      "prompt": "What's a good recipe for a weeknight chicken curry that takes under 30 minutes?",
+      "should_trigger": false,
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": false
+    },
+    {
+      "id": 15,
+      "kind": "trigger",
+      "prompt": "Explain the difference between a Roth IRA and a traditional IRA for someone in their 20s.",
+      "should_trigger": false,
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": false
+    }
+  ]
+}

@@ -1,0 +1,72 @@
+{
+  "skill_name": "ppt-template-creator",
+  "source_hash": "sha256:37f62e070b812b05204de91d467cff7bfced46e7723628e8f2941c3c49155f2c",
+  "generated_by": "claude-opus",
+  "pass_score": 0.7,
+  "reviewed": false,
+  "criteria": [
+    {
+      "id": "c1",
+      "text": "The response produces a reusable skill (a [company]-ppt-template directory with SKILL.md and assets/template.pptx) instead of directly building a presentation for the user's content.",
+      "type": "task_quality",
+      "weight": 5,
+      "source": "Intro: 'This skill creates SKILLS, not presentations'; Step 5 directory structure"
+    },
+    {
+      "id": "c2",
+      "text": "The response analyzes the provided template with python-pptx (or equivalent) and reports actual values: slide dimensions in inches, layout count and names, and placeholder idx/type values per layout. Bracketed placeholders are not left unfilled.",
+      "type": "task_quality",
+      "weight": 5,
+      "source": "Step 2: Analyze Template; Generated SKILL.md Template"
+    },
+    {
+      "id": "c3",
+      "text": "The generated SKILL.md documents exact placeholder positions (x/y coordinates in inches) for key layouts, including title, subtitle, and footer/source placeholders.",
+      "type": "task_quality",
+      "weight": 4,
+      "source": "Step 2 'Key measurements'; Placeholder Mapping 'CRITICAL: Include exact positions'"
+    },
+    {
+      "id": "c4",
+      "text": "The content area top boundary comes from the OBJECT placeholder's y position (type 7) when one exists, not from the end of the subtitle. Any reserved gap such as a border or line is identified as off-limits.",
+      "type": "task_quality",
+      "weight": 4,
+      "source": "Step 2: Finding the True Content Start Position"
+    },
+    {
+      "id": "c5",
+      "text": "The generated SKILL.md defines safe content area boundaries (left margin, top, width, height) for custom shapes, tables, and charts so they do not overlap template placeholders.",
+      "type": "task_quality",
+      "weight": 3,
+      "source": "Content Area Boundaries section"
+    },
+    {
+      "id": "c6",
+      "text": "The generated SKILL.md includes code that deletes all existing slides from the template before adding new slides.",
+      "type": "task_quality",
+      "weight": 3,
+      "source": "PPT-Specific Rules #4; Creating Presentations code"
+    },
+    {
+      "id": "c7",
+      "text": "The generated skill's content-filling instructions use paragraph.level for bullet hierarchy and explicitly say not to add manual bullet characters.",
+      "type": "task_quality",
+      "weight": 3,
+      "source": "PPT-Specific Rules #3; Filling Content section"
+    },
+    {
+      "id": "c8",
+      "text": "The generated SKILL.md is self-contained. It has YAML frontmatter (name, description with branded usage triggers), a key layouts table, and cover and content slide examples, and it requires no reference to ppt-template-creator.",
+      "type": "skill_format",
+      "weight": 4,
+      "source": "PPT-Specific Rules #2; Generated SKILL.md Template"
+    },
+    {
+      "id": "c9",
+      "text": "The response generates a sample presentation from the new skill to validate it works, and packages the skill (for example, as a .skill file via skill-creator) or describes doing so.",
+      "type": "task_quality",
+      "weight": 2,
+      "source": "Workflow steps 6-7; Step 6: Create Example Output"
+    }
+  ]
+}

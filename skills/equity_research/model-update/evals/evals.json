@@ -1,0 +1,274 @@
+{
+  "skill_name": "model-update",
+  "criteria": {},
+  "evals": [
+    {
+      "id": 101,
+      "kind": "effectiveness",
+      "prompt": "Plug Northwind's Q3 actuals into our model and tell me what changed in the FY26 numbers and the price target. The model is model.xlsx.",
+      "should_trigger": true,
+      "assertions": [
+        "Shows Q3 prior estimate against actual for revenue ($408.0M and $412.0M), gross margin (41.0% and 41.5%) and EPS ($0.81 and $0.84), with a delta column",
+        "Revises the FY26 revenue estimate from the prior $1,650.0M in prior_estimates.json, showing old and new values and the reason for the change",
+        "Compares the revised estimates with consensus after updating, as the skill requires",
+        "Sets out a valuation impact table with prior and updated price target, and a rating decision"
+      ],
+      "fixtures": [
+        "northwind/press_release_q3.md",
+        "northwind/prior_estimates.json",
+        "northwind/model.xlsx"
+      ],
+      "expected_tool_calls": [
+        {
+          "name": "read_workbook",
+          "arguments": {
+            "path": "northwind/model.xlsx"
+          }
+        }
+      ],
+      "origin": "human",
+      "reviewed": true
+    },
+    {
+      "id": 102,
+      "kind": "effectiveness",
+      "prompt": "Northwind raised FY26 revenue guidance to $1.64B to $1.68B. Update the model's FY26 revenue assumption and show old against new. For reference, the recalculated model shows FY26E net income 244.46 and cash 489.46, and FY27E net income 486.25 and cash 948.71.",
+      "should_trigger": true,
+      "assertions": [
+        "Names Inputs!D4, the FY26 revenue growth assumption (currently 4.0%), as the cell to change",
+        "Derives the implied growth from the guidance midpoint: $1.66B against FY25 actual $1.60B, about 3.75%, and shows old and new values",
+        "Reports that the FY26E balance check still reads 12.5 (BS!D15) and does not describe the model as balanced",
+        "Checks the revised FY26 revenue against FY26 consensus of $1,650.0M (Consensus Hub, 2026-10-20) and says where the house estimate now sits relative to the Street"
+      ],
+      "fixtures": [
+        "northwind/press_release_q3.md",
+        "northwind/model.xlsx",
+        "northwind/consensus_q3.json"
+      ],
+      "expected_tool_calls": [
+        {
+          "name": "read_workbook",
+          "arguments": {
+            "path": "northwind/model.xlsx"
+          }
+        }
+      ],
+      "origin": "human",
+      "reviewed": true
+    },
+    {
+      "id": 103,
+      "kind": "effectiveness",
+      "prompt": "Q3 GAAP EPS included a restructuring charge. How should we treat it in our estimates, GAAP or adjusted, and what is the run-rate?",
+      "should_trigger": true,
+      "assertions": [
+        "States the restructuring charge ($5.8M pre-tax, $0.04 per diluted share) and separates it from run-rate EPS of $0.84",
+        "States whether the estimates are GAAP or adjusted, and keeps them on the same basis as the non-GAAP consensus",
+        "Explains how the charge is treated in forward estimates and whether it recurs"
+      ],
+      "fixtures": [
+        "northwind/press_release_q3.md",
+        "northwind/prior_estimates.json"
+      ],
+      "origin": "human",
+      "reviewed": true
+    },
+    {
+      "id": 104,
+      "kind": "effectiveness",
+      "prompt": "Update the share count for Q3 and recompute the EPS impact. The diluted share count is in the release.",
+      "should_trigger": true,
+      "assertions": [
+        "Uses 108.5 million diluted shares from the press release for Q3",
+        "Shows EPS as net income divided by 108.5 million diluted shares, with the formula",
+        "Explains that share count changes (dilution from stock comp or converts, buybacks) move EPS, and says which applies or that the release does not say"
+      ],
+      "fixtures": [
+        "northwind/press_release_q3.md",
+        "northwind/model.xlsx"
+      ],
+      "origin": "human",
+      "reviewed": true
+    },
+    {
+      "id": 105,
+      "kind": "effectiveness",
+      "prompt": "Update the model for Q3 actuals and tell me whether it still balances afterwards. For reference, the recalculated model shows FY26E net income 244.46 and cash 489.46, and FY27E net income 486.25 and cash 948.71.",
+      "should_trigger": true,
+      "assertions": [
+        "Reports that the FY26E balance check does not balance by 12.5 and names BS!D8 as the cause, rather than claiming the model balances",
+        "Compares the updated Q3 figures with consensus after updating (revenue $405.0M, EPS $0.79, gross margin 40.8%)",
+        "Shows Q3 actuals against prior estimates in a table"
+      ],
+      "fixtures": [
+        "northwind/press_release_q3.md",
+        "northwind/model.xlsx",
+        "northwind/consensus_q3.json"
+      ],
+      "expected_tool_calls": [
+        {
+          "name": "read_workbook",
+          "arguments": {
+            "path": "northwind/model.xlsx"
+          }
+        }
+      ],
+      "origin": "human",
+      "reviewed": true
+    },
+    {
+      "id": 1,
+      "kind": "trigger",
+      "prompt": "Nvidia just reported Q2. Revenue came in at $46.7B vs my $45.9B estimate, gross margin 72.4%. Can you plug these actuals into my model and roll forward FY26/FY27 estimates?",
+      "should_trigger": true,
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": true
+    },
+    {
+      "id": 2,
+      "kind": "trigger",
+      "prompt": "Costco raised full-year comp guidance to 6-7% from 5-6%. I need to revise my revenue and EPS estimates for this year and next and see what it does to my price target.",
+      "should_trigger": true,
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": true
+    },
+    {
+      "id": 3,
+      "kind": "trigger",
+      "prompt": "Attached is my Deere model. Fed cut rates 50bps and steel prices dropped 12% this quarter. Refresh my assumptions and recalc the DCF.",
+      "should_trigger": true,
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": true
+    },
+    {
+      "id": 4,
+      "kind": "trigger",
+      "prompt": "update numbers for Palantir after last night's print, and tell me if my $150 price target still holds",
+      "should_trigger": true,
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": true
+    },
+    {
+      "id": 5,
+      "kind": "trigger",
+      "prompt": "Salesforce closed the Informatica deal. Walk me through adjusting my forward revenue, EBITDA and share count, then show old vs new estimates side by side.",
+      "should_trigger": true,
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": true
+    },
+    {
+      "id": 6,
+      "kind": "trigger",
+      "prompt": "My EPS for Starbucks looks stale. They bought back 2% of shares and took a restructuring charge. Help me revise estimates and separate GAAP from adjusted.",
+      "should_trigger": true,
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": true
+    },
+    {
+      "id": 7,
+      "kind": "trigger",
+      "prompt": "Q3 for Ford is out. Build me the actual vs prior estimate delta table by segment (Blue, Model e, Pro) and tell me whether this is thesis-changing or noise.",
+      "should_trigger": true,
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": true
+    },
+    {
+      "id": 8,
+      "kind": "trigger",
+      "prompt": "Euro strengthened 8% since I last touched my LVMH model. Rework the FX assumptions, update FY estimates, and compare my new numbers to consensus.",
+      "should_trigger": true,
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": true
+    },
+    {
+      "id": 9,
+      "kind": "trigger",
+      "prompt": "Meta reports next Wednesday. What should I be watching for and where is the bar set versus consensus?",
+      "should_trigger": false,
+      "expected_skill": "earnings-preview",
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": true
+    },
+    {
+      "id": 10,
+      "kind": "trigger",
+      "prompt": "Build me a DCF from scratch for a private SaaS company with $50M ARR growing 40%.",
+      "should_trigger": false,
+      "expected_skill": "dcf-model",
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": true
+    },
+    {
+      "id": 11,
+      "kind": "trigger",
+      "prompt": "Write up a recap of Apple's earnings call for the team. Cover key takeaways, management tone, and Q&A highlights.",
+      "should_trigger": false,
+      "expected_skill": "earnings-analysis",
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": true
+    },
+    {
+      "id": 12,
+      "kind": "trigger",
+      "prompt": "Can you check my Excel model for broken formulas, hardcodes, and circular references before I send it to my MD?",
+      "should_trigger": false,
+      "expected_skill": "audit-xls",
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": true
+    },
+    {
+      "id": 13,
+      "kind": "trigger",
+      "prompt": "What's a good recipe for a weeknight chicken curry that takes under 30 minutes?",
+      "should_trigger": false,
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": true
+    },
+    {
+      "id": 14,
+      "kind": "trigger",
+      "prompt": "Help me write a polite email declining a wedding invitation.",
+      "should_trigger": false,
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": true
+    },
+    {
+      "id": 15,
+      "kind": "trigger",
+      "prompt": "Explain how TCP handshakes work in simple terms.",
+      "should_trigger": false,
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": true
+    }
+  ]
+}

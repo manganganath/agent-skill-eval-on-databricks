@@ -1,0 +1,266 @@
+{
+  "skill_name": "audit-xls",
+  "criteria": {},
+  "evals": [
+    {
+      "id": 101,
+      "kind": "effectiveness",
+      "prompt": "Run a full model audit on Northwind's model.xlsx before it goes to IC. Model scope.",
+      "should_trigger": true,
+      "assertions": [
+        "Starts with the model summary line giving the model type, the overall rating, and the counts of critical, warning and info findings",
+        "Reports the FY26E balance sheet imbalance of 12.5 at BS!D15 as critical and traces it to the typed other-assets input at BS!D8",
+        "Reports the #REF! link at IS!D15 as a critical formula error",
+        "Uses the findings table columns (Sheet, Cell/Range, Severity, Category, Issue, Suggested Fix) and changes no cell"
+      ],
+      "fixtures": [
+        "northwind/model.xlsx"
+      ],
+      "expected_tool_calls": [
+        {
+          "name": "read_workbook",
+          "arguments": {
+            "path": "northwind/model.xlsx"
+          }
+        }
+      ],
+      "origin": "human",
+      "reviewed": true
+    },
+    {
+      "id": 102,
+      "kind": "effectiveness",
+      "prompt": "Check my formulas on the IS sheet only. Sheet scope.",
+      "should_trigger": true,
+      "assertions": [
+        "Limits findings to the IS sheet and reports no finding on the BS or CF sheets",
+        "Flags the typed 350.0 in IS!E8 as a hardcode inside a calculation row, with =E5*Inputs!E6 as the suggested fix",
+        "Flags IS!E6 as an inconsistent formula that breaks the pattern of IS!D6",
+        "Flags the #REF! link at IS!D15 (=Inputs!#REF!) as a critical broken cross-sheet link"
+      ],
+      "fixtures": [
+        "northwind/model.xlsx"
+      ],
+      "bug_scope": [
+        "hardcode_calc",
+        "broken_link",
+        "inconsistent_formula"
+      ],
+      "origin": "human",
+      "reviewed": true
+    },
+    {
+      "id": 103,
+      "kind": "effectiveness",
+      "prompt": "The balance sheet doesn't balance and I need to know by how much and why. Audit the whole model, model scope.",
+      "should_trigger": true,
+      "assertions": [
+        "Reports the gap in each period (0.0, 12.5 and 20.0) and names BS!D8 as the cause of the FY26E gap",
+        "Says the FY27E gap originates on the CF sheet rather than the BS sheet",
+        "Changes no cell and offers to fix on request"
+      ],
+      "fixtures": [
+        "northwind/model.xlsx"
+      ],
+      "bug_scope": [
+        "bs_imbalance",
+        "wc_sign"
+      ],
+      "origin": "human",
+      "reviewed": true
+    },
+    {
+      "id": 104,
+      "kind": "effectiveness",
+      "prompt": "I've selected IS!D5:E13. Audit only this selection.",
+      "should_trigger": true,
+      "assertions": [
+        "Limits findings to IS!D5:E13 and does not report IS!D15 or any other cell outside the selection",
+        "Flags IS!E8 (typed number) and IS!E6 (inconsistent formula) with suggested formulas, for example =E5*(1-Inputs!E5) for IS!E6",
+        "Uses the Warning severity for the hardcode and the inconsistent formula, as the skill's severity table requires"
+      ],
+      "fixtures": [
+        "northwind/model.xlsx"
+      ],
+      "bug_scope": [
+        "hardcode_calc",
+        "inconsistent_formula"
+      ],
+      "origin": "human",
+      "reviewed": true
+    },
+    {
+      "id": 105,
+      "kind": "effectiveness",
+      "prompt": "The FY27E balance check on the BS doesn't show zero. Audit the whole model end to end and find out why.",
+      "should_trigger": true,
+      "assertions": [
+        "Identifies the working-capital sign error at CF!E7 and gives the corrected formula =-(BS!E6-BS!D6)",
+        "Quantifies the effect: FY27E cash overstated by 20.0, which carries into the FY27E check at BS!E15",
+        "Changes no cell and asks before fixing, as the skill requires"
+      ],
+      "fixtures": [
+        "northwind/model.xlsx"
+      ],
+      "bug_scope": [
+        "wc_sign"
+      ],
+      "origin": "human",
+      "reviewed": true
+    },
+    {
+      "id": 1,
+      "kind": "trigger",
+      "prompt": "My 3-statement model won't balance — total assets are off from liabilities plus equity by about $2.3M starting in 2026. Can you trace where it breaks?",
+      "should_trigger": true,
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": true
+    },
+    {
+      "id": 2,
+      "kind": "trigger",
+      "prompt": "Can you check the formulas in the range I've selected (C5:H40)? I think some of the SUMs are missing the last row.",
+      "should_trigger": true,
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": true
+    },
+    {
+      "id": 3,
+      "kind": "trigger",
+      "prompt": "We're sending this LBO to IC tomorrow. Do a full review of the workbook first — debt schedule, cash sweep, returns, the whole thing.",
+      "should_trigger": true,
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": true
+    },
+    {
+      "id": 4,
+      "kind": "trigger",
+      "prompt": "Something's off in my DCF. The implied share price jumped 40% after I changed the WACC tab and I can't figure out why.",
+      "should_trigger": true,
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": true
+    },
+    {
+      "id": 5,
+      "kind": "trigger",
+      "prompt": "QA this spreadsheet before I forward it to my VP — look for #REF errors, hardcodes buried in formulas, anything weird.",
+      "should_trigger": true,
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": true
+    },
+    {
+      "id": 6,
+      "kind": "trigger",
+      "prompt": "Ending cash on my cash flow statement doesn't match the balance sheet cash line in Q3 and Q4. Help me debug.",
+      "should_trigger": true,
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": true
+    },
+    {
+      "id": 7,
+      "kind": "trigger",
+      "prompt": "Just sanity check the Revenue Build sheet — the growth rates look aggressive and I'm not sure the segment totals tie.",
+      "should_trigger": true,
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": true
+    },
+    {
+      "id": 8,
+      "kind": "trigger",
+      "prompt": "My accretion/dilution model shows the deal is 15% accretive, which seems too good. Can you look through it for mistakes, like share count or synergy phasing?",
+      "should_trigger": true,
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": true
+    },
+    {
+      "id": 9,
+      "kind": "trigger",
+      "prompt": "Build me a DCF for a mid-cap SaaS company with a 5-year projection, WACC build, and terminal value using both exit multiple and perpetuity growth.",
+      "should_trigger": false,
+      "expected_skill": "dcf-model",
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": true
+    },
+    {
+      "id": 10,
+      "kind": "trigger",
+      "prompt": "This exported CRM data has duplicate rows, inconsistent date formats, and trailing spaces in the company names. Clean it up in Excel.",
+      "should_trigger": false,
+      "expected_skill": "clean-data-xls",
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": true
+    },
+    {
+      "id": 11,
+      "kind": "trigger",
+      "prompt": "Review my pitch deck for typos, inconsistent numbers across slides, and formatting issues before it goes to the client.",
+      "should_trigger": false,
+      "expected_skill": "ib-check-deck",
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": true
+    },
+    {
+      "id": 12,
+      "kind": "trigger",
+      "prompt": "Create a new LBO model from scratch: $500M purchase price, 5.5x leverage, 5-year hold, with a cash sweep.",
+      "should_trigger": false,
+      "expected_skill": "lbo-model",
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": true
+    },
+    {
+      "id": 13,
+      "kind": "trigger",
+      "prompt": "Write a Python script that scrapes weather data and saves it to a CSV every hour.",
+      "should_trigger": false,
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": true
+    },
+    {
+      "id": 14,
+      "kind": "trigger",
+      "prompt": "What's a good itinerary for four days in Lisbon in October?",
+      "should_trigger": false,
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": true
+    },
+    {
+      "id": 15,
+      "kind": "trigger",
+      "prompt": "Draft a polite email to my landlord asking for the broken dishwasher to be repaired.",
+      "should_trigger": false,
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": true
+    }
+  ]
+}

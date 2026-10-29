@@ -1,0 +1,79 @@
+{
+  "skill_name": "morning-note",
+  "source_hash": "sha256:335fae34a819ef1472460e34f550d7364c1dc7de4f07045645d9b2784473b707",
+  "generated_by": "claude-opus",
+  "pass_score": 0.7,
+  "reviewed": true,
+  "criteria": [
+    {
+      "id": "c1",
+      "text": "The note opens with a 'Top Call' headline naming the single most important development. It gives 2-3 sentences on why that development matters and states the stock impact as a rating reiteration or change and/or a price target.",
+      "type": "task_quality",
+      "weight": 5,
+      "source": "Step 2 Morning Note Format — Top Call; Important Notes: lead with the most important thing"
+    },
+    {
+      "id": "c2",
+      "text": "The note takes a clear view on developments, such as bullish/bearish, 'our take', or a rating action. It does not only summarize news without an opinion.",
+      "type": "task_quality",
+      "weight": 5,
+      "source": "Important Notes: Be opinionated"
+    },
+    {
+      "id": "c3",
+      "text": "The note follows the prescribed structure: a header with date, analyst, and sector coverage, then Top Call, then Overnight/Pre-Market Developments with one-line summaries plus a take per company, then Key Events Today with times.",
+      "type": "skill_format",
+      "weight": 4,
+      "source": "Step 2 Morning Note Format"
+    },
+    {
+      "id": "c4",
+      "text": "If a coverage company reported earnings, the response includes a quick-take table comparing Consensus vs Actual with Beat/Miss for revenue, EPS, a key metric, and guidance. The table is followed by 'Our Take' and an explicit Action: maintain, upgrade, or downgrade, and/or a price target adjustment.",
+      "type": "task_quality",
+      "weight": 4,
+      "source": "Step 3 Quick Takes on Earnings"
+    },
+    {
+      "id": "c5",
+      "text": "Any trade idea states a direction (Long/Short), the company, a 1-2 sentence thesis with a catalyst, and an explicit risk describing what would make the idea wrong.",
+      "type": "task_quality",
+      "weight": 4,
+      "source": "Step 2 — Trade Ideas section"
+    },
+    {
+      "id": "c6",
+      "text": "The note is concise: about one page or less, readable in roughly 2 minutes, and uses one-line bullets for secondary items rather than long paragraphs.",
+      "type": "skill_format",
+      "weight": 4,
+      "source": "Step 2 'readable in 2 minutes'; Step 4 'Keep to 1 page max'"
+    },
+    {
+      "id": "c7",
+      "text": "The note separates actionable events such as earnings, M&A, and guidance from noise. It either leaves out or explicitly downplays minor, non-material items.",
+      "type": "task_quality",
+      "weight": 3,
+      "source": "Important Notes: Distinguish between actionable events and noise"
+    },
+    {
+      "id": "c8",
+      "text": "The note includes a time-stamp or caveat that pre-market conditions may change by the open.",
+      "type": "task_quality",
+      "weight": 2,
+      "source": "Important Notes: Time-stamp your takes"
+    },
+    {
+      "id": "c9",
+      "text": "If the inputs contain no material developments, the note states plainly that nothing material happened overnight and that positioning is maintained. It does not invent news or inflate minor items.",
+      "type": "task_quality",
+      "weight": 3,
+      "source": "Important Notes: 'No news' is a valid morning note"
+    },
+    {
+      "id": "c10",
+      "text": "The note includes market context relevant to the sector, such as futures or pre-market moves, sector ETF performance, commodity or currency moves, or economic data releases, with expectations vs. our view where applicable.",
+      "type": "task_quality",
+      "weight": 2,
+      "source": "Step 1 Market Context; Step 2 Key Events Today"
+    }
+  ]
+}

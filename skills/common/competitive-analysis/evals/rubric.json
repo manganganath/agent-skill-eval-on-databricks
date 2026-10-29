@@ -1,0 +1,79 @@
+{
+  "skill_name": "competitive-analysis",
+  "source_hash": "sha256:363dc7363f76a40015f54a4cc1d6220f0c517b9583979a4c154db7d1203a15b3",
+  "generated_by": "claude-opus",
+  "pass_score": 0.7,
+  "reviewed": false,
+  "criteria": [
+    {
+      "id": "c1",
+      "text": "Before researching or creating any slides, the response asks scoping questions (via ask_user_question or equivalent) covering scope (target vs. side-by-side), competitor set, audience/depth, and whether investment context (bull/base/bear) is needed, unless the user already supplied these.",
+      "type": "skill_format",
+      "weight": 5,
+      "source": "Phase 1 — Scope the analysis"
+    },
+    {
+      "id": "c2",
+      "text": "The response proposes an outline of slide titles with one-line content notes and waits for user approval before building any slides.",
+      "type": "skill_format",
+      "weight": 5,
+      "source": "Phase 2 — Outline, approve, then build"
+    },
+    {
+      "id": "c3",
+      "text": "User-specified requirements are followed exactly: section/slide titles verbatim, a real chart object where a chart is requested (table where a table is requested), every listed competitor and year included, and stated values/ratios used without reformulation.",
+      "type": "task_quality",
+      "weight": 5,
+      "source": "Standards — Prompt fidelity; Quality checklist"
+    },
+    {
+      "id": "c4",
+      "text": "The analysis picks 3-5 industry-defining metrics (e.g., ARR/NRR for SaaS, GPV/take rate for payments) and applies them consistently to every competitor, from the same fiscal period with exceptions explicitly flagged.",
+      "type": "task_quality",
+      "weight": 4,
+      "source": "Step 0 — Industry-defining metrics; Data comparability"
+    },
+    {
+      "id": "c5",
+      "text": "Every number carries a citation in the form '[Company] [Document] ([Date])', and missing data appears as '-' or 'N/A' with estimates marked '[E]', never left blank.",
+      "type": "task_quality",
+      "weight": 4,
+      "source": "Data comparability"
+    },
+    {
+      "id": "c6",
+      "text": "Slide titles state insights (e.g., 'Scale leaders pulling away from niche players') rather than topic labels like 'Competitive Analysis', except where the user dictated exact titles.",
+      "type": "task_quality",
+      "weight": 3,
+      "source": "Design — Slide titles are insights"
+    },
+    {
+      "id": "c7",
+      "text": "The comparative analysis table pairs ratings with actual figures (e.g., '●●● $160B'), not bare dots or ratings alone.",
+      "type": "task_quality",
+      "weight": 3,
+      "source": "Step 7 — Comparative analysis; Design"
+    },
+    {
+      "id": "c8",
+      "text": "The synthesis rates each competitor Strong/Moderate/Weak on the four moat categories (network effects, switching costs, scale economies, intangible assets) and names durable advantages, structural vulnerabilities, and current state vs. trajectory.",
+      "type": "task_quality",
+      "weight": 4,
+      "source": "Step 9 — Synthesis"
+    },
+    {
+      "id": "c9",
+      "text": "When investment context applies, bull/base/bear scenarios include probabilities and key drivers, and signposts are quantified (e.g., 'margin below 40%') rather than vague. Scenarios are omitted when scoping said this is not an investment thesis.",
+      "type": "task_quality",
+      "weight": 3,
+      "source": "Step 9 — Investment contexts; Design — Signposts are quantified"
+    },
+    {
+      "id": "c10",
+      "text": "Formatting follows the skill's spec: explicit fonts (titles 28-32pt bold, body/table/footnotes at least 14pt), 2-3 muted colors, gray bold table headers with right-aligned numbers, legends inside chart bounds, and no overflow or overlapping elements, confirmed through visual verification of each slide.",
+      "type": "skill_format",
+      "weight": 3,
+      "source": "Design — Typography, Charts, Tables, Color; Quality checklist"
+    }
+  ]
+}

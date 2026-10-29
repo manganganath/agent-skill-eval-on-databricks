@@ -1,0 +1,160 @@
+{
+  "skill_name": "deck-refresh",
+  "criteria": {},
+  "evals": [
+    {
+      "id": 1,
+      "kind": "trigger",
+      "prompt": "Our board deck still has Q3 figures. Q4 revenue came in at $512M vs the $485M we show, and adj. EBITDA was $135M instead of $120M. Can you update the deck without messing up the formatting?",
+      "should_trigger": true,
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": false
+    },
+    {
+      "id": 2,
+      "kind": "trigger",
+      "prompt": "I uploaded the pitch book and an Excel with old and new columns for the trading comps. Please refresh the comps pages so the multiples match the new sheet.",
+      "should_trigger": true,
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": false
+    },
+    {
+      "id": 3,
+      "kind": "trigger",
+      "prompt": "roll this forward to FY25 — the actuals are in, net income was $88M, margins 22%. figure out what needs swapping in the slides",
+      "should_trigger": true,
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": false
+    },
+    {
+      "id": 4,
+      "kind": "trigger",
+      "prompt": "Every place it says $1.2B in this presentation needs to become $1.35B. That includes chart axes and the footnotes, which I think say $1,200 million in a couple of spots.",
+      "should_trigger": true,
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": false
+    },
+    {
+      "id": 5,
+      "kind": "trigger",
+      "prompt": "Earnings dropped this morning. Swap the new EPS ($2.14) and revenue guide ($4.1-4.3B) into the investor update deck I have open in PowerPoint.",
+      "should_trigger": true,
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": false
+    },
+    {
+      "id": 6,
+      "kind": "trigger",
+      "prompt": "Market data got rebased to today's close. Can you push the new share prices and EV figures through the valuation slides? Also tell me whether the % premium numbers are now stale.",
+      "should_trigger": true,
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": false
+    },
+    {
+      "id": 7,
+      "kind": "trigger",
+      "prompt": "Quarterly refresh time on the management presentation. Customer count went from 4,200 to 4,650 and ARR from $310M to $342M. The bar chart on slide 6 has to actually move, not just get a new label.",
+      "should_trigger": true,
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": false
+    },
+    {
+      "id": 8,
+      "kind": "trigger",
+      "prompt": "We restated last year. Revenue goes from $485MM to $478MM throughout the deck. Show me where it appears before you change anything.",
+      "should_trigger": true,
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": false
+    },
+    {
+      "id": 9,
+      "kind": "trigger",
+      "prompt": "Can you review this deck before it goes to the client and catch any numbers that don't tie across slides, typos, or formatting inconsistencies?",
+      "should_trigger": false,
+      "expected_skill": "ib-check-deck",
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": false
+    },
+    {
+      "id": 10,
+      "kind": "trigger",
+      "prompt": "Build me a comparable companies analysis for mid-cap SaaS names with EV/Revenue and EV/EBITDA multiples in a spreadsheet.",
+      "should_trigger": false,
+      "expected_skill": "comps-analysis",
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": false
+    },
+    {
+      "id": 11,
+      "kind": "trigger",
+      "prompt": "Create a new 10-slide presentation summarizing our Q4 results from scratch. Use these numbers: revenue $512M, EBITDA $135M.",
+      "should_trigger": false,
+      "expected_skill": "pptx-author",
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": false
+    },
+    {
+      "id": 12,
+      "kind": "trigger",
+      "prompt": "Turn our existing firm deck into a reusable PowerPoint template with master layouts so analysts can start new decks from it.",
+      "should_trigger": false,
+      "expected_skill": "ppt-template-creator",
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": false
+    },
+    {
+      "id": 13,
+      "kind": "trigger",
+      "prompt": "What's a good recipe for banana bread that doesn't use eggs?",
+      "should_trigger": false,
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": false
+    },
+    {
+      "id": 14,
+      "kind": "trigger",
+      "prompt": "Write a Python function that parses ISO 8601 timestamps and converts them to Unix time.",
+      "should_trigger": false,
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": false
+    },
+    {
+      "id": 15,
+      "kind": "trigger",
+      "prompt": "Help me draft a polite email declining a meeting invitation next Tuesday.",
+      "should_trigger": false,
+      "assertions": [],
+      "fixtures": [],
+      "origin": "generated",
+      "reviewed": false
+    }
+  ]
+}
