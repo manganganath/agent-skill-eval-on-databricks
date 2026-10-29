@@ -23,7 +23,7 @@ function renderAt(path: string) {
 
 beforeEach(() => {
   vi.mocked(api.me).mockReset();
-  vi.mocked(api.me).mockResolvedValue({ user: "ana@example.com", groups: [], is_reviewer: false });
+  vi.mocked(api.me).mockResolvedValue({ user: "ana@example.com", groups: [], is_reviewer: false, is_author: false });
 });
 
 describe("Layout", () => {
@@ -45,7 +45,7 @@ describe("Layout", () => {
   });
 
   it("shows a Reviewer badge to a reviewer", async () => {
-    vi.mocked(api.me).mockResolvedValue({ user: "rita@example.com", groups: ["reviewers"], is_reviewer: true });
+    vi.mocked(api.me).mockResolvedValue({ user: "rita@example.com", groups: ["reviewers"], is_reviewer: true, is_author: false });
     renderAt("/");
     expect(await screen.findByText("rita@example.com")).toBeTruthy();
     expect(screen.getByText("Reviewer")).toBeTruthy();

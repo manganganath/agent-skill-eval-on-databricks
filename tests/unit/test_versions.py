@@ -340,6 +340,25 @@ def test_gate_ignores_rows_from_untrusted_run_authors(reg, make_bundle):
     _gate(reg, swapped)
 
 
+@pytest.mark.parametrize("source", ["manual", "hub", "pr", "nightly", None])
+def test_gate_accepts_only_rows_of_the_merge_eval(reg, make_bundle, source):
+    """A Skill Hub run (manual or hub), a pull request eval or a nightly run evaluates the same content with a
+    trusted author, but only the merge eval releases: its rows never satisfy publish, even under the gate's key."""
+    b = evaluated(reg, make_bundle("common", "audit-xls"), trigger_source=source)
+    with pytest.raises(PublishRefused, match="no gating eval result"):
+        _gate(reg, b)
+
+
+def test_the_gate_takes_its_trigger_source_from_the_merge_eval():
+    """The value the publish gate accepts is the one the merge eval in skills-publish.yml sets."""
+    from pathlib import Path
+
+    from skillhub.registry.versions import MERGE_TRIGGER_SOURCE
+
+    text = (Path(__file__).resolve().parents[2] / ".github" / "workflows" / "skills-publish.yml").read_text()
+    assert f'trigger_source: "{MERGE_TRIGGER_SOURCE}"' in text
+
+
 def test_gate_fails_closed_without_trusted_authors(reg, make_bundle):
     b = evaluated(reg, make_bundle("common", "audit-xls"))
     with pytest.raises(PublishRefused, match="cannot check the eval .* no trusted run authors"):
@@ -355,7 +374,8 @@ def test_gate_runs_the_merge_gates_reader_over_every_department(reg, make_bundle
     reg.sql.calls.clear()
     _gate(reg, b)
     [(statement, params)] = reg.sql.calls
-    assert statement == _matrix_sql(reg.cfg, 1) and params == {"run_key": "r", "author_0": TRUSTED}
+    assert statement == _matrix_sql(reg.cfg, 1, merge_only=True)
+    assert params == {"run_key": "r", "author_0": TRUSTED, "trigger_source": "merge"}
     assert statement.count("SELECT * EXCEPT (rn)") == len(reg.cfg.departments)
     rows = load_matrix_rows(reg.sql.execute, reg.cfg, "r", trusted={TRUSTED})
     assert {r["mode"] for r in rows} == {"trigger", "with_skill", "without_skill"}  # no parent row

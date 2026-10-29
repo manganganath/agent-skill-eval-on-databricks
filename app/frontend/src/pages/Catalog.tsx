@@ -1,8 +1,10 @@
 import { useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { api } from "../api/client";
-import type { SkillSummary, Verdict } from "../api/types";
+import type { CandidateSummary, EvalAccess, Me, SkillSummary, Verdict } from "../api/types";
+import { candidatePath, canSeeCandidates } from "../candidates";
 import { useAsync } from "../hooks/useAsync";
+import { CandidateBadge } from "../components/CandidateBadge";
 import { EmptyState } from "../components/EmptyState";
 import { ErrorState } from "../components/ErrorState";
 import { Loading } from "../components/Loading";
@@ -22,7 +24,15 @@ const VERDICT_OPTIONS: { value: VerdictFilter; label: string }[] = [
   { value: "none", label: "No results yet" },
 ];
 
-function matchesVerdict(s: SkillSummary, verdict: VerdictFilter): boolean {
+// Live skills, skills under review (candidates), or both. Only authors and reviewers see candidates.
+type StatusFilter = "all" | "live" | "candidate";
+const STATUS_OPTIONS: { value: StatusFilter; label: string }[] = [
+  { value: "all", label: "All" },
+  { value: "live", label: "Live" },
+  { value: "candidate", label: "Candidates" },
+];
+
+function matchesVerdict(s: { verdicts: Record<string, Verdict> }, verdict: VerdictFilter): boolean {
   if (verdict === "") return true;
   const values = Object.values(s.verdicts);
   return verdict === "none" ? values.length === 0 : values.includes(verdict);
@@ -36,9 +46,35 @@ function groupByDept(skills: SkillSummary[]): Map<string, SkillSummary[]> {
 
 const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;
 
+// The live search runs on the server; candidates are few, so their search runs here, on the same fields.
+function matchesText(c: CandidateSummary, q: string): boolean {
+  const needle = q.toLowerCase();
+  return !needle || c.name.toLowerCase().includes(needle) || (c.description ?? "").toLowerCase().includes(needle);
+}
+
+function Scorecard({ label, verdicts, access }: { label: string; verdicts: Record<string, Verdict>; access: EvalAccess }) {
+  const entries = Object.entries(verdicts);
+  return (
+    <>
+      {access !== "ok" && (
+        <p className="card-note" role="note">
+          {access === "denied"
+            ? "You can't read eval results for this department"
+            : "Eval results are temporarily unavailable"}
+        </p>
+      )}
+      <ul className="scorecard" aria-label={label}>
+        {entries.map(([model, verdict]) => (
+          <li key={model}><span className="model">{model}</span> <VerdictChip verdict={verdict} /></li>
+        ))}
+        {entries.length === 0 && <li className="muted">No results yet</li>}
+      </ul>
+    </>
+  );
+}
+
 // `showDept` is off inside a department section, whose heading already names the department.
 export function SkillCard({ s, showDept = true }: { s: SkillSummary; showDept?: boolean }) {
-  const entries = Object.entries(s.verdicts);
   return (
     <li className="skill-card">
       <div className="skill-card-head">
@@ -54,19 +90,25 @@ export function SkillCard({ s, showDept = true }: { s: SkillSummary; showDept?: 
       </div>
       {showDept && <p className="skill-card-dept">{s.dept}</p>}
       {s.description && <p className="skill-card-desc">{s.description}</p>}
-      {s.eval_access !== "ok" && (
-        <p className="card-note" role="note">
-          {s.eval_access === "denied"
-            ? "You can't read eval results for this department"
-            : "Eval results are temporarily unavailable"}
-        </p>
-      )}
-      <ul className="scorecard" aria-label={`Latest verdicts for ${s.name}`}>
-        {entries.map(([model, verdict]) => (
-          <li key={model}><span className="model">{model}</span> <VerdictChip verdict={verdict} /></li>
-        ))}
-        {entries.length === 0 && <li className="muted">No results yet</li>}
-      </ul>
+      <Scorecard label={`Latest verdicts for ${s.name}`} verdicts={s.verdicts} access={s.eval_access} />
+    </li>
+  );
+}
+
+// The live card's shape, marked as unreleased: the badge names the pull request, and a dashed edge sets it apart.
+export function CandidateCard({ c }: { c: CandidateSummary }) {
+  return (
+    <li className="skill-card skill-card-candidate">
+      <div className="skill-card-head">
+        <h3><Link className="card-link" to={candidatePath(c)}>{c.name}</Link></h3>
+        <CandidateBadge kind={c.kind} pr={c.pr_number} />
+      </div>
+      <p className="skill-card-dept">{c.dept}</p>
+      {c.description && <p className="skill-card-desc">{c.description}</p>}
+      <Scorecard
+        label={`Latest verdicts for ${c.name}, ${c.kind === "draft" ? "draft" : `in PR #${c.pr_number}`}`}
+        verdicts={c.verdicts} access={c.eval_access}
+      />
     </li>
   );
 }
@@ -76,6 +118,7 @@ export default function Catalog() {
   const [q, setQ] = useState("");
   const [dept, setDept] = useState("");
   const [verdict, setVerdict] = useState<VerdictFilter>("");
+  const [status, setStatus] = useState<StatusFilter>("all");
   const [total, setTotal] = useState<number | null>(null);
   const searchRef = useRef<HTMLInputElement>(null);
 
@@ -85,6 +128,12 @@ export default function Catalog() {
   }, [input]);
 
   const { data, error, loading, reload } = useAsync<SkillSummary[]>(() => api.skills(q || undefined), [q]);
+  // One /api/me request per page load, shared with the header. Candidates are asked for only by authors and reviewers.
+  const me = useAsync<Me>(() => api.me(), []);
+  const reviewing = canSeeCandidates(me.data);
+  const cands = useAsync<CandidateSummary[]>(
+    () => (reviewing ? api.candidates() : Promise.resolve([])), [reviewing],
+  );
 
   // The live count is the unsearched list, so a search does not change it.
   useEffect(() => {
@@ -94,19 +143,30 @@ export default function Catalog() {
   const all = data ?? [];
   // Departments come from the loaded skills, so the list only offers departments the user can see.
   // The chosen one stays listed even when the current search returns none of its skills.
-  const departments = [...new Set([...all.map((s) => s.dept), ...(dept ? [dept] : [])])];
-  const visible = all.filter((s) => (dept === "" || s.dept === dept) && matchesVerdict(s, verdict));
+  const candidates = reviewing ? cands.data ?? [] : [];
+  const departments = [
+    ...new Set([...all.map((s) => s.dept), ...candidates.map((c) => c.dept), ...(dept ? [dept] : [])]),
+  ];
+  const showLive = status !== "candidate";
+  const showCandidates = reviewing && status !== "live";
+  const visible = showLive ? all.filter((s) => (dept === "" || s.dept === dept) && matchesVerdict(s, verdict)) : [];
+  const visibleCandidates = showCandidates
+    ? candidates.filter((c) => matchesText(c, q) && (dept === "" || c.dept === dept) && matchesVerdict(c, verdict))
+    : [];
   const groups = groupByDept(visible);
   const filtering = q !== "" || dept !== "" || verdict !== "";
   const settled = !loading && !error && data !== undefined;
-  const nothingLoaded = settled && all.length === 0 && q === "";
-  const noMatches = settled && !nothingLoaded && visible.length === 0;
+  const candidatesSettled = showCandidates && !cands.loading && !cands.error;
+  const nothingLoaded = showLive && settled && all.length === 0 && q === "";
+  // A candidate that matches is a match too, so "no skills match" never sits next to one.
+  const noMatches = showLive && settled && !nothingLoaded && visible.length === 0 && visibleCandidates.length === 0;
 
   function clearFilters() {
     setInput("");
     setQ("");
     setDept("");
     setVerdict("");
+    setStatus("all");
     searchRef.current?.focus(); // the button goes away with the empty state, so focus moves to the search box
   }
 
@@ -116,7 +176,9 @@ export default function Catalog() {
         <div className="title-row">
           <h1>Skills</h1>
           {total !== null && total > 0 && <span className="count-pill">{total} live</span>}
+          {candidates.length > 0 && <span className="count-pill count-pill-review">{candidates.length} under review</span>}
         </div>
+        {reviewing && <Link className="btn" to="/drafts/new">Upload draft</Link>}
       </div>
       <div className="catalog-tools">
         <div className="field search">
@@ -130,6 +192,14 @@ export default function Catalog() {
             placeholder="Name or description"
           />
         </div>
+        {reviewing && (
+          <div className="field">
+            <label htmlFor="status-filter">Status</label>
+            <select id="status-filter" value={status} onChange={(e) => setStatus(e.target.value as StatusFilter)}>
+              {STATUS_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+            </select>
+          </div>
+        )}
         <div className="field">
           <label htmlFor="dept-filter">Department</label>
           <select id="dept-filter" value={dept} onChange={(e) => setDept(e.target.value)}>
@@ -144,11 +214,38 @@ export default function Catalog() {
           </select>
         </div>
         <p className="result-count" aria-live="polite">
-          {settled && filtering && !noMatches ? `Showing ${visible.length} of ${total ?? all.length}` : ""}
+          {showLive && settled && filtering && !noMatches ? `Showing ${visible.length} of ${total ?? all.length}` : ""}
         </p>
       </div>
-      {loading && <Loading label="Loading skills" />}
-      {error ? <ErrorState error={error} onRetry={reload} /> : null}
+      {showLive && loading && <Loading label="Loading skills" />}
+      {showLive && error ? <ErrorState error={error} onRetry={reload} /> : null}
+      {showCandidates && cands.loading && <Loading label="Loading candidates" />}
+      {showCandidates && cands.error ? <ErrorState error={cands.error} onRetry={cands.reload} /> : null}
+      {visibleCandidates.length > 0 && (
+        <section aria-labelledby="under-review" className="dept-group review-group">
+          <div className="group-head">
+            <h2 id="under-review">Under review</h2>
+            <span>{plural(visibleCandidates.length, "skill")}</span>
+          </div>
+          <p className="group-note">
+            Not released yet: skills in pull requests, and drafts uploaded here. Open one to see its test cases and results.
+          </p>
+          <ul className="cards">
+            {visibleCandidates.map((c) => <CandidateCard key={`${c.run_key}/${c.dept}/${c.name}`} c={c} />)}
+          </ul>
+        </section>
+      )}
+      {status === "candidate" && candidatesSettled && candidates.length === 0 && (
+        <EmptyState title="No skills are under review">
+          <p>A skill appears here when a pull request adds or changes it and CI uploads it for evaluation.</p>
+        </EmptyState>
+      )}
+      {status === "candidate" && candidatesSettled && candidates.length > 0 && visibleCandidates.length === 0 && (
+        <EmptyState title="No candidates match your filters">
+          <p>Try another search or filter, or clear them to see every skill under review.</p>
+          <button type="button" onClick={clearFilters}>Clear filters</button>
+        </EmptyState>
+      )}
       {nothingLoaded && (
         <EmptyState title="No skills are live yet">
           <p>

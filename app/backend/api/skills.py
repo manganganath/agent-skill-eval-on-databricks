@@ -30,7 +30,7 @@ MAX_PARALLEL = 8
 _ACCESS_ORDER: tuple[EvalAccess, ...] = ("ok", "denied", "unavailable")
 
 
-def _read_dept(
+def read_dept(
     sql: UserSql, statement: tuple[str, dict[str, object]], dept: str
 ) -> tuple[list[dict], EvalAccess]:
     """Rows from one department's eval tables, plus whether the user could read them.
@@ -46,7 +46,7 @@ def _read_dept(
         return [], "unavailable"
 
 
-def _worst(*accesses: EvalAccess) -> EvalAccess:
+def worst_access(*accesses: EvalAccess) -> EvalAccess:
     return max(accesses, key=_ACCESS_ORDER.index)
 
 
@@ -59,8 +59,8 @@ def _start_live_reads(
 ) -> LiveReads:
     """Start the journal and verdict reads for the department (or one skill in it), side by side."""
     return (
-        pool.submit(_read_dept, sql, queries.journal_sql(cfg, dept, skill), dept),
-        pool.submit(_read_dept, sql, queries.catalog_verdicts_sql(cfg, dept, skill), dept),
+        pool.submit(read_dept, sql, queries.journal_sql(cfg, dept, skill), dept),
+        pool.submit(read_dept, sql, queries.catalog_verdicts_sql(cfg, dept, skill), dept),
     )
 
 
@@ -74,7 +74,7 @@ def _live_state(reads: LiveReads) -> LiveState:
     for r in journal:
         by_skill.setdefault(r["skill"], []).append(r)
     live = {k: skill_ref.live_version(v) for k, v in by_skill.items()}
-    return live, skill_ref.live_verdicts(matrix, live), _worst(access, matrix_access)
+    return live, skill_ref.live_verdicts(matrix, live), worst_access(access, matrix_access)
 
 
 @router.get("/skills", response_model=list[SkillSummary])
@@ -125,7 +125,7 @@ def list_skills(
     return out
 
 
-def _decode_text(files: dict[str, bytes]) -> dict[str, str]:
+def decode_text(files: dict[str, bytes]) -> dict[str, str]:
     text: dict[str, str] = {}
     for path, data in sorted(files.items()):
         if path.startswith("evals/"):
@@ -270,10 +270,10 @@ def skill_detail(
         description=info.description,
         live_version=live.get(name),
         verdicts=verdicts.get(name, {}),
-        files=_decode_text(files),
+        files=decode_text(files),
         evals=evals,
         rubric=rubric,
-        eval_access=_worst(evals_access, rubric_access, live_access),
+        eval_access=worst_access(evals_access, rubric_access, live_access),
     )
 
 

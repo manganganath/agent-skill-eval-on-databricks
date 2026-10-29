@@ -59,17 +59,20 @@ def add_rows(
     author: str = TRUSTED,
     rubric: str = RUBRIC,
     dataset: str = DATASET,
+    trigger_source: str | None = "merge",
 ) -> None:
-    """One child row per (mode, verdict) cell, plus the parent row the runner writes (mode NULL)."""
+    """One child row per (mode, verdict) cell, plus the parent row the runner writes (mode NULL). The rows come
+    from the merge eval (`trigger_source` merge) unless a test says otherwise."""
     ensure_eval_runs(sql, cfg)
     t = f"{evals_schema(cfg, dept)}.eval_runs"
     rows = [(None, None, None)] + [(f"parent-{run_key}", m, v) for m, v in cells]
     for i, (parent, mode, verdict) in enumerate(rows):
         sql.execute(
             f"INSERT INTO {t} (run_id, parent_run_id, run_key, dept, skill, content_hash, rubric_hash, "
-            "dataset_digest, model_profile, harness, mode, verdict, started_at, synced_at, run_author) VALUES "
+            "dataset_digest, model_profile, harness, mode, verdict, started_at, synced_at, run_author, "
+            "trigger_source) VALUES "
             "(:rid, :parent, :rk, :dept, :skill, :h, :rubric, :dataset, :model, 'reference', :mode, :verdict, "
-            ":started, :started, :author)",
+            ":started, :started, :author, :trigger)",
             {
                 "rid": f"{run_key}-{model}-{started_at}-{author}-{i}",
                 "parent": parent,
@@ -84,6 +87,7 @@ def add_rows(
                 "verdict": verdict,
                 "started": started_at,
                 "author": author,
+                "trigger": trigger_source,
             },
         )
 

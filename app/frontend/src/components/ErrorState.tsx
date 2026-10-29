@@ -31,6 +31,17 @@ const MESSAGES: Record<string, string> = {
   prompt_too_long: "The test input is too long. Keep it under 4000 characters.",
   too_many_models: "Pick at most 3 models.",
   unknown_model: "One of the selected models is not configured.",
+  not_author: "Only skill authors and reviewers can do this.",
+  candidate_not_found:
+    "This candidate was not found, or you do not have access to it. Candidate uploads are removed 7 days after upload.",
+  candidate_unreadable: "Skill Hub could not read the candidate skills. Try again later.",
+  draft_invalid: "The draft was not uploaded. Fix the problems listed and upload it again.",
+  draft_too_large: "The draft is too large. A draft may hold up to 200 files and 4 MB once unpacked.",
+  draft_store_failed: "Skill Hub could not save the draft. Try again later, or ask an administrator to check the drafts folder.",
+  department_not_allowed: "You can upload drafts only to departments whose live skills you can read.",
+  rubric_required: "This skill has no rubric, so it can run in trigger mode only. Clear effectiveness and try again.",
+  mixed_sources:
+    "Evaluate live skills and candidates in separate runs, with candidates from one upload only. A candidate run cannot pin versions.",
 };
 
 export function ErrorState({ error, onRetry }: { error: unknown; onRetry?: () => void }) {

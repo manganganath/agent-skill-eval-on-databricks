@@ -476,4 +476,62 @@ def test_cleanup_reads_only_this_catalogs_candidates_under_the_workspace_root(mo
             return iter([])
 
     cleanup_stale(cfg, _cleanup_w(Ws([])), 24)
-    assert listed == ["/Workspace/Users/ci-app/skill-hub/skill_hub/candidates"]
+    assert listed == [
+        "/Workspace/Users/ci-app/skill-hub/skill_hub/candidates",
+        "/Workspace/Users/ci-app/skill-hub/skill_hub/drafts",
+    ]
+
+
+DRAFTS = "/Workspace/Shared/skill-hub/skill_hub/drafts"  # <workspace_root>/<catalog>/drafts
+
+
+class _TwoRoots:
+    """The candidates and drafts folders, each with dated child folders (marker Unix seconds, or None)."""
+
+    def __init__(self, folders):
+        self.folders = folders  # root -> {name: marker or None}
+        self.deleted = []
+
+    def list(self, path, recursive=False, **kw):
+        from databricks.sdk.errors import NotFound
+
+        root, _, name = path.rpartition("/")
+        if name in self.folders.get(root, {}):
+            return iter([])  # a draft or candidate folder with no dated files
+        if path not in self.folders:
+            raise NotFound(path)
+        return iter(_dir(name, root=path) for name in self.folders[path])
+
+    def download(self, path, **kw):
+        import io
+
+        from databricks.sdk.errors import NotFound
+
+        folder, _, _ = path.rpartition("/")
+        root, _, name = folder.rpartition("/")
+        marker = self.folders.get(root, {}).get(name)
+        if marker is None:
+            raise NotFound(path)
+        return io.BytesIO(marker.encode())
+
+    def delete(self, path, recursive=False):
+        assert recursive
+        self.deleted.append(path)
+
+
+def test_cleanup_removes_stale_drafts_by_the_same_age_rule(cfg):
+    old, new = str(_ago_ms(169) // 1000), str(_ago_ms(1) // 1000)
+    ws = _TwoRoots(
+        {
+            ROOT: {"pr1_old": old, "pr2_new": new},
+            DRAFTS: {"draft_old": old, "draft_new": new, "undated": None},
+        }
+    )
+    removed = cleanup_stale(cfg, _cleanup_w(ws), 24)
+    assert removed == [f"{ROOT}/pr1_old", f"{DRAFTS}/draft_old"]
+    assert ws.deleted == removed
+
+
+def test_cleanup_without_a_drafts_folder_still_cleans_the_candidates(cfg):
+    ws = _TwoRoots({ROOT: {"pr1_old": str(_ago_ms(200) // 1000)}})
+    assert cleanup_stale(cfg, _cleanup_w(ws), 24) == [f"{ROOT}/pr1_old"]

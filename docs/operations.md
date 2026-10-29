@@ -77,7 +77,7 @@ Bootstrap registers the prompts. It registers one `make_judge` judge in each ski
 | `skillhub-reviewers` | Account group | Reviewers. They switch versions in the Skill Hub, read the cross-department views and the dashboard, and read the quarantined `external` department. They do not control GitHub approvals (see Secrets). |
 | `skillhub-ci` | Service principal | Owns the hub schemas, tables and views after the hand-over. Owns live and versioned skills and writes the version journal. Deploys the bundle and runs `skill-switch` (publish, switch, retire). Its secret is only in the GitHub `production` environment |
 | `skillhub-ci-eval` | Service principal | Runs `skill-eval` for pull requests, merges and the nightly run, and syncs results. It writes `eval_runs`, `eval_cases`, `rubrics` and the trace tables. It cannot publish or switch. Its secret is only in the GitHub `ci-eval` environment |
-| App service principal | Service principal | Starts the Jobs on behalf of users. The Jobs run as `skillhub-ci-eval` or `skillhub-ci`. It may switch and retire through `skill-switch`, but never publish, and the gates do not trust MLflow runs it writes. It also writes Try traces and runs the effective-permissions fallback. When `SKILLHUB_APP_PRINCIPAL` is set, bootstrap grants it `USE CATALOG`, `USE SCHEMA` and `READ VOLUME` on each department's live and versions schemas, `USE SCHEMA` on each `<d>_evals`, and write access to the trace tables. It never gets `MANAGE`, so if the fallback cannot read a user's effective permissions, the app skips that department. |
+| App service principal | Service principal | Starts the Jobs on behalf of users. The Jobs run as `skillhub-ci-eval` or `skillhub-ci`. It may switch and retire through `skill-switch`, but never publish, and the gates do not trust MLflow runs it writes. It also writes Try traces, runs the effective-permissions fallback, and stores Skill Hub drafts in `<workspace_root>/<catalog>/drafts`, where bootstrap gives it `CAN_MANAGE`. When `SKILLHUB_APP_PRINCIPAL` is set, bootstrap grants it `USE CATALOG`, `USE SCHEMA` and `READ VOLUME` on each department's live and versions schemas, `USE SCHEMA` on each `<d>_evals`, and write access to the trace tables. It never gets Unity Catalog `MANAGE`, so if the fallback cannot read a user's effective permissions, the app skips that department. |
 
 In this release CI uses an OAuth machine-to-machine secret. OIDC federation is planned.
 
@@ -207,7 +207,7 @@ A worker's log lines appear in the Job output, prefixed with `[dept/skill]`. A w
 - The PR and merge gates pass that output to `check-verdict --expect-file`. They fail if a planned cell has no trusted row ("no result for planned cells"), or if a gating row evaluated other content, another rubric, or other cases or fixtures ("wrong content"). So an `evals.json` or fixture swapped in the candidate folder, or a failing child run deleted before sync, fails the gate.
 - Publishing is bound the same way. `skillhub job-switch --action publish` takes `--run-key` and the plan's `--expect-rubric-hash`, `--expect-dataset-digest` and `--expect-cells`. It exits 2 and writes a `publish_refused` journal row unless all of these hold:
   - The `skill-switch` Job run was started by `skillhub-ci` (`SKILLHUB_CI_PRINCIPAL`). The Skill Hub may switch and retire through the Job, but never publish.
-  - Every planned cell has a trusted row for that run key.
+  - Every planned cell has a trusted row for that run key, from the merge eval: only rows with `trigger_source` `merge` count. A pull request eval, a Skill Hub run (`hub` or `manual`, which covers candidates and drafts) or a nightly run never satisfies publish, even under the same run key.
   - Every gating row evaluated exactly the bundle being published with the expected rubric, cases and fixtures.
   - None of the latest trigger and with-skill verdicts is blocking.
 
@@ -246,7 +246,7 @@ A department with `quarantine: true` in `config/hub.yaml` (for example `external
 CI never promotes content out of quarantine. An operator does it, outside the pipeline:
 
 1. A reviewer reads the full skill content, including `references/`, and records the decision in the pull request.
-2. The operator creates the skill in the target department. Run `uv run skillhub lint`, then evaluate the new copy with `uv run skillhub eval` (see Run evals).
+2. The operator creates the skill in the target department. Run `uv run skillhub lint`, then evaluate the new copy with `uv run skillhub eval --trigger-source merge` (see Run evals). Publish accepts only results with the merge eval's trigger source.
 3. The operator publishes and switches it with the operator commands `skillhub publish` and `skillhub switch`. These need `skillhub-ci`-level grants and bypass the approval gate, so keep the review record from step 1.
 4. If the move was merged to `main`, the publish workflow diffs from the `skillhub/released` tag and fails on the move every time. After you release the skill by hand, move that tag to the merge commit.
 
@@ -276,12 +276,13 @@ Alerts notify the destination in the `SKILLHUB_ALERT_DESTINATION_ID` variable of
 
 ### Experiment folders
 
-Experiments and CI candidates live under the workspace root (`workspace_root` in `config/hub.yaml`, from `SKILLHUB_WORKSPACE_ROOT`):
+Experiments, CI candidates and Skill Hub drafts live under the workspace root (`workspace_root` in `config/hub.yaml`, from `SKILLHUB_WORKSPACE_ROOT`):
 
 - Experiments: `<workspace_root>/<catalog>/<dept>/<skill>`.
-- CI candidates: `<workspace_root>/<catalog>/candidates/<run key>`. `candidates` is therefore not a valid department key.
+- CI candidates: `<workspace_root>/<catalog>/candidates/<run key>`.
+- Skill Hub drafts: `<workspace_root>/<catalog>/drafts/draft_<id>`.
 
-The catalog is in the path, so dev and prod do not collide. Nightly cleanup deletes only the candidates of its own catalog.
+`candidates` and `drafts` are therefore not valid department keys. The catalog is in the path, so dev and prod do not collide. Nightly cleanup deletes only the candidates and drafts of its own catalog.
 
 The bundle sets the workspace root to the home folder of `skillhub-ci`, `/Users/<ci principal>/skill-hub`. Do not use `/Shared`: every folder under `/Workspace/Shared` inherits `CAN_MANAGE` for `users`, and no lower access list can remove it. While `users` has that access, any user can edit runs and read traces.
 
@@ -293,7 +294,11 @@ Bootstrap creates the folders (an admin can create folders in a service principa
 - `skillhub-reviewers`: `CAN_READ`.
 - `users`: nothing.
 
+`candidates/` adds `CAN_MANAGE` for `skillhub-ci` and `skillhub-ci-eval`: CI creates a folder per pull request run there. `drafts/` adds `CAN_MANAGE` for `skillhub-ci`, `skillhub-ci-eval` and the app service principal: the Skill Hub creates a folder per draft there, and the nightly cleanup (as `skillhub-ci-eval`) deletes old ones. The app never gets `CAN_MANAGE` on `candidates/`, so it cannot change a pull request's upload. Without `SKILLHUB_APP_PRINCIPAL`, `drafts/` has the two CI principals only and draft uploads fail with `draft_store_failed`.
+
 The parent `<workspace_root>` gets only the two CI principals. The Job gets the app principal from the bundle. When a person runs bootstrap, set the environment variable `SKILLHUB_APP_PRINCIPAL` first. Without it the app gets no access, and bootstrap warns. Bootstrap also warns about any grant that the root inherits beyond these lists. `skillhub-ci` inheriting `CAN_MANAGE` from its own home folder is expected.
+
+After an upgrade that adds the drafts folder, re-run the `skillhub-bootstrap` Job (it runs as `skillhub-ci`) or a person's bootstrap. Bootstrap creates `drafts/` and sets its access list; until then the Skill Hub cannot store drafts.
 
 After an upgrade from a build that used `/Shared/skill-hub`, re-run bootstrap. It creates the experiments at the new paths. Delete the old `/Shared/skill-hub` folder, with its experiments and candidates, by hand.
 
@@ -311,4 +316,4 @@ After an upgrade from a build that used `/Shared/skill-hub`, re-run bootstrap. I
 
 ## Nightly
 
-The `skillhub-nightly` Job runs daily at 02:00 UTC. It evaluates every live skill on its default models (`trigger_source = nightly`, `source = live`). It then runs `reconcile`, `check-permissions` (reports drift between Unity Catalog grants and experiment permissions; `users` inheriting access is reported but does not fail the Job) and `cleanup` (drops `run_*` schemas older than 24 hours, and this catalog's candidate folders older than 168 hours). Review the nightly matrix for drift caused by model updates. Failed runs notify the alert destination (see Reconcile alerts). `cleanup` dates a candidate folder by its `.uploaded_at` marker, which CI writes after each upload, or by its newest file. It drops only run schemas that the running principal owns.
+The `skillhub-nightly` Job runs daily at 02:00 UTC. It evaluates every live skill on its default models (`trigger_source = nightly`, `source = live`). It then runs `reconcile`, `check-permissions` (reports drift between Unity Catalog grants and experiment permissions; `users` inheriting access is reported but does not fail the Job) and `cleanup` (drops `run_*` schemas older than 24 hours, and this catalog's candidate and draft folders older than 168 hours). Review the nightly matrix for drift caused by model updates. Failed runs notify the alert destination (see Reconcile alerts). `cleanup` dates a candidate or draft folder by its `.uploaded_at` marker, which CI and the Skill Hub write with each upload, or by its newest file. It drops only run schemas that the running principal owns.

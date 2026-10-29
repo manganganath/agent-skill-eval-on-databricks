@@ -35,7 +35,7 @@ beforeEach(() => {
   vi.mocked(api.skill).mockReset();
   vi.mocked(api.versions).mockReset();
   vi.mocked(api.versions).mockResolvedValue([]);
-  vi.mocked(api.me).mockResolvedValue({ user: "a@x.com", groups: [], is_reviewer: false });
+  vi.mocked(api.me).mockResolvedValue({ user: "a@x.com", groups: [], is_reviewer: false, is_author: false });
   vi.mocked(api.config).mockResolvedValue({ workspace_url: "https://example.test", models: {}, departments: [] });
   vi.mocked(api.skills).mockReset();
   vi.mocked(api.skills).mockResolvedValue([]);
@@ -102,7 +102,7 @@ describe("SkillDetail", () => {
 
   it("shows the switch link to reviewers only", async () => {
     vi.mocked(api.skill).mockResolvedValue(detail);
-    vi.mocked(api.me).mockResolvedValue({ user: "r@x.com", groups: [], is_reviewer: true });
+    vi.mocked(api.me).mockResolvedValue({ user: "r@x.com", groups: [], is_reviewer: true, is_author: false });
     renderAt(detail.fqn);
     const link = await screen.findByRole("link", { name: /switch version/i });
     expect(link.getAttribute("href")).toBe("/skills/skill_hub.common.audit-xls/switch");

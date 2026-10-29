@@ -21,6 +21,9 @@ class PublishRefused(SkillHubError):
     """The content to publish has no eval result that allows it to go live."""
 
 
+# The trigger_source of the merge eval (.github/workflows/skills-publish.yml). Only its rows can let content be
+# published: a pull request eval, a Skill Hub run (hub, manual) or a nightly run never does, whatever its key.
+MERGE_TRIGGER_SOURCE = "merge"
 # Verdicts that let content be published. fail, inconclusive, NULL and anything unknown block it.
 NON_BLOCKING = frozenset({"pass", "warn", "advisory"})
 
@@ -48,7 +51,8 @@ def require_evaluated(
         did not block it.
 
         Uses the merge gate's reader (`ci.pr_comment`): the latest gating row of each (version, model, harness,
-        mode) cell, from runs by `trusted` authors only, so a run logged by anyone else cannot let content through
+        mode) cell, from runs of the merge eval (`MERGE_TRIGGER_SOURCE`) by `trusted` authors only, so neither a run
+        logged by anyone else nor a pull request, Skill Hub or nightly eval under the same key can let content through
     . Every gating row of this skill must carry `content_hash`, `rubric_hash` and `dataset_digest` (the
         rubric, and evals.json with the fixtures its cases use, from the merge plan), and none may have a blocking
         verdict. Content or eval inputs swapped between the eval and the publish therefore never go live. Every
@@ -76,7 +80,9 @@ def require_evaluated(
             "model and mode (pass them from `skillhub eval-digests`)"
         )
     try:
-        rows = load_matrix_rows(sql.execute, cfg, run_key, trusted=trusted)
+        rows = load_matrix_rows(
+            sql.execute, cfg, run_key, trusted=trusted, trigger_source=MERGE_TRIGGER_SOURCE
+        )
     except ValueError as e:  # no trusted authors: fail closed
         raise PublishRefused(f"cannot check the eval for {where}: {e}") from None
     rows = [r for r in rows if r.get("dept") == dept and r.get("skill") == skill]

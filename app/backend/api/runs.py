@@ -14,9 +14,9 @@ from databricks.sdk.errors import (
     ResourceConflict,
 )
 from fastapi import APIRouter, Depends, Path
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from backend import authz, jobs, queries, skill_ref
+from backend import authz, candidates, jobs, queries, skill_ref
 from backend.authz import Forbidden, Reason
 from backend.data import SqlDenied, UserSql
 from backend.deps import get_app_client, get_cfg, get_sql, get_user_client, problem
@@ -31,12 +31,27 @@ router = APIRouter(tags=["runs"])
 SWITCH_ROWS = frozenset({"switch_started", "switch_failed", "switched", "retired"})
 
 
+class CandidateRunIn(BaseModel):
+    """Skills of one candidate upload: the Job takes one skills folder per run."""
+
+    model_config = ConfigDict(extra="ignore")
+    run_key: str = Field(min_length=1, max_length=64)  # the candidate folder, for example pr5_c7ecd3e_a1
+    skills: list[str] = Field(min_length=1, max_length=25)  # dept/name in that folder
+
+
 class EvalRunIn(BaseModel):
     model_config = ConfigDict(extra="ignore")  # requested_by and other extras are never read from the body
-    skills: list[str] = Field(min_length=1, max_length=25)
+    skills: list[str] = Field(default_factory=list, max_length=25)  # live skill FQNs
     models: list[str] = Field(min_length=1, max_length=8)
     modes: list[Literal["trigger", "effectiveness"]] = Field(min_length=1, max_length=2)
     versions: dict[str, int] = Field(default_factory=dict, max_length=20)  # skill FQN -> published version
+    candidate: CandidateRunIn | None = None
+
+    @model_validator(mode="after")
+    def _names_something_to_run(self) -> EvalRunIn:
+        if not self.skills and self.candidate is None:
+            raise ValueError("name live skills or a candidate")
+        return self
 
 
 class EvalRunOut(BaseModel):
@@ -132,6 +147,11 @@ def start_eval(
     modes = list(dict.fromkeys(body.modes))
     if any(m not in cfg.models for m in models):
         raise problem(422, Reason.UNKNOWN_MODEL)
+    if body.candidate is not None:
+        if body.skills or body.versions:  # one skills folder per run: live skills and pins run on their own
+            raise problem(422, Reason.MIXED_SOURCES)
+        params = _candidate_params(user_w, app_w, cfg, body.candidate, models, modes)
+        return EvalRunOut(run_key=params["run_key"], job_run_id=_start(app_w, "skill-eval", params))
     refs: set[str] = set()
     for fqn in dict.fromkeys(body.skills):
         dept, name = skill_ref.parse_fqn(cfg, fqn)
@@ -154,6 +174,53 @@ def start_eval(
         "fixtures_root": "",
     }
     return EvalRunOut(run_key=run_key, job_run_id=_start(app_w, "skill-eval", params))
+
+
+def _candidate_params(
+    user_w: WorkspaceClient,
+    app_w: WorkspaceClient,
+    cfg: HubConfig,
+    ref: CandidateRunIn,
+    models: list[str],
+    modes: list[str],
+) -> dict[str, str]:
+    """Job parameters for an eval of candidate skills: a pull request upload, or a draft. Authors and reviewers only,
+    under the candidate visibility rule (backend.candidates); a candidate the user may not see answers 404, as a
+    missing one does. Without evals/rubric.json only trigger mode can run."""
+    me = authz.fetch_me(user_w)
+    key = candidates.parse_key(ref.run_key)
+    refs: list[tuple[str, str]] = []
+    for item in dict.fromkeys(ref.skills):
+        dept, sep, name = item.partition("/")
+        refs.append((dept, name) if sep else ("", name))
+    if not candidates.may_see(me, cfg):
+        raise problem(403, Reason.NOT_AUTHOR)
+    if key is None or any(d not in cfg.departments or not candidates.valid_skill_name(n) for d, n in refs):
+        raise problem(404, Reason.CANDIDATE_NOT_FOUND)
+    candidates.authorize(app_w, cfg, me, key, refs)
+    for dept, name in refs:  # read as the app principal only now
+        md = f"{candidates.skill_dir(cfg, key, dept, name)}/SKILL.md"
+        if not candidates.workspace_call(lambda md=md: candidates.exists(app_w, md)):
+            raise problem(404, Reason.CANDIDATE_NOT_FOUND)
+    if "effectiveness" in modes:
+        for dept, name in refs:  # the runner needs a rubric for effectiveness; say so before the Job starts
+            rubric = f"{candidates.skill_dir(cfg, key, dept, name)}/evals/rubric.json"
+            if not candidates.workspace_call(lambda rubric=rubric: candidates.exists(app_w, rubric)):
+                raise problem(422, Reason.RUBRIC_REQUIRED)
+    fixtures = candidates.workspace_call(lambda: candidates.fixtures_root(app_w, cfg, key))
+    # Every parameter is sent; "" means unset. The key is fresh, so the PR gate's rows are never mixed with these.
+    return {
+        "run_key": candidates.hub_run_key(key.run_key),
+        "skills": ",".join(f"{d}/{n}" for d, n in sorted(refs)),
+        "models": ",".join(models),
+        "modes": ",".join(modes),
+        "versions": "",
+        "source": candidates.source(key),
+        "trigger_source": "manual",
+        "requested_by": me.user,
+        "skills_root": f"{candidates.folder(cfg, key)}/skills",
+        "fixtures_root": fixtures,
+    }
 
 
 @router.get("/eval-runs/{job_run_id}", response_model=EvalRunStatus)

@@ -35,14 +35,14 @@ beforeEach(() => {
 
 describe("Switch", () => {
   it("shows a message and no controls to a non-reviewer", async () => {
-    vi.mocked(api.me).mockResolvedValue({ user: "ana@example.com", groups: [], is_reviewer: false });
+    vi.mocked(api.me).mockResolvedValue({ user: "ana@example.com", groups: [], is_reviewer: false, is_author: false });
     renderSwitch();
     expect(await screen.findByText(/only skill reviewers/i)).toBeTruthy();
     expect(screen.queryByRole("button", { name: /confirm switch/i })).toBeNull();
   });
 
   it("keeps the confirm button disabled until the change is acknowledged", async () => {
-    vi.mocked(api.me).mockResolvedValue({ user: "rita@example.com", groups: ["skillhub-reviewers"], is_reviewer: true });
+    vi.mocked(api.me).mockResolvedValue({ user: "rita@example.com", groups: ["skillhub-reviewers"], is_reviewer: true, is_author: false });
     renderSwitch();
     fireEvent.change(await screen.findByLabelText(/target version/i), { target: { value: "1" } });
     const confirm = screen.getByRole("button", { name: /confirm switch/i });
@@ -52,7 +52,7 @@ describe("Switch", () => {
   });
 
   it("does not treat a published version as live", async () => {
-    vi.mocked(api.me).mockResolvedValue({ user: "rita@example.com", groups: [], is_reviewer: true });
+    vi.mocked(api.me).mockResolvedValue({ user: "rita@example.com", groups: [], is_reviewer: true, is_author: false });
     renderSwitch();
     expect(await screen.findByText("Live version: none")).toBeTruthy();
     // both published versions can be targeted, since none is live
@@ -60,7 +60,7 @@ describe("Switch", () => {
   });
 
   it("maps a 409 to a plain message", async () => {
-    vi.mocked(api.me).mockResolvedValue({ user: "rita@example.com", groups: ["skillhub-reviewers"], is_reviewer: true });
+    vi.mocked(api.me).mockResolvedValue({ user: "rita@example.com", groups: ["skillhub-reviewers"], is_reviewer: true, is_author: false });
     vi.mocked(api.switchVersion).mockRejectedValue(new ApiError(409, "already_live"));
     renderSwitch();
     fireEvent.change(await screen.findByLabelText(/target version/i), { target: { value: "1" } });
@@ -70,7 +70,7 @@ describe("Switch", () => {
   });
 
   const reviewer = () =>
-    vi.mocked(api.me).mockResolvedValue({ user: "rita@example.com", groups: ["skillhub-reviewers"], is_reviewer: true });
+    vi.mocked(api.me).mockResolvedValue({ user: "rita@example.com", groups: ["skillhub-reviewers"], is_reviewer: true, is_author: false });
   async function pickAndAck() {
     fireEvent.change(await screen.findByLabelText(/target version/i), { target: { value: "1" } });
     fireEvent.click(screen.getByRole("checkbox", { name: /i understand/i }));

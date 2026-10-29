@@ -1,10 +1,11 @@
 import type {
-  AppConfig, CaseRow, EvalRunIn, EvalRunOut, EvalRunStatus, JournalRow, MatrixRow, Me, SkillDetail,
-  SkillSummary, SwitchOut, TryIn, TryModelResult,
+  AppConfig, CandidateDetail, CandidateSummary, CaseRow, DraftIn, DraftOut, EvalRunIn, EvalRunOut, EvalRunStatus,
+  JournalRow, MatrixRow, Me, SkillDetail, SkillSummary, SwitchOut, TryIn, TryModelResult,
 } from "./types";
 
+// `errors` carries the plain-language problems of a refused draft upload (reason draft_invalid).
 export class ApiError extends Error {
-  constructor(public readonly status: number, public readonly reason: string) {
+  constructor(public readonly status: number, public readonly reason: string, public readonly errors: string[] = []) {
     super(reason);
     this.name = "ApiError";
   }
@@ -29,13 +30,15 @@ async function send(path: string, init?: RequestInit): Promise<Response> {
   });
   if (!res.ok) {
     let reason = `http_${res.status}`;
+    let errors: string[] = [];
     try {
       const body = await res.json();
       if (body?.detail && typeof body.detail.reason === "string") reason = body.detail.reason;
+      if (Array.isArray(body?.detail?.errors)) errors = body.detail.errors.filter((e: unknown) => typeof e === "string");
     } catch {
       // not JSON: keep the http_<status> reason
     }
-    throw new ApiError(res.status, reason);
+    throw new ApiError(res.status, reason, errors);
   }
   return res;
 }
@@ -91,6 +94,10 @@ export const api = {
   skills: (q?: string) => request<SkillSummary[]>(`/skills${qs({ q })}`),
   skill: (fqn: string) => request<SkillDetail>(`/skills/${enc(fqn)}`),
   versions: (fqn: string) => request<JournalRow[]>(`/skills/${enc(fqn)}/versions`),
+  candidates: () => request<CandidateSummary[]>("/candidates"),
+  candidate: (runKey: string, dept: string, name: string) =>
+    request<CandidateDetail>(`/candidates/${enc(runKey)}/${enc(dept)}/${enc(name)}`),
+  uploadDraft: (body: DraftIn) => request<DraftOut>("/drafts", { method: "POST", body: JSON.stringify(body) }),
   matrix: (params: { skill?: string; dept?: string; fqn?: string }) => requestList<MatrixRow>(`/results/matrix${qs(params)}`),
   cases: (runId: string) => requestList<CaseRow>(`/results/cases${qs({ run_id: runId })}`),
   startEval: (body: EvalRunIn) =>
