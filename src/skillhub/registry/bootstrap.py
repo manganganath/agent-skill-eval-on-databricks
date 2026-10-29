@@ -253,7 +253,7 @@ def ownership_transfers(
         Then the skillhub-bootstrap Job, which runs as ci, passes the owner checks and may re-apply the grants
     . Tables owned by ci_eval (the `ds_<skill>` datasets) keep their owner.
     """
-    ci = _q(owners.ci)
+    ci, ci_eval = _q(owners.ci), _q(owners.ci_eval)
     stmts: list[str] = []
     for schema in results_schemas(cfg):
         cat, _, sch = schema.partition(".")
@@ -271,7 +271,10 @@ def ownership_transfers(
                 raise BootstrapError(f"unexpected table name {t.name!r} in {schema}")
             kind = getattr(t.table_type, "value", t.table_type)
             if kind in (None, "MANAGED", "EXTERNAL"):
-                stmts.append(f"ALTER TABLE {schema}.{t.name} OWNER TO {ci}")
+                # An eval dataset belongs to ci_eval, the only principal that writes it. A person's local eval
+                # run can create one; handing it to ci would leave the skill-eval Job unable to update it.
+                to = ci_eval if (t.name or "").startswith("ds_") else ci
+                stmts.append(f"ALTER TABLE {schema}.{t.name} OWNER TO {to}")
             elif kind == "VIEW":
                 continue  # see the docstring: views stay with the catalog owner
             else:

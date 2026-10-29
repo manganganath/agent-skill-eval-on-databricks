@@ -34,6 +34,13 @@ def rubric_judges(cfg, rubric, profile: str) -> list:
     ]
 
 
+def reads_traces(cfg, profile: str) -> bool:
+    """Whether the profile can run a judge that reads the trace with MLflow's trace tools. Gemini 3 refuses
+    those tool calls ("Function call is missing a thought signature"), so it judges only the rubric and
+    the assertions, which need no tools."""
+    return cfg.models[profile].provider != "gemini"
+
+
 def skill_use_judge(cfg, profile: str):
     return make_judge(
         name=judge_name("skill_use", profile),
@@ -78,7 +85,7 @@ def scorers_for(
     out: list = []
     for p in profiles:
         out += [*rubric_judges(cfg, rubric, p), *assertion_scorers(cfg, p)]
-        if mode == "with_skill":
+        if mode == "with_skill" and reads_traces(cfg, p):
             out.append(skill_use_judge(cfg, p))
         out += builtin_scorers(cfg, p)
     if skill_name == "audit-xls":

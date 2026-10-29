@@ -54,6 +54,48 @@ def test_fixture_case_offers_three_fake_tools(fx):
     assert names == ["web_search", "read_file", "read_workbook"]
 
 
+def test_read_tools_name_the_case_fixture_paths(fx):
+    """Seen live: the model was never told the paths, guessed `model.xlsx`, and every read was refused."""
+    tools = {
+        t.name: t
+        for t in FixtureStore(fx).tools_for(case(["northwind/model.xlsx", "northwind/press_release.md"]))
+    }
+    for name in ("read_file", "read_workbook"):
+        path = tools[name].parameters["properties"]["path"]
+        assert path["enum"] == ["northwind/model.xlsx", "northwind/press_release.md"]
+        assert "northwind/model.xlsx" in tools[name].description
+
+
+@pytest.mark.parametrize(
+    "asked",
+    [
+        "northwind/model.xlsx",
+        "fixtures/northwind/model.xlsx",
+        "Northwind/Model.xlsx",
+        "model.xlsx",
+        "./northwind/model.xlsx",
+    ],
+)
+def test_read_workbook_accepts_harmless_variants_of_a_declared_path(fx, asked):
+    out = FixtureStore(fx).call("read_workbook", {"path": asked}, case(["northwind/model.xlsx"]))
+    assert "Revenue" in out and not out.startswith("Error")
+
+
+@pytest.mark.parametrize("asked", ["secret.txt", "../secret.txt", "northwind/press_release.md"])
+def test_paths_the_case_does_not_declare_are_still_refused(fx, asked):
+    out = FixtureStore(fx).call("read_file", {"path": asked}, case(["northwind/model.xlsx"]))
+    assert out.startswith("Error: not a fixture of this case") and "northwind/model.xlsx" in out
+
+
+def test_an_ambiguous_bare_file_name_is_refused(fx, tmp_path):
+    (fx / "other").mkdir()
+    (fx / "other" / "model.xlsx").write_bytes((fx / "northwind" / "model.xlsx").read_bytes())
+    out = FixtureStore(fx).call(
+        "read_workbook", {"path": "model.xlsx"}, case(["northwind/model.xlsx", "other/model.xlsx"])
+    )
+    assert out.startswith("Error: not a fixture of this case")
+
+
 def test_web_search_keyword_matches_fixture_documents(fx):
     out = FixtureStore(fx).call(
         "web_search", {"query": "NVDA targets"}, case(["northwind/overnight_news.md"])

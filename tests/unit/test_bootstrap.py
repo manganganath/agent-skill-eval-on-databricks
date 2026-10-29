@@ -1265,6 +1265,7 @@ def test_first_run_by_a_person_hands_schemas_and_tables_to_ci_and_keeps_views(cf
                 ("eval_runs", "MANAGED", DEPLOYER),
                 ("eval_matrix", "VIEW", DEPLOYER),
                 ("ds_x", "MANAGED", CI_EVAL),
+                ("ds_y", "MANAGED", DEPLOYER),  # made by a person's local eval run
             ]
         },
     )
@@ -1276,6 +1277,7 @@ def test_first_run_by_a_person_hands_schemas_and_tables_to_ci_and_keeps_views(cf
     assert f"ALTER TABLE {ev}.eval_runs OWNER TO `app-1`" in moved
     assert not any(s.startswith("ALTER VIEW") for s in moved)  # UC refuses a view hand-over to a principal
     assert not any("ds_x" in s for s in moved)  # ci_eval's dataset keeps its owner
+    assert f"ALTER TABLE {ev}.ds_y OWNER TO `app-2`" in moved  # datasets belong to ci_eval, which writes them
     assert {s for s in moved if s.startswith("ALTER SCHEMA")} == {
         f"ALTER SCHEMA {s} OWNER TO `app-1`" for s in hub_schemas(cfg)
     }
