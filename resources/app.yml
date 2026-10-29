@@ -1,0 +1,72 @@
+resources:
+  apps:
+    skill_hub:
+      name: ${var.app_name}
+      description: Skill Hub for skill catalog, evaluation results, runs and version switches
+      source_code_path: ../app
+      # Names checked against the Databricks docs: sql, model-serving,
+      # ai-gateway and files are product scopes; catalog.* are SDK scopes with a :read suffix.
+      # sql.warehouses and serving.serving-endpoints are deprecated. `files` is for the Files API
+      # (skill detail). Re-check after the first dev deploy; add catalog.catalogs:read or
+      # workspace.workspace:read only if a call fails without them.
+      # Every workspace user may open the app; it acts with each user's own UC permissions. Bundle
+      # permissions are authoritative, so a grant made by hand is reset on the next deploy: change the variable.
+      permissions:
+        - group_name: ${var.app_users_group}
+          level: CAN_USE
+      user_api_scopes:
+        - sql
+        - model-serving
+        - ai-gateway
+        - files
+        - catalog.schemas:read
+        - catalog.tables:read
+      config:
+        env:
+          - name: SKILLHUB_CATALOG
+            value: ${var.catalog}${var.catalog_suffix}
+          - name: SKILLHUB_CONFIG
+            value: config/hub.yaml
+          # The Try panel writes its traces to the skill experiments under this folder.
+          - name: SKILLHUB_WORKSPACE_ROOT
+            value: ${var.workspace_root}
+          # config/hub.yaml reads the warehouse from SQL_WAREHOUSE_ID; it comes from the bound resource.
+          - name: SQL_WAREHOUSE_ID
+            value_from: sql-warehouse
+          # The app finds the Jobs by ID; lookup by name is only the fallback.
+          - name: SKILLHUB_JOB_ID_EVAL
+            value: ${resources.jobs.skill_eval.id}
+          - name: SKILLHUB_JOB_ID_SWITCH
+            value: ${resources.jobs.skill_switch.id}
+          - name: OTEL_TRACES_SAMPLER
+            value: always_on
+      # Endpoint names are literal: they must match config/hub.yaml (test_app_config checks this).
+      resources:
+        - name: sql-warehouse
+          sql_warehouse:
+            id: ${var.warehouse_id}
+            permission: CAN_USE
+        - name: skill-eval-job
+          job:
+            id: ${resources.jobs.skill_eval.id}
+            permission: CAN_MANAGE_RUN
+        - name: skill-switch-job
+          job:
+            id: ${resources.jobs.skill_switch.id}
+            permission: CAN_MANAGE_RUN
+        - name: endpoint-claude-sonnet
+          serving_endpoint:
+            name: databricks-claude-sonnet-5-5
+            permission: CAN_QUERY
+        - name: endpoint-claude-opus
+          serving_endpoint:
+            name: databricks-claude-opus-5-5
+            permission: CAN_QUERY
+        - name: endpoint-gpt
+          serving_endpoint:
+            name: databricks-gpt-5-5
+            permission: CAN_QUERY
+        - name: endpoint-gemini-flash
+          serving_endpoint:
+            name: databricks-gemini-3-8-flash
+            permission: CAN_QUERY

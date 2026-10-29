@@ -1,0 +1,310 @@
+name: skills-pr
+
+# Uses `pull_request`, never `pull_request_target`: PR code must not run with repository secrets
+# unless the branch lives in this repository. Fork PRs skip every step that needs a secret.
+on:
+  # No `paths:` filter: this check is required, and a required check that never starts blocks
+  # every PR that doesn't touch skills. The job passes cheaply when no skill changed.
+  pull_request:
+  # GITHUB_TOKEN commits don't start pull_request runs, so the bot re-dispatches this workflow.
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: Pull request number to check
+        required: true
+        type: string
+
+concurrency:
+  group: skills-pr-${{ github.event.pull_request.number || inputs.pr_number }}
+  cancel-in-progress: true
+
+jobs:
+  skills-pr:
+    name: skills-pr
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    # No reviewers. Holds the ci_eval Databricks secrets; fork pull requests never receive them.
+    environment: ci-eval
+    permissions:
+      contents: write # push generated files to the PR branch
+      pull-requests: write
+      actions: write # re-dispatch this workflow after the push
+    env:
+      PR_NUMBER: ${{ github.event.pull_request.number || inputs.pr_number }}
+      ACTOR: ${{ github.actor }}
+      SKILLHUB_CATALOG: ${{ vars.SKILLHUB_CATALOG }}
+    steps:
+      - name: Resolve pull request
+        id: pr
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          EVENT_NAME: ${{ github.event_name }}
+          EVENT_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          # Runs before checkout: nothing from the PR is executed here.
+          if ! [[ "$PR_NUMBER" =~ ^[1-9][0-9]*$ ]]; then
+            echo "::error::The pull request number must be a positive integer."
+            exit 1
+          fi
+          fetch() {
+            gh pr view "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" \
+              --json baseRefOid,headRefOid,headRefName,isCrossRepository,author > "$RUNNER_TEMP/pr.json"
+          }
+          fetch
+          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+            if [ "$(jq -r .isCrossRepository "$RUNNER_TEMP/pr.json")" = "true" ]; then
+              echo "::error::Dispatch is not allowed for fork pull requests."
+              exit 1
+            fi
+            bound() {
+              [ "$GITHUB_REF" = "refs/heads/$(jq -r .headRefName "$RUNNER_TEMP/pr.json")" ] &&
+                [ "$GITHUB_SHA" = "$(jq -r .headRefOid "$RUNNER_TEMP/pr.json")" ]
+            }
+            if ! bound; then
+              sleep 10 # the PR head can lag just after the bot push
+              fetch
+            fi
+            if ! bound; then
+              echo "::error::The dispatched ref and commit do not match the head of the pull request."
+              exit 1
+            fi
+            head_sha="$GITHUB_SHA"
+            requested_by=$(jq -r .author.login "$RUNNER_TEMP/pr.json")
+          else
+            head_sha="$EVENT_HEAD_SHA"
+            requested_by="$ACTOR"
+          fi
+          {
+            echo "base_sha=$(jq -r .baseRefOid "$RUNNER_TEMP/pr.json")"
+            echo "head_sha=$head_sha"
+            echo "head_ref=$(jq -r .headRefName "$RUNNER_TEMP/pr.json")"
+            echo "is_fork=$(jq -r .isCrossRepository "$RUNNER_TEMP/pr.json")"
+            echo "requested_by=$requested_by"
+            echo "pr=$PR_NUMBER"
+          } >> "$GITHUB_OUTPUT"
+
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ steps.pr.outputs.head_sha }}
+          fetch-depth: 0 # changed-skills computes a merge-base
+          persist-credentials: false
+
+      - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6.8.0
+
+      - name: Install dependencies
+        run: uv sync --frozen --python 3.12
+
+      - name: 1. Lint skills (no Databricks needed)
+        run: uv run skillhub lint
+
+      - name: Find changed skills
+        id: changed
+        env:
+          BASE_SHA: ${{ steps.pr.outputs.base_sha }}
+          HEAD_SHA: ${{ steps.pr.outputs.head_sha }}
+          RUN_ATTEMPT: ${{ github.run_attempt }}
+        run: |
+          uv run skillhub changed-skills --base "$BASE_SHA" --head "$HEAD_SHA" > "$RUNNER_TEMP/changed.json"
+          cat "$RUNNER_TEMP/changed.json"
+          # Never promote content out of a quarantined department through CI. The rows are printed above.
+          if jq -e 'any(.[]; .moved_from_quarantine == true)' "$RUNNER_TEMP/changed.json" > /dev/null; then
+            echo "::error::Moving a skill out of a quarantined department needs an operator: see docs. The rows with moved_from_quarantine true are listed above."
+            exit 1
+          fi
+          # Deleted skills have nothing to evaluate.
+          names=$(jq -r '[.[] | select(.status != "deleted") | "\(.dept)/\(.skill)"] | join(",")' "$RUNNER_TEMP/changed.json")
+          # Only skills without trigger cases or a rubric need generation. Merging into complete files
+          # would dirty the tree on every run and the eval would never start.
+          cases=$(jq -r '[.[] | select(.status != "deleted" and .needs_cases) | "\(.dept)/\(.skill)"] | join(",")' "$RUNNER_TEMP/changed.json")
+          rubric=$(jq -r '[.[] | select(.status != "deleted" and .needs_rubric and (.needs_cases | not)) | "\(.dept)/\(.skill)"] | join(",")' "$RUNNER_TEMP/changed.json")
+          {
+            echo "non_deleted=$names"
+            echo "needs_cases=$cases"
+            echo "needs_rubric_only=$rubric"
+            echo "run_key=pr${PR_NUMBER}-${HEAD_SHA:0:7}-a${RUN_ATTEMPT}"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: 2. Generate missing evals and rubrics
+        id: generate-cases
+        if: ${{ steps.pr.outputs.is_fork == 'false' && steps.changed.outputs.needs_cases != '' }}
+        env:
+          DATABRICKS_HOST: ${{ secrets.DATABRICKS_HOST }}
+          DATABRICKS_CLIENT_ID: ${{ secrets.DATABRICKS_CLIENT_ID }}
+          DATABRICKS_CLIENT_SECRET: ${{ secrets.DATABRICKS_CLIENT_SECRET }}
+          SQL_WAREHOUSE_ID: ${{ secrets.SQL_WAREHOUSE_ID }}
+          SKILLS: ${{ steps.changed.outputs.needs_cases }}
+        run: uv run skillhub generate --skills "$SKILLS"
+
+      - name: 2b. Generate missing rubrics (skills that already have trigger cases)
+        id: generate-rubric
+        if: ${{ steps.pr.outputs.is_fork == 'false' && steps.changed.outputs.needs_rubric_only != '' }}
+        env:
+          DATABRICKS_HOST: ${{ secrets.DATABRICKS_HOST }}
+          DATABRICKS_CLIENT_ID: ${{ secrets.DATABRICKS_CLIENT_ID }}
+          DATABRICKS_CLIENT_SECRET: ${{ secrets.DATABRICKS_CLIENT_SECRET }}
+          SQL_WAREHOUSE_ID: ${{ secrets.SQL_WAREHOUSE_ID }}
+          SKILLS: ${{ steps.changed.outputs.needs_rubric_only }}
+        run: uv run skillhub generate --rubric-only --skills "$SKILLS"
+
+      - name: Detect generated files
+        id: generate
+        if: ${{ steps.pr.outputs.is_fork == 'false' && (steps.changed.outputs.needs_cases != '' || steps.changed.outputs.needs_rubric_only != '') }}
+        run: |
+          if [ -n "$(git status --porcelain -- skills)" ]; then
+            echo "generated=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "generated=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      # Loop guard: only a pull_request run may commit and dispatch. A dispatched run that still
+      # produces changes would otherwise dispatch itself forever.
+      - name: Loop guard
+        if: ${{ steps.generate.outputs.generated == 'true' && github.event_name != 'pull_request' }}
+        run: |
+          echo "::error::Generation changed files on a dispatched run. Not committing, to avoid a dispatch loop. Commit the evals manually."
+          exit 1
+
+      - name: Commit generated files to the PR branch
+        if: ${{ steps.generate.outputs.generated == 'true' && steps.pr.outputs.is_fork == 'false' && github.event_name == 'pull_request' }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          HEAD_REF: ${{ steps.pr.outputs.head_ref }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -- skills
+          git commit -m "chore(evals): generate missing evals and rubrics for PR #${PR_NUMBER}
+
+          Co-authored-by: Isaac <no-reply@databricks.com>"
+          # The credential helper is scoped to this push; checkout kept no credentials.
+          git -c credential.helper= -c 'credential.helper=!gh auth git-credential' push origin "HEAD:refs/heads/${HEAD_REF}"
+          gh workflow run skills-pr.yml --repo "$GITHUB_REPOSITORY" --ref "$HEAD_REF" -f pr_number="$PR_NUMBER"
+          echo "::notice::Generated evals committed. A new skills-pr run has started on the new commit."
+
+      - name: Install Databricks CLI
+        if: ${{ steps.generate.outputs.generated != 'true' && steps.changed.outputs.non_deleted != '' && steps.pr.outputs.is_fork == 'false' }}
+        uses: databricks/setup-cli@9b64c94a6d2b2e830592d80e9f14c26d32b42ad7 # v1.20.0
+        with:
+          version: 1.20.0
+
+      - name: Start skill-eval Job and wait (30 min)
+        id: eval
+        if: ${{ steps.generate.outputs.generated != 'true' && steps.changed.outputs.non_deleted != '' && steps.pr.outputs.is_fork == 'false' }}
+        env:
+          DATABRICKS_HOST: ${{ secrets.DATABRICKS_HOST }}
+          DATABRICKS_CLIENT_ID: ${{ secrets.DATABRICKS_CLIENT_ID }}
+          DATABRICKS_CLIENT_SECRET: ${{ secrets.DATABRICKS_CLIENT_SECRET }}
+          SKILLHUB_JOB_ID_EVAL: ${{ vars.SKILLHUB_JOB_ID_EVAL }}
+          SKILLS: ${{ steps.changed.outputs.non_deleted }}
+          RUN_LABEL: ${{ steps.changed.outputs.run_key }}
+          HEAD_SHA: ${{ steps.pr.outputs.head_sha }}
+          REQUESTED_BY: ${{ steps.pr.outputs.requested_by }}
+          SKILLHUB_WORKSPACE_ROOT: ${{ vars.SKILLHUB_WORKSPACE_ROOT }}
+        run: |
+          # Candidates live in <workspace_root>/<catalog>/candidates/<run key>, next to the experiments, in the
+          # ci principal's home folder by default. The Job reads them as files, so the path has the /Workspace form.
+          ws_root="${SKILLHUB_WORKSPACE_ROOT%/}"
+          ws_root="${ws_root#/Workspace}"
+          if ! [[ "$ws_root" =~ ^(/[A-Za-z0-9@._+-]+)+$ ]] || [[ "$ws_root/" == *"/../"* || "$ws_root/" == *"/./"* ]]; then
+            echo "::error::Set the SKILLHUB_WORKSPACE_ROOT variable (scripts/configure_github.sh) to an absolute workspace folder."
+            exit 1
+          fi
+          [[ "$SKILLHUB_CATALOG" =~ ^[a-z0-9_]+$ ]] || { echo "::error::Set the SKILLHUB_CATALOG variable to the catalog name."; exit 1; }
+          key=$(uv run python -c 'import os; from skillhub.naming import make_run_key; print(make_run_key(os.environ["RUN_LABEL"]))')
+          root="/Workspace$ws_root/$SKILLHUB_CATALOG/candidates/$key"
+          databricks workspace import-dir skills "$root/skills" --overwrite
+          fixtures_root=""
+          if [ -d fixtures ]; then
+            databricks workspace import-dir fixtures "$root/fixtures" --overwrite
+            fixtures_root="$root/fixtures"
+          fi
+          # Cleanup dates a candidate folder by this marker (Unix seconds): the API gives folders no times.
+          date -u +%s > "$RUNNER_TEMP/uploaded_at"
+          databricks workspace import "$root/.uploaded_at" --file "$RUNNER_TEMP/uploaded_at" --format RAW --overwrite
+          [[ "$SKILLHUB_JOB_ID_EVAL" =~ ^[0-9]+$ ]] || { echo "::error::The SKILLHUB_JOB_ID_EVAL variable must be a numeric Job ID."; exit 1; }
+          # The Job's pin parameter is for the Skill Hub; CI leaves it at its default.
+          params=$(jq -n \
+            --arg run_key "$RUN_LABEL" --arg skills "$SKILLS" --arg source "git:$HEAD_SHA" \
+            --arg actor "$REQUESTED_BY" --arg skills_root "$root/skills" --arg fixtures_root "$fixtures_root" \
+            '{job_parameters: {run_key: $run_key, skills: $skills, models: "default",
+              modes: "trigger,effectiveness", source: $source, trigger_source: "pr",
+              requested_by: $actor, skills_root: $skills_root, fixtures_root: $fixtures_root}}')
+          databricks jobs run-now "$SKILLHUB_JOB_ID_EVAL" --timeout 30m --json "$params" -o json > "$RUNNER_TEMP/run.json"
+          echo "Job run: $(jq -r '.run_page_url // "unknown"' "$RUNNER_TEMP/run.json")"
+          jq -e '.state.result_state == "SUCCESS"' "$RUNNER_TEMP/run.json" > /dev/null
+
+      # The comment must appear even when the run failed. check-verdict below is the gate,
+      # so a verdict exit code from pr-comment does not fail the job on its own.
+      # The repository can be public: the comment carries no workspace host, run or experiment ID and no
+      # Skill Hub URL unless the repository variable SKILLHUB_PR_LINKS is 'true'.
+      - name: pr-comment
+        id: pr-comment
+        if: ${{ !cancelled() && steps.eval.outcome != 'skipped' }}
+        continue-on-error: true
+        env:
+          DATABRICKS_HOST: ${{ secrets.DATABRICKS_HOST }}
+          DATABRICKS_CLIENT_ID: ${{ secrets.DATABRICKS_CLIENT_ID }}
+          DATABRICKS_CLIENT_SECRET: ${{ secrets.DATABRICKS_CLIENT_SECRET }}
+          SQL_WAREHOUSE_ID: ${{ secrets.SQL_WAREHOUSE_ID }}
+          SKILLHUB_CI_EVAL_PRINCIPAL: ${{ vars.CI_EVAL_PRINCIPAL }}
+          SKILLHUB_PR_LINKS: ${{ vars.SKILLHUB_PR_LINKS }}
+          SKILL_HUB_URL: ${{ vars.SKILL_HUB_URL }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RUN_LABEL: ${{ steps.changed.outputs.run_key }}
+        run: uv run skillhub pr-comment --run-key "$RUN_LABEL" --pr "$PR_NUMBER"
+
+      # The gate is bound to this checkout, which is the folder the eval uploaded: every gating row of
+      # each changed skill must carry its content hash, rubric_hash and the dataset_digest of its cases and fixtures.
+      - name: check-verdict
+        id: check-verdict
+        if: ${{ !cancelled() && steps.eval.outcome != 'skipped' }}
+        env:
+          DATABRICKS_HOST: ${{ secrets.DATABRICKS_HOST }}
+          DATABRICKS_CLIENT_ID: ${{ secrets.DATABRICKS_CLIENT_ID }}
+          DATABRICKS_CLIENT_SECRET: ${{ secrets.DATABRICKS_CLIENT_SECRET }}
+          SQL_WAREHOUSE_ID: ${{ secrets.SQL_WAREHOUSE_ID }}
+          SKILLHUB_CI_EVAL_PRINCIPAL: ${{ vars.CI_EVAL_PRINCIPAL }}
+          RUN_LABEL: ${{ steps.changed.outputs.run_key }}
+          SKILLS: ${{ steps.changed.outputs.non_deleted }}
+        run: |
+          uv run skillhub eval-digests --skills "$SKILLS" --skills-root skills --fixtures-root fixtures > "$RUNNER_TEMP/expect.json" </dev/null
+          uv run skillhub check-verdict --run-key "$RUN_LABEL" --skills "$SKILLS" --expect-file "$RUNNER_TEMP/expect.json"
+
+      - name: Status
+        if: ${{ !cancelled() }}
+        env:
+          IS_FORK: ${{ steps.pr.outputs.is_fork }}
+          GENERATED: ${{ steps.generate.outputs.generated }}
+          EVENT_NAME: ${{ github.event_name }}
+          CHANGED_OUTCOME: ${{ steps.changed.outcome }}
+          EVAL_OUTCOME: ${{ steps.eval.outcome }}
+          VERDICT_OUTCOME: ${{ steps.check-verdict.outcome }}
+        run: |
+          if [ "$CHANGED_OUTCOME" = "failure" ]; then
+            echo "::error::Finding the changed skills failed or found a move out of a quarantined department. See that step."
+            exit 1
+          fi
+          if [ "$IS_FORK" = "true" ]; then
+            {
+              echo "### Skill evaluation skipped"
+              echo
+              echo "This pull request comes from a fork, so repository secrets are not available and the"
+              echo "evaluation did not run. Before pushing a fork branch into this repository, maintainers must"
+              echo "review every change outside skills/ (workflows, code, configuration)."
+            } >> "$GITHUB_STEP_SUMMARY"
+            echo "::error::Fork pull request: evaluations need repository secrets. Maintainers must review every change outside skills/ before pushing a fork branch into the repository."
+            exit 1
+          fi
+          if [ "$GENERATED" = "true" ]; then
+            if [ "$EVENT_NAME" = "pull_request" ]; then
+              echo "::notice::Generated files were committed. The check on the new commit decides the result."
+              exit 0
+            fi
+            echo "::error::The loop guard stopped this run: generation changed files on a dispatched run and nothing was committed."
+            exit 1
+          fi
+          if [ "$EVAL_OUTCOME" = "failure" ] || [ "$VERDICT_OUTCOME" = "failure" ]; then
+            echo "::error::Evaluation failed or is inconclusive. Fix the skill or the evals, or re-run this check if the infrastructure failed."
+            exit 1
+          fi
+          echo "Skill evaluation passed or was not needed (no non-deleted skills changed)."

@@ -1,0 +1,5 @@
+# Changes to evaluation definitions and CI configuration name the owner as reviewer.
+# Code-owner review is NOT required by branch protection while the repository has a single
+# maintainer (0 required approving reviews). See scripts/configure_github.sh to enable it.
+skills/**/evals/**    @manganganath
+.github/**            @manganganath

@@ -1,0 +1,4 @@
+# Runtime command for the Databricks App. The app source dir is app/, so the module path starts at backend.
+# The environment lives only in the bundle's app resource (resources/app.yml, config.env): a bundle config.env
+# replaces any env set here, so setting env in this file would be silently dropped.
+command: ["uvicorn", "backend.main:app", "--host", "0.0.0.0", "--port", "8000"]

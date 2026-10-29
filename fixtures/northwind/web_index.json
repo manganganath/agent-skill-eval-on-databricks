@@ -1,0 +1,26 @@
+{
+  "note": "Synthetic test data. Keyword index for the fake web_search tool.",
+  "matching": "A keyword matches when it occurs in the lowercased query. Documents are ranked by the number of distinct matching keywords, then by path. At most max_results documents are returned.",
+  "max_results": 3,
+  "keywords": {
+    "northwind": [
+      "northwind/press_release_q3.md",
+      "northwind/transcript_q3.md",
+      "northwind/consensus_q3.json",
+      "northwind/prior_estimates.json",
+      "northwind/prior_q2_call.md",
+      "northwind/overnight_news.md"
+    ],
+    "consensus": ["northwind/consensus_q3.json"],
+    "estimate": ["northwind/consensus_q3.json", "northwind/prior_estimates.json"],
+    "earnings": ["northwind/press_release_q3.md", "northwind/transcript_q3.md"],
+    "press release": ["northwind/press_release_q3.md"],
+    "transcript": ["northwind/transcript_q3.md"],
+    "call": ["northwind/transcript_q3.md", "northwind/prior_q2_call.md"],
+    "guidance": ["northwind/press_release_q3.md", "northwind/prior_q2_call.md"],
+    "overnight": ["northwind/overnight_news.md"],
+    "news": ["northwind/overnight_news.md"],
+    "preview": ["northwind/consensus_q3.json", "northwind/prior_q2_call.md"],
+    "q4": ["northwind/consensus_q3.json", "northwind/press_release_q3.md"]
+  }
+}

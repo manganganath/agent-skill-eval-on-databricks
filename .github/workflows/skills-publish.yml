@@ -1,0 +1,352 @@
+name: skills-publish
+
+# On merge to main: re-evaluate the merged skills, gate on the verdict, then (after approval in the
+# `production` environment) publish an immutable UC version and switch it live. Deleted skills are retired.
+on:
+  push:
+    branches: [main]
+    paths:
+      - "skills/**"
+
+permissions:
+  contents: read
+
+# One publish, switch or prod deploy (platform.yml) at a time. Runs wait for the group.
+# GitHub replaces a *pending* member when another one joins the group, so `plan` diffs from the
+# skillhub/released tag and the newer run picks up the changes. An unapproved release blocks a manual switch.
+# A pending publish run replaced by a manual skills-switch.yml dispatch publishes its changes on the next push
+# to skills/**. A replaced prod deploy is redone on the next main push.
+concurrency:
+  group: skillhub-release
+  cancel-in-progress: false
+
+jobs:
+  plan:
+    name: plan
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    outputs:
+      reeval: ${{ steps.plan.outputs.reeval }}
+      publish: ${{ steps.plan.outputs.publish }}
+      retire: ${{ steps.plan.outputs.retire }}
+      has_changes: ${{ steps.plan.outputs.has_changes }}
+      run_label: ${{ steps.plan.outputs.run_label }}
+      run_key: ${{ steps.plan.outputs.run_key }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 0 # changed-skills computes a merge-base
+          fetch-tags: true # skillhub/released is the diff base
+          persist-credentials: false
+
+      - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6.8.0
+
+      - name: Install dependencies
+        run: uv sync --frozen --python 3.12
+
+      - name: Plan re-evaluation, publish and retire
+        id: plan
+        env:
+          EVENT_BEFORE_SHA: ${{ github.event.before }}
+          HEAD_SHA: ${{ github.sha }}
+          RUN_ATTEMPT: ${{ github.run_attempt }}
+        run: |
+          # Diff from the last released commit so a replaced pending run loses no changes.
+          base="$EVENT_BEFORE_SHA"
+          if git rev-parse -q --verify refs/tags/skillhub/released > /dev/null; then
+            if ! git merge-base --is-ancestor refs/tags/skillhub/released "$HEAD_SHA"; then
+              echo "::error::The skillhub/released tag is not an ancestor of this commit. Fix the tag before releasing."
+              exit 1
+            fi
+            base="refs/tags/skillhub/released"
+          fi
+          uv run skillhub changed-skills --base "$base" --head "$HEAD_SHA" > "$RUNNER_TEMP/changed.json"
+          cat "$RUNNER_TEMP/changed.json"
+          # Never promote content out of a quarantined department through CI. The rows are printed above.
+          if jq -e 'any(.[]; .moved_from_quarantine == true)' "$RUNNER_TEMP/changed.json" > /dev/null; then
+            echo "::error::Moving a skill out of a quarantined department needs an operator: see docs. The rows with moved_from_quarantine true are listed above."
+            exit 1
+          fi
+          label="merge-${HEAD_SHA:0:7}-a${RUN_ATTEMPT}"
+          key=$(RUN_LABEL="$label" uv run python -c 'import os; from skillhub.naming import make_run_key; print(make_run_key(os.environ["RUN_LABEL"]))')
+          reeval=$(jq -r '[.[] | select(.status != "deleted") | "\(.dept)/\(.skill)"] | join(",")' "$RUNNER_TEMP/changed.json")
+          retire=$(jq -c '[.[] | select(.status == "deleted") | {dept, skill}]' "$RUNNER_TEMP/changed.json")
+          # What each skill's eval must have read, from the merge commit: its content hash, which
+          # publish must produce exactly, its rubric_hash, and the dataset_digest of evals.json and the fixtures
+          # its cases use. The gates compare every eval row with these, and need a row for each planned
+          # gating cell (model/mode).
+          publish=$(uv run skillhub eval-digests --skills "$reeval" --skills-root skills --fixtures-root fixtures </dev/null)
+          has=false
+          if [ "$publish" != "[]" ] || [ "$retire" != "[]" ]; then has=true; fi
+          {
+            echo "reeval=$reeval"
+            echo "publish=$publish"
+            echo "retire=$retire"
+            echo "has_changes=$has"
+            echo "run_label=$label"
+            echo "run_key=$key"
+          } >> "$GITHUB_OUTPUT"
+
+  # The verdict gate lives here, before the production job, so a failing verdict never asks for approval.
+  eval-merge:
+    name: re-evaluate merged content
+    needs: [plan]
+    if: ${{ needs.plan.outputs.reeval != '' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    environment: ci-eval # no reviewers; holds the Databricks secrets for the gate
+    outputs:
+      skills_root: ${{ steps.upload.outputs.skills_root }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6.8.0
+
+      - name: Install dependencies
+        run: uv sync --frozen --python 3.12
+
+      - name: Install Databricks CLI
+        uses: databricks/setup-cli@9b64c94a6d2b2e830592d80e9f14c26d32b42ad7 # v1.20.0
+        with:
+          version: 1.20.0
+
+      # The one place the candidate path is built. Candidates older than 168 h are cleaned up, so an
+      # approval that waits longer fails closed (SKILL.md is missing and publish stops).
+      - name: Upload candidate skills
+        id: upload
+        env:
+          DATABRICKS_HOST: ${{ secrets.DATABRICKS_HOST }}
+          DATABRICKS_CLIENT_ID: ${{ secrets.DATABRICKS_CLIENT_ID }}
+          DATABRICKS_CLIENT_SECRET: ${{ secrets.DATABRICKS_CLIENT_SECRET }}
+          RUN_KEY: ${{ needs.plan.outputs.run_key }}
+          SKILLHUB_WORKSPACE_ROOT: ${{ vars.SKILLHUB_WORKSPACE_ROOT }}
+          SKILLHUB_CATALOG: ${{ vars.SKILLHUB_CATALOG }}
+        run: |
+          # Candidates live in <workspace_root>/<catalog>/candidates/<run key>, next to the experiments, in the
+          # ci principal's home folder by default. The Job reads them as files, so the path has the /Workspace form.
+          ws_root="${SKILLHUB_WORKSPACE_ROOT%/}"
+          ws_root="${ws_root#/Workspace}"
+          if ! [[ "$ws_root" =~ ^(/[A-Za-z0-9@._+-]+)+$ ]] || [[ "$ws_root/" == *"/../"* || "$ws_root/" == *"/./"* ]]; then
+            echo "::error::Set the SKILLHUB_WORKSPACE_ROOT variable (scripts/configure_github.sh) to an absolute workspace folder."
+            exit 1
+          fi
+          [[ "$SKILLHUB_CATALOG" =~ ^[a-z0-9_]+$ ]] || { echo "::error::Set the SKILLHUB_CATALOG variable to the catalog name."; exit 1; }
+          root="/Workspace$ws_root/$SKILLHUB_CATALOG/candidates/$RUN_KEY"
+          databricks workspace import-dir skills "$root/skills" --overwrite
+          fixtures_root=""
+          if [ -d fixtures ]; then
+            databricks workspace import-dir fixtures "$root/fixtures" --overwrite
+            fixtures_root="$root/fixtures"
+          fi
+          # Cleanup dates a candidate folder by this marker (Unix seconds): the API gives folders no times.
+          date -u +%s > "$RUNNER_TEMP/uploaded_at"
+          databricks workspace import "$root/.uploaded_at" --file "$RUNNER_TEMP/uploaded_at" --format RAW --overwrite
+          {
+            echo "skills_root=$root/skills"
+            echo "fixtures_root=$fixtures_root"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Start skill-eval Job and wait (30 min)
+        env:
+          DATABRICKS_HOST: ${{ secrets.DATABRICKS_HOST }}
+          DATABRICKS_CLIENT_ID: ${{ secrets.DATABRICKS_CLIENT_ID }}
+          DATABRICKS_CLIENT_SECRET: ${{ secrets.DATABRICKS_CLIENT_SECRET }}
+          JOB_ID: ${{ vars.SKILLHUB_JOB_ID_EVAL }}
+          SKILLS: ${{ needs.plan.outputs.reeval }}
+          RUN_LABEL: ${{ needs.plan.outputs.run_label }}
+          SKILLS_ROOT: ${{ steps.upload.outputs.skills_root }}
+          FIXTURES_ROOT: ${{ steps.upload.outputs.fixtures_root }}
+          HEAD_SHA: ${{ github.sha }}
+          REQUESTED_BY: ${{ github.actor }}
+        run: |
+          run_job() {
+            if ! databricks jobs run-now "$JOB_ID" --timeout 30m --json "$1" -o json > "$RUNNER_TEMP/run.json" </dev/null; then
+              url=$(jq -r '.run_page_url // empty' "$RUNNER_TEMP/run.json" 2>/dev/null || true)
+              echo "::error::run-now failed. ${url:-Job: $DATABRICKS_HOST/jobs/$JOB_ID}"
+              exit 1
+            fi
+            echo "Job run: $(jq -r '.run_page_url // "unknown"' "$RUNNER_TEMP/run.json")"
+            jq -e '.state.result_state == "SUCCESS"' "$RUNNER_TEMP/run.json" > /dev/null
+          }
+          [[ "$JOB_ID" =~ ^[0-9]+$ ]] || { echo "::error::The SKILLHUB_JOB_ID_EVAL variable must be a numeric Job ID."; exit 1; }
+          params=$(jq -n \
+            --arg run_key "$RUN_LABEL" --arg skills "$SKILLS" --arg source "git:$HEAD_SHA" \
+            --arg actor "$REQUESTED_BY" --arg skills_root "$SKILLS_ROOT" --arg fixtures_root "$FIXTURES_ROOT" \
+            '{job_parameters: {run_key: $run_key, skills: $skills, models: "default",
+              modes: "trigger,effectiveness", source: $source, trigger_source: "merge",
+              requested_by: $actor, skills_root: $skills_root, fixtures_root: $fixtures_root}}')
+          run_job "$params"
+
+      # Bound to plan's digests: the evaluated content, rubric, cases and fixtures must be the merged
+      # ones, so a candidate folder swapped during the eval, or a row for other inputs, fails the gate.
+      - name: check-verdict
+        env:
+          DATABRICKS_HOST: ${{ secrets.DATABRICKS_HOST }}
+          DATABRICKS_CLIENT_ID: ${{ secrets.DATABRICKS_CLIENT_ID }}
+          DATABRICKS_CLIENT_SECRET: ${{ secrets.DATABRICKS_CLIENT_SECRET }}
+          SQL_WAREHOUSE_ID: ${{ secrets.SQL_WAREHOUSE_ID }}
+          SKILLHUB_CATALOG: ${{ vars.SKILLHUB_CATALOG }}
+          SKILLHUB_CI_EVAL_PRINCIPAL: ${{ vars.CI_EVAL_PRINCIPAL }}
+          RUN_LABEL: ${{ needs.plan.outputs.run_label }}
+          SKILLS: ${{ needs.plan.outputs.reeval }}
+          EXPECT: ${{ needs.plan.outputs.publish }}
+        run: |
+          ROWS="$EXPECT"
+          jq -e 'type == "array" and all(.[]; (.dept | type) == "string" and (.skill | type) == "string" and (.hash | test("^sha256:[0-9a-f]{64}$")) and (.rubric_hash | test("^(none|sha256:[0-9a-f]{64})$")) and (.dataset_digest | test("^sha256:[0-9a-f]{64}$")) and ((.cells | type) == "array") and all(.cells[]; type == "string" and test("^[A-Za-z0-9_.-]+/(trigger|with_skill)$")))' <<<"$ROWS" > /dev/null || { echo "::error::The plan output is not a valid list of skills."; exit 1; }
+          printf '%s' "$EXPECT" > "$RUNNER_TEMP/expect.json"
+          uv run skillhub check-verdict --run-key "$RUN_LABEL" --skills "$SKILLS" --expect-file "$RUNNER_TEMP/expect.json"
+
+  # Publish, switch and retire all run here, after a reviewer approves the `production` environment.
+  # Credentials are production environment secrets.
+  release:
+    name: publish and switch (production)
+    needs: [plan, eval-merge]
+    if: ${{ !cancelled() && needs.plan.result == 'success' && needs.plan.outputs.has_changes == 'true' && (needs.eval-merge.result == 'success' || needs.plan.outputs.publish == '[]') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 240
+    environment: production
+    permissions:
+      contents: write # move the skillhub/released tag only
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+          persist-credentials: false
+
+      - name: Check the released tag
+        id: guard
+        env:
+          HEAD_SHA: ${{ github.sha }}
+        run: |
+          # Record the tag now; the final step moves it only if nobody else did in between.
+          released=""
+          if git rev-parse -q --verify refs/tags/skillhub/released > /dev/null; then
+            if ! git merge-base --is-ancestor refs/tags/skillhub/released "$HEAD_SHA"; then
+              echo "::error::The skillhub/released tag is not an ancestor of this commit. A newer release already ran."
+              exit 1
+            fi
+            released=$(git rev-parse refs/tags/skillhub/released)
+          fi
+          echo "released_before=$released" >> "$GITHUB_OUTPUT"
+
+      - name: Install Databricks CLI
+        uses: databricks/setup-cli@9b64c94a6d2b2e830592d80e9f14c26d32b42ad7 # v1.20.0
+        with:
+          version: 1.20.0
+
+      - name: Publish new versions (action=publish)
+        if: ${{ needs.plan.outputs.publish != '[]' }}
+        env:
+          DATABRICKS_HOST: ${{ secrets.DATABRICKS_HOST }}
+          DATABRICKS_CLIENT_ID: ${{ secrets.DATABRICKS_CLIENT_ID }}
+          DATABRICKS_CLIENT_SECRET: ${{ secrets.DATABRICKS_CLIENT_SECRET }}
+          JOB_ID: ${{ vars.SKILLHUB_JOB_ID_SWITCH }}
+          ROWS: ${{ needs.plan.outputs.publish }}
+          MERGE_SHA: ${{ github.sha }}
+          EVAL_RUN_ID: ${{ needs.plan.outputs.run_key }}
+          SKILLS_ROOT: ${{ needs.eval-merge.outputs.skills_root }}
+          ACTOR: ${{ github.actor }}
+        run: |
+          [ -n "$SKILLS_ROOT" ] || { echo "::error::No evaluated skills folder to publish from."; exit 1; }
+          jq -e 'type == "array" and all(.[]; (.dept | type) == "string" and (.skill | type) == "string" and (.hash | test("^sha256:[0-9a-f]{64}$")) and (.rubric_hash | test("^(none|sha256:[0-9a-f]{64})$")) and (.dataset_digest | test("^sha256:[0-9a-f]{64}$")) and ((.cells | type) == "array") and all(.cells[]; type == "string" and test("^[A-Za-z0-9_.-]+/(trigger|with_skill)$")))' <<<"$ROWS" > /dev/null || { echo "::error::The plan output is not a valid list of skills."; exit 1; }
+          run_job() {
+            if ! databricks jobs run-now "$JOB_ID" --timeout 30m --json "$1" -o json > "$RUNNER_TEMP/run.json" </dev/null; then
+              url=$(jq -r '.run_page_url // empty' "$RUNNER_TEMP/run.json" 2>/dev/null || true)
+              echo "::error::run-now failed. ${url:-Job: $DATABRICKS_HOST/jobs/$JOB_ID}"
+              exit 1
+            fi
+            echo "Job run: $(jq -r '.run_page_url // "unknown"' "$RUNNER_TEMP/run.json")"
+            jq -e '.state.result_state == "SUCCESS"' "$RUNNER_TEMP/run.json" > /dev/null
+          }
+          [[ "$JOB_ID" =~ ^[0-9]+$ ]] || { echo "::error::The SKILLHUB_JOB_ID_SWITCH variable must be a numeric Job ID."; exit 1; }
+          while IFS= read -r row; do
+            # Publish the exact folder that was evaluated; expect_hash makes the Job check it matches the merge,
+            # and run_key makes it check that the merge eval passed for that content with the merge's
+            # rubric, cases and fixtures, in every planned model and gating mode.
+            params=$(jq -n --argjson r "$row" --arg sha "$MERGE_SHA" --arg eval "$EVAL_RUN_ID" --arg actor "$ACTOR" \
+              --arg skills_root "$SKILLS_ROOT" \
+              '{job_parameters: {action: "publish", dept: $r.dept, skill: $r.skill, version: "",
+                git_sha: $sha, eval_run_id: $eval, actor: $actor, skills_root: $skills_root,
+                expect_hash: $r.hash, run_key: $eval, expect_rubric_hash: $r.rubric_hash,
+                expect_dataset_digest: $r.dataset_digest, expect_cells: ($r.cells | join(","))}}')
+            run_job "$params"
+          done < <(jq -c '.[]' <<<"$ROWS")
+
+      - name: Switch to the new versions (action=switch)
+        if: ${{ needs.plan.outputs.publish != '[]' }}
+        env:
+          DATABRICKS_HOST: ${{ secrets.DATABRICKS_HOST }}
+          DATABRICKS_CLIENT_ID: ${{ secrets.DATABRICKS_CLIENT_ID }}
+          DATABRICKS_CLIENT_SECRET: ${{ secrets.DATABRICKS_CLIENT_SECRET }}
+          JOB_ID: ${{ vars.SKILLHUB_JOB_ID_SWITCH }}
+          ROWS: ${{ needs.plan.outputs.publish }}
+          MERGE_SHA: ${{ github.sha }}
+          EVAL_RUN_ID: ${{ needs.plan.outputs.run_key }}
+          SKILLS_ROOT: ${{ needs.eval-merge.outputs.skills_root }}
+          ACTOR: ${{ github.actor }}
+        run: |
+          [ -n "$SKILLS_ROOT" ] || { echo "::error::No evaluated skills folder to switch from."; exit 1; }
+          jq -e 'type == "array" and all(.[]; (.dept | type) == "string" and (.skill | type) == "string" and (.hash | test("^sha256:[0-9a-f]{64}$")) and (.rubric_hash | test("^(none|sha256:[0-9a-f]{64})$")) and (.dataset_digest | test("^sha256:[0-9a-f]{64}$")) and ((.cells | type) == "array") and all(.cells[]; type == "string" and test("^[A-Za-z0-9_.-]+/(trigger|with_skill)$")))' <<<"$ROWS" > /dev/null || { echo "::error::The plan output is not a valid list of skills."; exit 1; }
+          run_job() {
+            if ! databricks jobs run-now "$JOB_ID" --timeout 30m --json "$1" -o json > "$RUNNER_TEMP/run.json" </dev/null; then
+              url=$(jq -r '.run_page_url // empty' "$RUNNER_TEMP/run.json" 2>/dev/null || true)
+              echo "::error::run-now failed. ${url:-Job: $DATABRICKS_HOST/jobs/$JOB_ID}"
+              exit 1
+            fi
+            echo "Job run: $(jq -r '.run_page_url // "unknown"' "$RUNNER_TEMP/run.json")"
+            jq -e '.state.result_state == "SUCCESS"' "$RUNNER_TEMP/run.json" > /dev/null
+          }
+          [[ "$JOB_ID" =~ ^[0-9]+$ ]] || { echo "::error::The SKILLHUB_JOB_ID_SWITCH variable must be a numeric Job ID."; exit 1; }
+          while IFS= read -r row; do
+            # "latest" resolves by the content hash of the evaluated folder, so it is the version just published.
+            params=$(jq -n --argjson r "$row" --arg sha "$MERGE_SHA" --arg eval "$EVAL_RUN_ID" --arg actor "$ACTOR" \
+              --arg skills_root "$SKILLS_ROOT" \
+              '{job_parameters: {action: "switch", dept: $r.dept, skill: $r.skill, version: "latest",
+                git_sha: $sha, eval_run_id: $eval, actor: $actor, skills_root: $skills_root,
+                expect_hash: $r.hash}}')
+            run_job "$params"
+          done < <(jq -c '.[]' <<<"$ROWS")
+
+      - name: Retire deleted skills (action=retire)
+        if: ${{ needs.plan.outputs.retire != '[]' }}
+        env:
+          DATABRICKS_HOST: ${{ secrets.DATABRICKS_HOST }}
+          DATABRICKS_CLIENT_ID: ${{ secrets.DATABRICKS_CLIENT_ID }}
+          DATABRICKS_CLIENT_SECRET: ${{ secrets.DATABRICKS_CLIENT_SECRET }}
+          JOB_ID: ${{ vars.SKILLHUB_JOB_ID_SWITCH }}
+          ROWS: ${{ needs.plan.outputs.retire }}
+          MERGE_SHA: ${{ github.sha }}
+          ACTOR: ${{ github.actor }}
+        run: |
+          jq -e 'type == "array" and all(.[]; (.dept | type) == "string" and (.skill | type) == "string")' <<<"$ROWS" > /dev/null || { echo "::error::The plan output is not a valid list of skills."; exit 1; }
+          run_job() {
+            if ! databricks jobs run-now "$JOB_ID" --timeout 30m --json "$1" -o json > "$RUNNER_TEMP/run.json" </dev/null; then
+              url=$(jq -r '.run_page_url // empty' "$RUNNER_TEMP/run.json" 2>/dev/null || true)
+              echo "::error::run-now failed. ${url:-Job: $DATABRICKS_HOST/jobs/$JOB_ID}"
+              exit 1
+            fi
+            echo "Job run: $(jq -r '.run_page_url // "unknown"' "$RUNNER_TEMP/run.json")"
+            jq -e '.state.result_state == "SUCCESS"' "$RUNNER_TEMP/run.json" > /dev/null
+          }
+          [[ "$JOB_ID" =~ ^[0-9]+$ ]] || { echo "::error::The SKILLHUB_JOB_ID_SWITCH variable must be a numeric Job ID."; exit 1; }
+          while IFS= read -r row; do
+            params=$(jq -n --argjson r "$row" --arg sha "$MERGE_SHA" --arg actor "$ACTOR" \
+              '{job_parameters: {action: "retire", dept: $r.dept, skill: $r.skill, version: "",
+                git_sha: $sha, eval_run_id: "", actor: $actor}}')
+            run_job "$params"
+          done < <(jq -c '.[]' <<<"$ROWS")
+
+      - name: Move the skillhub/released tag
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          MERGE_SHA: ${{ github.sha }}
+          RELEASED_BEFORE: ${{ steps.guard.outputs.released_before }}
+        run: |
+          # Fails if the tag moved since the start of this job (an empty value means it must not exist yet).
+          git -c credential.helper= -c 'credential.helper=!gh auth git-credential' push \
+            --force-with-lease="refs/tags/skillhub/released:${RELEASED_BEFORE}" \
+            origin "${MERGE_SHA}:refs/tags/skillhub/released"

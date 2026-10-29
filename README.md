@@ -2,7 +2,18 @@
 
 Register agent skills (`SKILL.md` bundles) in Unity Catalog, serve them to agents through Unity Gateway under Unity Catalog permissions, and evaluate every skill version against any set of models, with the evidence kept in MLflow and Delta.
 
-**Status:** under active development.
+**Status:** first release (registry, evaluation engine, CI/CD gates, Skill Hub basics). Some features are Beta; see `docs/architecture.md`.
+
+## Quick start
+
+```bash
+uv venv --python 3.12
+uv sync
+uv run skillhub lint
+uv run pytest -q
+```
+
+Configuration is in `config/hub.yaml`, and its `${VAR}` values come from the environment.
 
 ## What it does
 
@@ -11,7 +22,7 @@ Register agent skills (`SKILL.md` bundles) in Unity Catalog, serve them to agent
 - **CI/CD:** GitHub Actions evaluate every skill change on its pull request. A reviewer approves the new version before it goes live.
 - **Skill Hub:** a Databricks App for browsing skills, running evals, reviewing results and switching versions, governed by Unity Catalog permissions.
 
-## Repository layout (planned)
+## Repository layout
 
 | Path | Contents |
 |---|---|
@@ -22,8 +33,17 @@ Register agent skills (`SKILL.md` bundles) in Unity Catalog, serve them to agent
 | `resources/`, `databricks.yml` | Databricks bundle: jobs, app, schemas |
 | `.github/workflows/` | CI/CD pipelines |
 | `docs/` | Architecture, operations, API and onboarding guides |
+| `fixtures/` | Synthetic test data for evaluation, with the Northwind Robotics suite |
+| `scripts/` | Repository helpers, such as `scripts/configure_github.sh` and the review recorder `scripts/mark_reviewed.py` |
 
 Example skills are imported from [anthropics/financial-services](https://github.com/anthropics/financial-services) under the Apache-2.0 license; see `THIRD_PARTY_NOTICES`.
+
+## Documentation
+
+- `docs/architecture.md`: components, data flow, Unity Catalog layout, permissions, versions and switch, evaluation method, results.
+- `docs/operations.md`: bootstrap, identities, secrets, deploy, running evals, switch and rollback, alerts, nightly.
+- `docs/api.md`: Skill Hub REST API and direct Databricks API equivalents.
+- `docs/onboarding.md`: adding a skill, importing another skill repository.
 
 ## License
 

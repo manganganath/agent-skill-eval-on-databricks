@@ -1,0 +1,18 @@
+{
+  "company": "Northwind Robotics",
+  "ticker": "NWRB",
+  "note": "Synthetic test data. Northwind Robotics is a fictional company.",
+  "source": "Consensus Hub (synthetic fixture)",
+  "as_of": "2026-10-20",
+  "periods": {
+    "Q3 FY26": {"revenue_usd_m": 405.0, "eps_non_gaap_usd": 0.79, "gross_margin_pct": 40.8, "analysts": 11},
+    "Q4 FY26": {"revenue_usd_m": 428.0, "eps_non_gaap_usd": 0.92, "gross_margin_pct": 41.2, "analysts": 10, "earnings_date": "2026-11-12"},
+    "FY26": {"revenue_usd_m": 1650.0, "eps_non_gaap_usd": 3.20, "analysts": 14}
+  },
+  "trading_setup": {
+    "close_price_usd": 48.20,
+    "ytd_return_pct": 9.0,
+    "options_implied_move_pct": null,
+    "note": "Options data is not part of this fixture. null means not available."
+  }
+}

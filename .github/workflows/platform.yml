@@ -1,0 +1,228 @@
+name: platform
+
+# Uses `pull_request`, never `pull_request_target`. Code checks run for everyone and hold no secrets.
+# Deploys run in the `production` environment (ci credentials, reviewer approval): the prod deploy on
+# pushes to main, the dev deploy only when started by hand. No credential ever runs unreviewed PR code.
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  # The required check. It holds no Databricks secrets.
+  platform:
+    name: platform
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    concurrency:
+      group: platform-${{ github.event_name }}-${{ github.ref }}
+      cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6.8.0
+
+      - name: Install dependencies
+        run: uv sync --frozen --python 3.12
+
+      - name: Unit tests
+        run: uv run pytest -q
+
+      - name: Lint
+        run: |
+          uv run ruff check .
+          uv run ruff format --check .
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: "20"
+
+      - name: Build Skill Hub frontend and stage the app
+        run: scripts/build_app.sh
+
+  # Manual dev deploy. Approval on the `production` environment comes before any credential is available.
+  deploy-dev:
+    name: deploy (dev)
+    needs: [platform]
+    if: ${{ github.event_name == 'workflow_dispatch' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    environment: production
+    concurrency:
+      group: skillhub-deploy-dev
+      cancel-in-progress: false
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6.8.0
+
+      - name: Install dependencies
+        run: uv sync --frozen --python 3.12
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: "20"
+
+      - name: Build Skill Hub frontend and stage the app
+        run: scripts/build_app.sh
+
+      - name: Install Databricks CLI
+        uses: databricks/setup-cli@9b64c94a6d2b2e830592d80e9f14c26d32b42ad7 # v1.20.0
+        with:
+          version: 1.20.0
+
+      - name: Validate bundle (dev)
+        env:
+          DATABRICKS_HOST: ${{ secrets.DATABRICKS_HOST }}
+          DATABRICKS_CLIENT_ID: ${{ secrets.DATABRICKS_CLIENT_ID }}
+          DATABRICKS_CLIENT_SECRET: ${{ secrets.DATABRICKS_CLIENT_SECRET }}
+          BUNDLE_VAR_warehouse_id: ${{ secrets.SQL_WAREHOUSE_ID }}
+          BUNDLE_VAR_ci_principal: ${{ vars.CI_PRINCIPAL }}
+          BUNDLE_VAR_ci_eval_principal: ${{ vars.CI_EVAL_PRINCIPAL }}
+          BUNDLE_VAR_app_principal: ${{ vars.APP_PRINCIPAL_DEV }}
+          BUNDLE_VAR_catalog: ${{ vars.SKILLHUB_CATALOG }}
+          BUNDLE_VAR_workspace_root: ${{ vars.SKILLHUB_WORKSPACE_ROOT }}
+          BUNDLE_VAR_alert_destination_id: ${{ vars.SKILLHUB_ALERT_DESTINATION_ID }}
+        run: |
+          # The Jobs, the app and the dashboard use the catalog CI reads; never the bundle default.
+          [ -n "$BUNDLE_VAR_catalog" ] || { echo "::error::Set the SKILLHUB_CATALOG variable in the production environment."; exit 1; }
+          # The Jobs and the app use the folder the workflows upload candidates to; never the bundle default.
+          [ -n "$BUNDLE_VAR_workspace_root" ] || { echo "::error::Set the SKILLHUB_WORKSPACE_ROOT variable in the production environment (scripts/configure_github.sh)."; exit 1; }
+          databricks bundle validate -t dev
+
+      - name: Deploy bundle to dev
+        env:
+          DATABRICKS_HOST: ${{ secrets.DATABRICKS_HOST }}
+          DATABRICKS_CLIENT_ID: ${{ secrets.DATABRICKS_CLIENT_ID }}
+          DATABRICKS_CLIENT_SECRET: ${{ secrets.DATABRICKS_CLIENT_SECRET }}
+          BUNDLE_VAR_warehouse_id: ${{ secrets.SQL_WAREHOUSE_ID }}
+          BUNDLE_VAR_ci_principal: ${{ vars.CI_PRINCIPAL }}
+          BUNDLE_VAR_ci_eval_principal: ${{ vars.CI_EVAL_PRINCIPAL }}
+          BUNDLE_VAR_app_principal: ${{ vars.APP_PRINCIPAL_DEV }}
+          BUNDLE_VAR_catalog: ${{ vars.SKILLHUB_CATALOG }}
+          BUNDLE_VAR_workspace_root: ${{ vars.SKILLHUB_WORKSPACE_ROOT }}
+          BUNDLE_VAR_alert_destination_id: ${{ vars.SKILLHUB_ALERT_DESTINATION_ID }}
+        run: |
+          # The Jobs, the app and the dashboard use the catalog CI reads; never the bundle default.
+          [ -n "$BUNDLE_VAR_catalog" ] || { echo "::error::Set the SKILLHUB_CATALOG variable in the production environment."; exit 1; }
+          # The Jobs and the app use the folder the workflows upload candidates to; never the bundle default.
+          [ -n "$BUNDLE_VAR_workspace_root" ] || { echo "::error::Set the SKILLHUB_WORKSPACE_ROOT variable in the production environment (scripts/configure_github.sh)."; exit 1; }
+          databricks bundle deploy -t dev --auto-approve
+
+  # Pushes to main deploy prod after a reviewer approves the `production` environment (ci credentials).
+  # Shares the release group so a deploy never changes Jobs while a publish or switch is running. A pending
+  # member of the group can be replaced by a newer one; the next main push redoes a replaced deploy.
+  deploy-prod:
+    name: deploy (prod)
+    needs: [platform]
+    if: ${{ github.event_name == 'push' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    environment: production
+    concurrency:
+      group: skillhub-release
+      cancel-in-progress: false
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6.8.0
+
+      - name: Install dependencies
+        run: uv sync --frozen --python 3.12
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: "20"
+
+      - name: Build Skill Hub frontend and stage the app
+        run: scripts/build_app.sh
+
+      - name: Install Databricks CLI
+        uses: databricks/setup-cli@9b64c94a6d2b2e830592d80e9f14c26d32b42ad7 # v1.20.0
+        with:
+          version: 1.20.0
+
+      # Failed skill-switch and nightly runs notify the alert destination. The bundle variable is
+      # complex, so it goes in the overrides file; without a destination the Jobs keep no notifications.
+      - name: Configure Job failure notifications
+        env:
+          DEST: ${{ vars.SKILLHUB_ALERT_DESTINATION_ID }}
+        run: |
+          if [ -z "$DEST" ]; then
+            echo "::warning::SKILLHUB_ALERT_DESTINATION_ID is not set: SQL alerts and Job failures notify nobody."
+            exit 0
+          fi
+          [[ "$DEST" =~ ^[0-9a-fA-F-]{36}$ ]] || { echo "::error::SKILLHUB_ALERT_DESTINATION_ID must be a notification destination ID."; exit 1; }
+          mkdir -p .databricks/bundle/prod
+          jq -n --arg id "$DEST" '{job_failure_notifications: {on_failure: [{id: $id}]}}' > .databricks/bundle/prod/variable-overrides.json
+
+      - name: Validate bundle (prod)
+        env:
+          DATABRICKS_HOST: ${{ secrets.DATABRICKS_HOST }}
+          DATABRICKS_CLIENT_ID: ${{ secrets.DATABRICKS_CLIENT_ID }}
+          DATABRICKS_CLIENT_SECRET: ${{ secrets.DATABRICKS_CLIENT_SECRET }}
+          BUNDLE_VAR_warehouse_id: ${{ secrets.SQL_WAREHOUSE_ID }}
+          BUNDLE_VAR_ci_principal: ${{ vars.CI_PRINCIPAL }}
+          BUNDLE_VAR_ci_eval_principal: ${{ vars.CI_EVAL_PRINCIPAL }}
+          BUNDLE_VAR_app_principal: ${{ vars.APP_PRINCIPAL }}
+          BUNDLE_VAR_catalog: ${{ vars.SKILLHUB_CATALOG }}
+          BUNDLE_VAR_workspace_root: ${{ vars.SKILLHUB_WORKSPACE_ROOT }}
+          BUNDLE_VAR_alert_destination_id: ${{ vars.SKILLHUB_ALERT_DESTINATION_ID }}
+        run: |
+          # The Jobs, the app and the dashboard use the catalog CI reads; never the bundle default.
+          [ -n "$BUNDLE_VAR_catalog" ] || { echo "::error::Set the SKILLHUB_CATALOG variable in the production environment."; exit 1; }
+          # The Jobs and the app use the folder the workflows upload candidates to; never the bundle default.
+          [ -n "$BUNDLE_VAR_workspace_root" ] || { echo "::error::Set the SKILLHUB_WORKSPACE_ROOT variable in the production environment (scripts/configure_github.sh)."; exit 1; }
+          databricks bundle validate -t prod
+
+      # Never change the Jobs while a publish or switch runs. Only the skill-switch Job is checked:
+      # evals (PR, merge, Hub, nightly) may keep running. The release group already serialises publish
+      # and switch runs started from GitHub; this check covers switches started from the Skill Hub.
+      - name: Deploy bundle to prod
+        env:
+          DATABRICKS_HOST: ${{ secrets.DATABRICKS_HOST }}
+          DATABRICKS_CLIENT_ID: ${{ secrets.DATABRICKS_CLIENT_ID }}
+          DATABRICKS_CLIENT_SECRET: ${{ secrets.DATABRICKS_CLIENT_SECRET }}
+          BUNDLE_VAR_warehouse_id: ${{ secrets.SQL_WAREHOUSE_ID }}
+          BUNDLE_VAR_ci_principal: ${{ vars.CI_PRINCIPAL }}
+          BUNDLE_VAR_ci_eval_principal: ${{ vars.CI_EVAL_PRINCIPAL }}
+          BUNDLE_VAR_app_principal: ${{ vars.APP_PRINCIPAL }}
+          BUNDLE_VAR_catalog: ${{ vars.SKILLHUB_CATALOG }}
+          BUNDLE_VAR_workspace_root: ${{ vars.SKILLHUB_WORKSPACE_ROOT }}
+          BUNDLE_VAR_alert_destination_id: ${{ vars.SKILLHUB_ALERT_DESTINATION_ID }}
+          SWITCH_JOB_ID: ${{ vars.SKILLHUB_JOB_ID_SWITCH }}
+        run: |
+          # The Jobs, the app and the dashboard use the catalog CI reads; never the bundle default.
+          [ -n "$BUNDLE_VAR_catalog" ] || { echo "::error::Set the SKILLHUB_CATALOG variable in the production environment."; exit 1; }
+          # The Jobs and the app use the folder the workflows upload candidates to; never the bundle default.
+          [ -n "$BUNDLE_VAR_workspace_root" ] || { echo "::error::Set the SKILLHUB_WORKSPACE_ROOT variable in the production environment (scripts/configure_github.sh)."; exit 1; }
+          if [ -z "$SWITCH_JOB_ID" ]; then
+            echo "::notice::SKILLHUB_JOB_ID_SWITCH is not set yet (first deploy): no active-run check."
+          else
+            [[ "$SWITCH_JOB_ID" =~ ^[0-9]+$ ]] || { echo "::error::The SKILLHUB_JOB_ID_SWITCH variable must be a numeric Job ID."; exit 1; }
+            active=$(databricks jobs list-runs --job-id "$SWITCH_JOB_ID" --active-only -o json | jq 'if type == "array" then length else (.runs // []) | length end')
+            if [ "$active" != "0" ]; then
+              echo "::error::The skill-switch Job has an active run. Re-run this deploy when it has finished."
+              exit 1
+            fi
+          fi
+          databricks bundle deploy -t prod --auto-approve

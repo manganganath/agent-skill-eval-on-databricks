@@ -1,0 +1,5 @@
+{"id": "g1", "object": "chat.completion", "model": "databricks-gpt-5-5",
+ "choices": [{"index": 0, "finish_reason": "tool_calls", "message": {"role": "assistant", "content": null,
+   "tool_calls": [{"id": "call_abc123", "type": "function",
+     "function": {"name": "skill_cat__dept_x__earnings-preview", "arguments": "{\"ticker\": \"NVDA\"}"}}]}}],
+ "usage": {"prompt_tokens": 120, "completion_tokens": 18, "total_tokens": 138}}
