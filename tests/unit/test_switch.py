@@ -1,5 +1,6 @@
 import os
 import shutil
+import sys
 from pathlib import Path
 
 import pytest
@@ -659,10 +660,20 @@ def test_job_switch_publish_refuses_content_swapped_after_the_eval(reg, make_bun
     assert [h.action for h in reg.journal.history(DEPT, SKILL)] == ["publish_refused"]
 
 
+def _gate_both_modes(monkeypatch, tmp_path):
+    """job-switch reads config/hub.yaml; this copy gates on effectiveness as well as trigger."""
+    text = Path(CONFIG).read_text(encoding="utf-8")
+    assert "gating_modes: [trigger]" in text
+    both = tmp_path / "hub.yaml"
+    both.write_text(text.replace("gating_modes: [trigger]", "gating_modes: [trigger, effectiveness]"))
+    monkeypatch.setattr(sys.modules[__name__], "CONFIG", both)
+
+
 def test_job_switch_publish_refuses_a_failing_eval_and_accepts_run_key(
     reg, make_bundle, monkeypatch, tmp_path
 ):
     monkeypatch.setenv("SKILLHUB_SKILLS", str(tmp_path / "skills"))
+    _gate_both_modes(monkeypatch, tmp_path)
     b = evaluated(
         reg, make_bundle(DEPT, SKILL), run_key="k1", cells=(("trigger", "pass"), ("with_skill", "fail"))
     )
@@ -675,6 +686,19 @@ def test_job_switch_publish_refuses_a_failing_eval_and_accepts_run_key(
     )
     assert r.exit_code == 0, r.output
     assert [h.action for h in reg.journal.history(DEPT, SKILL)] == ["publish_refused", "published"]
+
+
+def test_job_switch_publishes_when_only_an_advisory_mode_fails(reg, make_bundle, monkeypatch, tmp_path):
+    """The shipped hub.yaml gates on trigger only: a failing effectiveness verdict is recorded, not blocking."""
+    monkeypatch.setenv("SKILLHUB_SKILLS", str(tmp_path / "skills"))
+    evaluated(
+        reg, make_bundle(DEPT, SKILL), run_key="k1", cells=(("trigger", "pass"), ("with_skill", "fail"))
+    )
+    r = _cli(
+        reg, monkeypatch, "--action", "publish", "--git-sha", SHA, "--eval-run-id", "k1", "--run-key", "k1"
+    )
+    assert r.exit_code == 0, r.output
+    assert [h.action for h in reg.journal.history(DEPT, SKILL)] == ["published"]
 
 
 # --- Only the ci principal publishes ---

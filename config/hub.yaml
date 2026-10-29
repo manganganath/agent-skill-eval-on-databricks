@@ -37,8 +37,10 @@ defaults:
   fail_rate: 0.5
   warn_rate: 0.8
   max_error_rate: 0.1
-  concurrency_per_endpoint: 8
+  concurrency_per_endpoint: 15      # agent runs at once per endpoint, per worker process: a cell is up to 15 effectiveness or 45 trigger records
+  skill_workers: 10                 # skills at once, one worker process each; peak worker RSS ~400-500 MB with one evaluate at a time; serverless has ~5.8 GB free
   min_reviewed_cases: 5             # per mode, needed for a gating verdict
+  gating_modes: [trigger]           # verdicts that block the gates; effectiveness runs and is reported, add it once its cases are tuned
 
 import:
   source: github.com/anthropics/financial-services@574ed3624aebd0418c7e96cd101262f30210ab26

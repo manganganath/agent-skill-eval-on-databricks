@@ -1092,16 +1092,21 @@ def eval_cmd(
 
 @app.command("changed-skills")
 def changed_skills_cmd(
-    base: str = typer.Option(..., "--base"),
+    base: str = typer.Option("", "--base", help="Base ref. Give it or --empty-base."),
     head: str = typer.Option(..., "--head"),
+    empty_base: bool = typer.Option(
+        False, "--empty-base", help="Diff from nothing (no release yet): every skill at --head is added."
+    ),
 ) -> None:
     """Print changed skills as JSON: [{dept, skill, status, needs_cases, needs_rubric, needs_generation}]."""
     import json
 
     from skillhub.ci.changes import changed_skills
 
+    if bool(_opt(base)) == empty_base:
+        raise typer.BadParameter("pass exactly one of --base or --empty-base")
     with _guard():
-        rows = [c.as_dict() for c in changed_skills(base, head)]
+        rows = [c.as_dict() for c in changed_skills(None if empty_base else base, head)]
     typer.echo(json.dumps(rows, indent=2))
 
 
@@ -1149,7 +1154,9 @@ def pr_comment_cmd(
             if links:
                 add_run_links(rows, cfg.workspace.host)
             hub_url = (os.environ.get("SKILL_HUB_URL") or None) if links else None
-            body = render_matrix_markdown(rows, run_key=key, links=links, hub_url=hub_url)
+            body = render_matrix_markdown(
+                rows, run_key=key, links=links, hub_url=hub_url, gating_modes=cfg.defaults.gating_modes
+            )
             action = upsert_pr_comment(repo=repo, pr=pr, body=body, token=token)
         except ValueError as e:
             raise SkillHubError(str(e)) from None
@@ -1158,7 +1165,7 @@ def pr_comment_cmd(
             status = e.response.status_code if isinstance(e, httpx.HTTPStatusError) else type(e).__name__
             raise SkillHubError(f"GitHub API call failed ({status})") from None
     typer.echo(f"pr comment {action}")
-    raise typer.Exit(exit_code(blocking_verdicts(rows)))
+    raise typer.Exit(exit_code(blocking_verdicts(rows, cfg.defaults.gating_modes)))
 
 
 @app.command("check-verdict")
@@ -1223,7 +1230,7 @@ def check_verdict_cmd(
             rows = load_matrix_rows(sql.execute, cfg, key, trusted=trusted_run_authors(w))
         except ValueError as e:
             raise SkillHubError(str(e)) from None
-    verdicts = blocking_verdicts(rows)
+    verdicts = blocking_verdicts(rows, cfg.defaults.gating_modes)
     typer.echo(f"verdicts: {sorted(set(verdicts)) or 'none'}")
     missing = missing_skills(rows, [*_csv(skills), *expected])
     if missing:

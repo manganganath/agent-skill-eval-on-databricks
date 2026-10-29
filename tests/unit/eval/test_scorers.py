@@ -190,3 +190,15 @@ def test_planted_bugs_scorer_returns_none_out_of_scope(tmp_path):
     sc = make_planted_bugs_scorer(cases, tmp_path)
     t = make_trace(tmp_path, [], case_id=2)
     assert sc(trace=t) is None
+
+
+def test_planted_bugs_read_final_text_stored_as_a_json_string():
+    """A trace read back from Unity Catalog trace storage holds span outputs as a JSON string, not a dict."""
+    from types import SimpleNamespace
+
+    span = SimpleNamespace(
+        name="agent_run", outputs=json.dumps({"final_text": "BS off by 1,250; hard-coded D12"})
+    )
+    t = SimpleNamespace(data=SimpleNamespace(spans=[span]))
+    fb = planted_bugs_feedback(t, BUGS)
+    assert fb.metadata["found"] == ["bs_imbalance", "hardcode"]

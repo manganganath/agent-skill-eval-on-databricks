@@ -131,8 +131,21 @@ def _touched(name_status_z: str) -> tuple[set[tuple[str, str]], dict[tuple[str, 
     return touched, renamed_from
 
 
-def changed_skills(base_ref: str, head_ref: str, repo: Path = Path(".")) -> list[ChangedSkill]:
+def _empty_tree(repo: Path) -> str:
+    try:
+        return subprocess.run(
+            ["git", "-C", str(repo), "hash-object", "-t", "tree", "--stdin"],
+            check=True, capture_output=True, input=b"",
+        ).stdout.decode().strip()  # fmt: skip
+    except subprocess.CalledProcessError as e:
+        raise GitRefError(f"git hash-object failed: {e.stderr.decode(errors='replace').strip()}") from e
+
+
+def changed_skills(base_ref: str | None, head_ref: str, repo: Path = Path(".")) -> list[ChangedSkill]:
     """Skill folders touched between base and head. Status comes from SKILL.md on each side.
+
+    A base of None is the empty tree: every skill at head is added. The publish plan uses it before the first
+    release, when nothing is released yet.
 
     A rename that git can't detect (heavily edited files) shows as deleted plus added, which is still safe.
 
@@ -141,8 +154,11 @@ def changed_skills(base_ref: str, head_ref: str, repo: Path = Path(".")) -> list
     A department counts as quarantined when config/hub.yaml says so at either ref, so a change that also
     clears the flag is still caught.
     """
-    base_sha, head_sha = _resolve(repo, base_ref), _resolve(repo, head_ref)
-    fork = _git(repo, "merge-base", base_sha, head_sha).strip()
+    head_sha = _resolve(repo, head_ref)
+    if base_ref is None:
+        fork = _empty_tree(repo)
+    else:
+        fork = _git(repo, "merge-base", _resolve(repo, base_ref), head_sha).strip()
     diff = _git(repo, "diff", "--name-status", "-z", "--find-renames", fork, head_sha, "--", SKILL_ROOT)
     touched, renamed_from = _touched(diff)
     quarantined = _quarantined(repo, fork) | _quarantined(repo, head_sha)

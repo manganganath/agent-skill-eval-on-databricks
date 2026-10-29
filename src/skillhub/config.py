@@ -89,7 +89,13 @@ class Defaults(BaseModel):
     warn_rate: float = Field(default=0.8, ge=0, le=1)
     max_error_rate: float = Field(default=0.1, ge=0, le=1)
     concurrency_per_endpoint: int = Field(default=8, ge=1)
+    skill_workers: int = Field(default=6, ge=1)  # skills evaluated at once, each in its own process
     min_reviewed_cases: int = Field(default=5, ge=1)
+    # The modes whose verdicts block the PR, merge and publish gates. Every requested mode still runs and is
+    # recorded; a mode left out is reported but does not block.
+    gating_modes: list[Literal["trigger", "effectiveness"]] = Field(
+        default_factory=lambda: ["trigger", "effectiveness"], min_length=1
+    )
 
 
 class ImportSpec(BaseModel):

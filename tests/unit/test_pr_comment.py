@@ -6,6 +6,7 @@ import pytest
 import respx
 
 from skillhub.ci.pr_comment import (
+    COMMENT_MAX,
     MARKER,
     exit_code,
     missing_skills,
@@ -74,6 +75,26 @@ def test_render_escapes_pipes_in_cells():
 
 def test_render_no_rows_says_so():
     assert "No evaluation results" in render_matrix_markdown([], run_key="k")
+
+
+def test_render_fits_one_github_comment_with_the_blocking_rows_first():
+    """GitHub refuses a comment body over 65,536 characters (422), so the PR would get no comment. A large PR, such
+    as an import of every skill, shows the blocking rows first and says how many rows are left out."""
+    rows = [
+        row(skill=f"skill-{i:02d}-with-a-long-name", model_profile=m, mode=mode, run_url=f"https://ws/{i}")
+        for i in range(63)
+        for m in ("claude-sonnet", "gpt", "gemini-flash")
+        for mode in ("trigger", "without_skill", "with_skill")
+    ]
+    rows[-1]["verdict"] = "fail"
+    md = render_matrix_markdown(rows, run_key="k", links=True, hub_url="https://hub.example")
+    assert len(md) <= COMMENT_MAX
+    table = [ln for ln in md.splitlines() if ln.startswith("| skill-")]
+    assert table[0].startswith("| skill-62-with-a-long-name | gemini-flash |") and "| fail |" in table[0]
+    assert f"{len(rows) - len(table)} of {len(rows)} rows are not shown" in md
+    assert md.endswith("Skill Hub: https://hub.example")
+    small = render_matrix_markdown(rows[-9:], run_key="k")  # a body that fits keeps its order and has no note
+    assert "not shown" not in small and small.index("| fail |") > small.index("| trigger |")
 
 
 @pytest.mark.parametrize(
@@ -471,3 +492,15 @@ def test_check_verdict_fails_when_a_planned_cell_has_no_row(cli_env, tmp_path):
     )
     state["rows"] = [row(), row(mode="with_skill")]
     assert _invoke(cfg_path, "check-verdict", "--run-key", "k", "--expect-file", str(path)).exit_code == 0
+
+
+def test_blocking_verdicts_skip_modes_outside_gating_modes_but_never_unknown_ones():
+    from skillhub.ci.pr_comment import blocking_verdicts, exit_code
+
+    rows = [row(), row(mode="with_skill", verdict="fail"), row(mode="without_skill", verdict="fail")]
+    assert blocking_verdicts(rows, ["trigger"]) == ["pass"]
+    assert blocking_verdicts(rows, ["trigger", "effectiveness"]) == ["pass", "fail"]
+    assert blocking_verdicts([row(mode="mystery", verdict="pass")], ["trigger"]) == ["pass"]  # fail closed
+    assert (
+        exit_code(blocking_verdicts([row(mode="with_skill", verdict="pass")], ["trigger"])) == 1
+    )  # nothing gated

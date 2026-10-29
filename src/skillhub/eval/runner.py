@@ -14,23 +14,33 @@ The run schemas are dropped in `finally`. `sync` copies the verdict tag, so it c
   `RunSummary.errors`. A child run that fails after it started is closed with verdict `inconclusive` and an
   `error` tag, so sync completes and the gate blocks (fail closed).
 - The model sees production names only: the `ToolNameMap` rewrite covers every staged FQN of the scope.
+- Up to `defaults.skill_workers` skills run at once, each in its own worker process (`skillhub.eval.worker`).
+  In a process, child runs run one at a time, each with one `evaluate` over all its repeats. Results keep plan
+  order.
 """
 
 from __future__ import annotations
 
+import copy
 import dataclasses
+import functools
+import hashlib
 import importlib
 import json
 import logging
 import math
 import os
 import shutil
+import signal
 import statistics
+import subprocess
 import sys
 import tempfile
 import threading
 import time
+from collections import deque
 from collections.abc import Callable, Iterator
+from concurrent.futures import ThreadPoolExecutor, wait
 from contextlib import contextmanager, redirect_stdout
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -40,6 +50,7 @@ import mlflow
 import mlflow.openai
 from mlflow import MlflowClient
 from mlflow.entities import SpanType
+from mlflow.pyfunc.context import get_prediction_context
 
 from skillhub import SkillHubError, evalspec
 from skillhub.agent.fixtures import FixtureStore
@@ -49,7 +60,7 @@ from skillhub.bundle import SkillBundle, SkillRefError, discover_bundles, find_b
 from skillhub.config import ConfigError
 from skillhub.eval.judges import scorers_for
 from skillhub.eval.outcomes import case_outcome
-from skillhub.eval.scorers import PLANTED_FIXTURE
+from skillhub.eval.scorers import PLANTED_FIXTURE, load_planted_bugs, planted_bugs_check
 from skillhub.eval.verdict import (
     CaseScore,
     Verdict,
@@ -104,13 +115,25 @@ TRACE_POLL_S = 5
 TRACE_STALL_S = 60  # how long the trace count may stay unchanged after the evaluation returns
 ERROR_MAX = 500  # characters kept of an error message on a run tag or in the summary
 SKIP_TRACE_VALIDATION = "MLFLOW_GENAI_EVAL_SKIP_TRACE_VALIDATION"
+MAX_WORKERS = "MLFLOW_GENAI_EVAL_MAX_WORKERS"  # the predict pool of one evaluate
 MAX_SCORER_WORKERS = "MLFLOW_GENAI_EVAL_MAX_SCORER_WORKERS"
+# Judges at once per case. It multiplies with the predict workers, so it stays small.
+SCORER_WORKERS = 4
 TRIGGER = "skill_trigger"
 PLANTED = "planted_bugs_found"
 _YES = frozenset({"yes", "true", "pass"})
 _NO = frozenset({"no", "false", "fail"})
 _NO_SKILL = frozenset({"", "None", "null"})
 _NOT_RECORDED = object()  # the trigger assessment carries no `invoked_skill`
+WORKER_STOP_S = 20  # how long a stopped worker gets to close its open child runs before it is killed
+WORKER_TAIL_LINES = 20  # the stderr lines of a failed worker that its error keeps
+# A child process cannot use a Job's runtime auth, so a worker gets a host and token; these would conflict.
+_PAT_CONFLICTS = (
+    "DATABRICKS_AUTH_TYPE",
+    "DATABRICKS_CONFIG_PROFILE",
+    "DATABRICKS_CLIENT_ID",
+    "DATABRICKS_CLIENT_SECRET",
+)
 
 
 class EvalRunError(SkillHubError, ValueError):
@@ -169,6 +192,7 @@ class RunSummary:
 # --- results, imported when first used -----------------------------------------------------------------
 
 _RESULTS = (
+    ("experiments", "configure_mlflow"),
     ("experiments", "ensure_experiment"),
     ("datasets", "sync_dataset"),
     ("sync", "sync_run"),
@@ -190,6 +214,10 @@ def _require_results() -> None:
     """Import the results functions up front, so a broken results package fails before anything is staged."""
     for module, name in _RESULTS:
         _results(module, name)
+
+
+def configure_mlflow(cfg) -> None:
+    _results("experiments", "configure_mlflow")(cfg)
 
 
 def ensure_experiment(cfg, dept: str, skill: str) -> str:
@@ -267,18 +295,21 @@ def read_child_traces(
 
 
 @contextmanager
-def _evaluating(scorer_workers: int) -> Iterator[None]:
+def _evaluating(concurrency: int) -> Iterator[None]:
     """Settings for `mlflow.genai.evaluate`, restored afterwards.
 
     - `predict` is already traced, so MLflow's trace-validation call (one extra prediction) is skipped.
-    - Each case runs at most `scorer_workers` judges at a time (`concurrency_per_endpoint`), unless the
-      environment sets MLFLOW_GENAI_EVAL_MAX_SCORER_WORKERS. MLflow's scorer rate limit is in calls per
-      second, not a concurrency, so it keeps its adaptive default (it backs off on 429).
+    - One evaluate predicts up to `concurrency` (`concurrency_per_endpoint`) records at once, and each case
+      runs at most min(`concurrency`, SCORER_WORKERS) judges at a time, unless the environment sets
+      MLFLOW_GENAI_EVAL_MAX_WORKERS or MLFLOW_GENAI_EVAL_MAX_SCORER_WORKERS. MLflow's scorer rate limit is in
+      calls per second, not a concurrency, so it keeps its adaptive default (it backs off on 429).
     - MLflow prints a banner per `evaluate`; it goes to stderr so stdout stays the RunSummary JSON.
     """
     env = {SKIP_TRACE_VALIDATION: "true"}
+    if MAX_WORKERS not in os.environ:
+        env[MAX_WORKERS] = str(concurrency)
     if MAX_SCORER_WORKERS not in os.environ:
-        env[MAX_SCORER_WORKERS] = str(scorer_workers)
+        env[MAX_SCORER_WORKERS] = str(min(concurrency, SCORER_WORKERS))
     prev = {k: os.environ.get(k) for k in env}
     os.environ.update(env)
     try:
@@ -347,6 +378,11 @@ def _pinned(selected: list[SkillBundle], versions: dict[str, int] | None) -> dic
             raise EvalRunError(f"version for {ref!r} must be a positive whole number, got {n!r}")
         out[(b.dept, b.name)] = n
     return out
+
+
+def _judges(cfg, req: RunRequest) -> list[str]:
+    # A profile listed twice would cast two votes with one judge.
+    return list(dict.fromkeys(req.judges or (cfg.judges_pr if req.trigger_source == "pr" else cfg.judges)))
 
 
 def _check_request(cfg, req: RunRequest) -> None:
@@ -465,6 +501,7 @@ class _ModeData:
     case_ids: list[int]  # the cases that are evaluated
     n_records: int
     missing_ids: list[int] = field(default_factory=list)  # cases of this kind with no dataset row: errors
+    records: list[dict] = field(default_factory=list)  # the records rebuilt from evals.json, one per case
 
 
 @dataclass
@@ -491,11 +528,23 @@ class _SkillCtx:
     sql: Any
 
 
+@dataclass
+class _SkillRun:
+    """One skill's `_run_skill` call, made in this process or in a worker process."""
+
+    plan: _SkillPlan
+    scope: RunScope
+    skill: StagedSkill
+    exp_id: str
+    parent_id: str
+    version: int | None
+    pinned: bool = False  # `version` comes from the request, not from the journal
+
+
 def run_eval(cfg, req: RunRequest) -> RunSummary:
     req = dataclasses.replace(req, run_key=make_run_key(req.run_key))
     _check_request(cfg, req)
-    # A profile listed twice would cast two votes with one judge.
-    judges = list(dict.fromkeys(req.judges or (cfg.judges_pr if req.trigger_source == "pr" else cfg.judges)))
+    judges = _judges(cfg, req)
     selected = _select(discover_bundles(Path(req.skills_root) if req.skills_root else None), req.skills)
     pinned = _pinned(selected, req.versions)  # everything up to staging is checked before anything is written
     plans, clients, errors = _plan(cfg, req, selected)
@@ -525,6 +574,7 @@ def run_eval(cfg, req: RunRequest) -> RunSummary:
         )
         by_dept = {s.dept: s for s in scopes}
         prompts: tuple[str, dict[str, int]] | None = None
+        planned: list[_SkillRun | RunError] = []  # in plan order; the skills run after the checks
         for dept in depts:
             scope = by_dept[dept]
             staged = {s.name: s for s in scope.skills if s.dept == dept}
@@ -535,7 +585,7 @@ def run_eval(cfg, req: RunRequest) -> RunSummary:
                     if req.source == "live":  # never switched live: nothing to evaluate
                         log.warning("%s/%s has no live version; skipped", dept, name)
                     else:
-                        errors.append(RunError(dept, name, "the candidate was not staged in the run schema"))
+                        planned.append(RunError(dept, name, "the candidate was not staged in the run schema"))
                     continue
                 exp_id = ensure_experiment(cfg, dept, name)
                 if prompts is None:  # after ensure_experiment, which points MLflow at the workspace
@@ -544,7 +594,7 @@ def run_eval(cfg, req: RunRequest) -> RunSummary:
                     parents[dept] = _open_parent(req, scope, exp_id, prompts[1])
                 version = pinned.get((dept, name))
                 if version is not None and skill.origin != "version":  # Never label other content as vN
-                    errors.append(
+                    planned.append(
                         RunError(
                             dept,
                             name,
@@ -553,25 +603,31 @@ def run_eval(cfg, req: RunRequest) -> RunSummary:
                         )
                     )
                     continue
+                pin = version is not None
                 if version is None:
                     version = journal.version_by_hash(dept, name, skill.content_hash)
-                ran, failed = _run_skill(
-                    cfg,
-                    req,
-                    plan,
-                    scope,
-                    skill,
-                    clients=clients,
-                    judges=judges,
-                    exp_id=exp_id,
-                    parent_id=parents[dept],
-                    prompts=prompts,
-                    version=version,
-                    fixtures=fixtures,
-                    sql=sql,
-                )
-                children += ran
-                errors += failed
+                planned.append(_SkillRun(plan, scope, skill, exp_id, parents[dept], version, pin))
+        runs = [p for p in planned if isinstance(p, _SkillRun)]
+        results = iter(
+            _run_skills(
+                cfg,
+                req,
+                runs,
+                clients=clients,
+                judges=judges,
+                prompts=prompts,
+                fixtures=fixtures,
+                sql=sql,
+                w=w,
+            )
+        )
+        for item in planned:  # results are kept in plan order, whichever worker finishes first
+            if isinstance(item, RunError):
+                errors.append(item)
+                continue
+            ran, failed = next(results)
+            children += ran
+            errors += failed
         if children:
             sync_run(cfg, sql, req.run_key)
         elif not errors:
@@ -587,6 +643,237 @@ def run_eval(cfg, req: RunRequest) -> RunSummary:
     for e in errors:
         log.error("%s/%s %s %s: %s", e.dept, e.skill, e.model_profile or "", e.mode or "", e.message)
     return RunSummary(run_key=req.run_key, parent_run_ids=parents, children=children, errors=errors)
+
+
+# --- skills at once, one worker process each ------------------------------------------------------------------
+
+
+def _run_skills(
+    cfg, req: RunRequest, runs: list[_SkillRun], *, clients, judges, prompts, fixtures, sql, w
+) -> list[tuple[list[ChildRunSummary], list[RunError]]]:
+    """(children, errors) per skill run, in order.
+
+    With `defaults.skill_workers` > 1, up to that many skills run at once, each in its own process. MLflow keeps
+    one trace destination per process (set_experiment resets it) and links a trace to the latest active run of
+    any thread, so two skill experiments must never share a process."""
+    if cfg.defaults.skill_workers == 1 or len(runs) <= 1:
+        return [
+            _run_skill(
+                cfg,
+                req,
+                r.plan,
+                r.scope,
+                r.skill,
+                clients=clients,
+                judges=judges,
+                exp_id=r.exp_id,
+                parent_id=r.parent_id,
+                prompts=prompts,
+                version=r.version,
+                fixtures=fixtures,
+                sql=sql,
+                index=i,
+            )
+            for i, r in enumerate(runs)
+        ]
+    return _run_in_workers(cfg, req, runs, prompts=prompts, fixtures=fixtures, w=w)
+
+
+def _wait_all(futures) -> None:
+    pending = set(futures)
+    while pending:  # with a timeout, so the waiting main thread still handles a signal
+        _, pending = wait(pending, timeout=1)
+
+
+def _raise_on_sigterm(signum, frame) -> None:
+    signal.signal(signal.SIGTERM, signal.SIG_IGN)  # one is enough: a second must not cut the cleanup short
+    raise SystemExit(128 + signum)
+
+
+@contextmanager
+def _sigterm_raises() -> Iterator[None]:
+    """A SIGTERM (a Job cancel) raises SystemExit inside, so the cleanup in `finally` blocks runs.
+
+    Only the main thread can set a signal handler; elsewhere this does nothing."""
+    if threading.current_thread() is not threading.main_thread():
+        yield
+        return
+    prev = signal.signal(signal.SIGTERM, _raise_on_sigterm)
+    try:
+        yield
+    finally:
+        signal.signal(signal.SIGTERM, prev)
+
+
+class _Workers:
+    """The worker processes started so far, so that an interrupt can stop them all."""
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._procs: list[subprocess.Popen] = []
+        self._stopping = False
+
+    def start(self, cmd: list[str], env: dict[str, str]) -> subprocess.Popen | None:
+        with self._lock:
+            if self._stopping:
+                return None
+            proc = subprocess.Popen(
+                cmd,
+                env=env,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.PIPE,
+                encoding="utf-8",
+                errors="replace",
+            )
+            self._procs.append(proc)
+            return proc
+
+    def stop(self, grace_s: float) -> None:
+        """SIGTERM each running worker (it closes its open child runs), then kill those still running."""
+        with self._lock:
+            self._stopping = True
+            procs = [p for p in self._procs if p.poll() is None]
+        for p in procs:
+            p.terminate()
+        deadline = time.monotonic() + grace_s
+        for p in procs:
+            try:
+                p.wait(timeout=max(0.0, deadline - time.monotonic()))
+            except subprocess.TimeoutExpired:
+                p.kill()
+
+
+_STDERR_LOCK = threading.Lock()
+
+
+def _launch_worker(
+    cmd: list[str], env: dict[str, str], label: str, procs: _Workers
+) -> tuple[int | None, str]:
+    """Run one worker to its end: (exit code, the last lines of its stderr).
+
+    Its stderr streams to this process's stderr (the Job log), each line prefixed with `[dept/skill]`. Its
+    stdout is not read."""
+    proc = procs.start(cmd, env)
+    if proc is None:
+        return None, "not started: the run was interrupted"
+    tail: deque[str] = deque(maxlen=WORKER_TAIL_LINES)
+    for line in proc.stderr:
+        line = line.rstrip("\n")
+        tail.append(line)
+        with _STDERR_LOCK:
+            sys.stderr.write(f"[{label}] {line}\n")
+            sys.stderr.flush()
+    return proc.wait(), "\n".join(tail)
+
+
+def _worker_command(spec: Path, out: Path) -> list[str]:
+    return [sys.executable, "-m", "skillhub.eval.worker", str(spec), str(out)]
+
+
+def _worker_env(w) -> dict[str, str]:
+    """The worker's environment: this process's, plus a host and token when this process uses a Job's runtime
+    auth, which a child process cannot use. The token is passed only here, never logged."""
+    env = dict(os.environ)
+    config = w.config
+    if config.auth_type != "runtime":
+        return env  # a CLI profile or M2M variables work the same in the worker
+    scheme, _, token = config.authenticate().get("Authorization", "").partition(" ")
+    if scheme != "Bearer" or not token:
+        raise EvalRunError("the runtime auth gave no bearer token to pass to the evaluation workers")
+    for k in _PAT_CONFLICTS:
+        env.pop(k, None)
+    env["DATABRICKS_HOST"] = config.host
+    env["DATABRICKS_TOKEN"] = token
+    return env
+
+
+def _worker_spec(
+    cfg, req: RunRequest, run: _SkillRun, *, prompts, fixtures: FixtureStore, index: int
+) -> dict:
+    """Everything skillhub.eval.worker needs to rebuild this skill's `_run_skill` call."""
+    key = f"{run.scope.dept}/{run.skill.name}"
+    narrowed = dataclasses.replace(req, skills=[key], versions={key: run.version} if run.pinned else None)
+    return {
+        # As loaded, so the worker needs no --config path and resolves no ${VARS} again.
+        "config": cfg.model_dump(mode="json", by_alias=True),
+        "request": dataclasses.asdict(narrowed),
+        "dept": run.scope.dept,
+        "skill": run.skill.name,
+        "scope": dataclasses.asdict(run.scope),
+        # The worker reads evals.json again and refuses other bytes. The digest is of the fixture snapshot.
+        "models": run.plan.models,
+        "evals_sha256": hashlib.sha256(run.plan.evals_bytes).hexdigest(),
+        "dataset_digest": run.plan.dataset_digest,
+        "exp_id": run.exp_id,
+        "parent_id": run.parent_id,
+        "prompts": list(prompts),
+        "version": run.version,
+        "fixtures": str(fixtures.root),
+        "index": index,
+    }
+
+
+def _read_worker_result(path: Path) -> tuple[list[ChildRunSummary], list[RunError]]:
+    got = json.loads(path.read_text(encoding="utf-8"))
+    return [ChildRunSummary(**c) for c in got["children"]], [RunError(**e) for e in got["errors"]]
+
+
+def _run_in_worker(
+    cfg, req: RunRequest, run: _SkillRun, workdir: Path, index: int, *, prompts, fixtures, w, procs: _Workers
+) -> tuple[list[ChildRunSummary], list[RunError]]:
+    """One skill in a worker process. A worker that fails or leaves no result is one error of the skill."""
+    label = f"{run.scope.dept}/{run.skill.name}"
+    spec, out = workdir / f"{index}.spec.json", workdir / f"{index}.out.json"
+    try:
+        body = _worker_spec(cfg, req, run, prompts=prompts, fixtures=fixtures, index=index)
+        spec.write_text(json.dumps(body), "utf-8")
+        code, tail = _launch_worker(_worker_command(spec, out), _worker_env(w), label, procs)
+    except Exception as e:
+        code, tail = None, _describe(e)
+    if code == 0:
+        try:
+            return _read_worker_result(out)
+        except (OSError, ValueError, TypeError, KeyError):
+            pass  # no valid result
+    prefix = "evaluation worker failed: "
+    text = _run_names(cfg, run.scope).to_production(tail or f"exit code {code}")
+    return [], [RunError(run.scope.dept, run.skill.name, prefix + text[-(ERROR_MAX - len(prefix)) :])]
+
+
+def _run_in_workers(
+    cfg, req: RunRequest, runs: list[_SkillRun], *, prompts, fixtures, w
+) -> list[tuple[list[ChildRunSummary], list[RunError]]]:
+    workdir = Path(tempfile.mkdtemp(prefix="skillhub-workers-"))
+    procs = _Workers()
+    pool = ThreadPoolExecutor(
+        max_workers=min(cfg.defaults.skill_workers, len(runs)), thread_name_prefix="skill-worker"
+    )
+    try:
+        with _sigterm_raises():
+            futures = [
+                pool.submit(
+                    _run_in_worker,
+                    cfg,
+                    req,
+                    r,
+                    workdir,
+                    i,
+                    prompts=prompts,
+                    fixtures=fixtures,
+                    w=w,
+                    procs=procs,
+                )
+                for i, r in enumerate(runs)
+            ]
+            _wait_all(futures)
+    except BaseException:  # an interrupt: stop the workers, then the caller's cleanup runs
+        procs.stop(WORKER_STOP_S)
+        raise
+    finally:
+        pool.shutdown(wait=False, cancel_futures=True)
+        shutil.rmtree(workdir, ignore_errors=True)
+    return [f.result() for f in futures]
 
 
 def _open_parent(req: RunRequest, scope: RunScope, exp_id: str, prompt_versions: dict[str, int]) -> str:
@@ -678,8 +965,12 @@ def _run_skill(
     version: int | None,
     fixtures: FixtureStore,
     sql,
+    index: int = 0,
 ) -> tuple[list[ChildRunSummary], list[RunError]]:
     """Every child run of one skill: per model, its modes in order (trigger, without_skill, with_skill).
+
+    The models run one after another, starting at model `index % len(models)`: `index` is the skill's place in
+    the run, so skills that start together begin on different endpoints. Children come back in plan order.
 
     The setup every child needs (rubric, dataset rows, scorers) is done first. If it fails, no child run is
     created and the skill is recorded as an error."""
@@ -711,18 +1002,33 @@ def _run_skill(
     except Exception as e:
         message = names.to_production(f"setup failed: {_describe(e)}")[:ERROR_MAX]
         return [], [RunError(scope.dept, skill.name, message)]
+    first = index % len(plan.models)
+    by_model: dict[str, tuple[list[ChildRunSummary], list[RunError]]] = {}
+    # Once per skill: set_experiment resets the process's trace destination (traces follow the skill
+    # experiment's trace location), and _evaluating changes os.environ and sys.stdout for every child.
+    mlflow.set_experiment(experiment_id=ctx.exp_id)
+    with _evaluating(cfg.defaults.concurrency_per_endpoint):
+        for profile in plan.models[first:] + plan.models[:first]:
+            by_model[profile] = _run_model(ctx, clients[profile], profile, modes)
     children: list[ChildRunSummary] = []
     errors: list[RunError] = []
     for profile in plan.models:
-        client = clients[profile]
-        without: list[CaseScore] | None = None
-        for mode in modes:
-            child, scores, failed = _run_child(ctx, client, profile, mode, without)
-            if mode == "without_skill":
-                without = scores
-            if child is not None:
-                children.append(child)
-            errors += failed
+        children += by_model[profile][0]
+        errors += by_model[profile][1]
+    return children, errors
+
+
+def _run_model(ctx: _SkillCtx, client, profile: str, modes: list[str]) -> tuple[list, list]:
+    children: list[ChildRunSummary] = []
+    errors: list[RunError] = []
+    without: list[CaseScore] | None = None  # with_skill reads this model's without_skill scores
+    for mode in modes:
+        child, scores, failed = _run_child(ctx, client, profile, mode, without)
+        if mode == "without_skill":
+            without = scores
+        if child is not None:
+            children.append(child)
+        errors += failed
     return children, errors
 
 
@@ -831,16 +1137,50 @@ def _mode_data(ds, cases: dict[int, EvalCase], kind: str, skill: str, label: str
     records = [keep[cid] for cid in sorted(keep)]
     whole = len(records) == len(rows) and not stale
     return _ModeData(
-        data=ds if whole else records, case_ids=sorted(keep), n_records=len(records), missing_ids=missing
+        data=ds if whole else records,
+        case_ids=sorted(keep),
+        n_records=len(records),
+        missing_ids=missing,
+        records=records,
     )
 
 
-def _predict_fn(ctx, client, mode: str, repeat: int, sem, skills):
+def _repeated(md: _ModeData, repeats: int) -> object:
+    """What the child run's one `evaluate` gets: each record `repeats` times.
+
+    Two evaluate calls at once in one process deadlocked inside MLflow (seen live), and one after another is
+    slow, so the repeats share one evaluate. With more than one repeat the records are plain dicts, which gives
+    up the dataset lineage that a single repeat over the dataset object keeps."""
+    if repeats == 1:
+        return md.data
+    return [copy.deepcopy(r) for _ in range(repeats) for r in md.records]
+
+
+def _predict_fn(ctx, client, mode: str, sem, skills):
+    """`predict` for one evaluate over every repeat. Each call of a case takes that case's next repeat number,
+    so each case gets 0..repeats-1 once; `repeat` is not an input, because the judges and sync read the inputs.
+    MLflow re-runs a rate-limited record under the same prediction context, so a retry keeps its number."""
     trigger = mode == "trigger"
+    lock = threading.Lock()
+    handed: dict[int, int] = {}  # case_id -> repeats handed out
+    by_record: dict[str, int] = {}  # evaluate's request ID of a record -> its repeat
+
+    def next_repeat(case_id: int) -> int:
+        pc = get_prediction_context()
+        record = pc.request_id if pc is not None else None
+        with lock:  # evaluate calls predict from its worker threads
+            if record is not None and record in by_record:
+                return by_record[record]
+            repeat = handed.get(case_id, 0)
+            handed[case_id] = repeat + 1
+            if record is not None:
+                by_record[record] = repeat
+            return repeat
 
     @mlflow.trace(name="eval_case", span_type=SpanType.CHAIN)
     def predict(prompt: str, case_id: int) -> str:
         case = ctx.cases[int(case_id)]  # the runner resolves each case from evals.json by case_id
+        repeat = next_repeat(case.id)
         # Tag first, before any model or tool call that can fail, so an errored trace still has them.
         _tag_current_trace(
             {
@@ -914,11 +1254,10 @@ def _run_child(ctx: _SkillCtx, client, profile: str, mode: str, without_scores: 
         text = ctx.names.to_production(message)[:ERROR_MAX]
         return RunError(ctx.scope.dept, ctx.skill.name, text, model_profile=profile, mode=mode, run_id=run_id)
 
-    mlflow.set_experiment(experiment_id=ctx.exp_id)  # traces follow the skill experiment's trace location
     skills = None
     if mode != "without_skill":
         try:
-            skills = _open_skills(ctx)  # after set_experiment, so a failure there cannot leak the bridge
+            skills = _open_skills(ctx)  # after set_experiment (in _run_skill), so it cannot leak the bridge
         except Exception as e:  # before the child run exists: nothing is left for sync to read
             return None, None, [error(str(e))]
     params = {
@@ -962,13 +1301,11 @@ def _run_child(ctx: _SkillCtx, client, profile: str, mode: str, without_scores: 
         if mode != "trigger" and ctx.rubric is not None and ctx.rubric.source_hash != ctx.skill.content_hash:
             mlflow.set_tag("rubric_stale", "true")  # The rubric was generated from other skill content
         sem = _endpoint_semaphore(endpoint, cfg.defaults.concurrency_per_endpoint)
-        with _evaluating(cfg.defaults.concurrency_per_endpoint):
-            for repeat in range(repeats):  # one evaluate per repeat, over the same data
-                mlflow.genai.evaluate(
-                    data=md.data,
-                    predict_fn=_predict_fn(ctx, client, mode, repeat, sem, skills),
-                    scorers=scorers,
-                )
+        mlflow.genai.evaluate(  # one evaluate over every repeat; never two at once in a process
+            data=_repeated(md, repeats),
+            predict_fn=_predict_fn(ctx, client, mode, sem, skills),
+            scorers=scorers,
+        )
         traces = read_child_traces(
             ctx.exp_id,
             run_id,
@@ -1133,6 +1470,21 @@ def _judge_names(ctx: _SkillCtx, case: EvalCase) -> list[str]:
     return names
 
 
+def _planted_recall(ctx: _SkillCtx, trace) -> float | None:
+    """The planted-bug recall of one trace, computed from its final answer: the scorer's own code.
+
+    None when the trace holds no spans to read, or the case is misconfigured (an unknown bug_scope id)."""
+    if getattr(trace, "data", None) is None:
+        return None
+    fb = planted_bugs_check(trace, ctx.cases, _planted_bugs(str(ctx.fixtures.root)))
+    return None if fb is None or fb.value is None else float(fb.value)
+
+
+@functools.lru_cache(maxsize=8)
+def _planted_bugs(root: str) -> list[dict]:
+    return load_planted_bugs(Path(root))
+
+
 def _planted_case(case: EvalCase, planted_on: bool) -> bool:
     return planted_on and PLANTED_FIXTURE in case.fixtures  # Workbook cases only
 
@@ -1149,7 +1501,7 @@ def _ready(ctx: _SkillCtx, trace, mode: str, planted_on: bool) -> bool:
     if mode == "trigger":
         needed = {TRIGGER}
     else:
-        needed = set(_judge_names(ctx, case)) | ({PLANTED} if _planted_case(case, planted_on) else set())
+        needed = set(_judge_names(ctx, case))  # the planted-bug recall is computed here, from the trace
     return needed <= got
 
 
@@ -1204,7 +1556,11 @@ def _score(
             assertion_votes = (
                 [_vote(got.get(judge_name("assertions", p))) for p in ctx.judges] if case.assertions else None
             )
-            planted = _recall(got.get(PLANTED)) if _planted_case(case, planted_on) else None
+            planted = None
+            if _planted_case(case, planted_on):
+                planted = _recall(got.get(PLANTED))
+                if planted is None:  # MLflow sometimes does not log it; the scorer is code, so recompute it
+                    planted = _planted_recall(ctx, t)
             score = case_score_from_assessments(
                 case_id=cid,
                 repeat=rep,

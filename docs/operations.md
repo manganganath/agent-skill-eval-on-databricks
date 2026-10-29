@@ -182,10 +182,22 @@ The run stages its own `run_<key>_<schema_base>` schemas. The Job ends with `syn
 
 Verdicts: `inconclusive` means infrastructure failed or too many votes were missing (rerun the eval). `advisory` means there are too few reviewed cases.
 
+### Eval concurrency
+
+`config/hub.yaml` sets how much one eval run does at once:
+
+- `defaults.skill_workers` (10): skills evaluated at once, each in its own worker process. A worker peaks at about 400 to 500 MB of memory.
+- `defaults.concurrency_per_endpoint` (15): agent runs at once per serving endpoint, in each worker. A child run's 3 repeats of 5 effectiveness cases are 15 records of one `evaluate`. Each case runs at most 4 judges at once.
+
+Each skill is isolated in its own process because MLflow keeps tracing state per process (see Evaluation method in the architecture document). Inside a worker, one child run and one `evaluate` call run at a time; that call holds all the repeats. Two `evaluate` calls at once in one process deadlocked inside MLflow. Each skill starts on a different model of its list, so the workers spread over the endpoints. Lower either value if endpoints answer 429 often; the model client retries with backoff. `skill_workers: 1` evaluates the skills one after another in the Job's own process. Several `skill-eval` runs can run at the same time (`max_concurrent_runs: 4`), and each adds its own load.
+
+A worker's log lines appear in the Job output, prefixed with `[dept/skill]`. A worker that crashes is recorded as an error of its skill (`evaluation worker failed: ...` with the end of its log), and the other skills carry on. In a serverless Job, the runtime credentials do not reach a child process, so each worker gets the workspace host and a token of the Job's identity in its environment. CI waits up to 5 hours for the eval Job.
+
 ### What gates a verdict
 
 - Only reviewed cases gate. Other cases are advisory.
 - A criterion passes only when a strict majority of the whole configured judge panel votes yes. If at least one judge answered but there is no such majority, the criterion counts as not met. If no judge answered, it counts as an error.
+- `defaults.gating_modes` in `config/hub.yaml` lists the modes whose verdicts block the PR gate, the merge gate and publish. Every requested mode still runs, and its verdicts are recorded and shown in the PR comment, the matrix and the Skill Hub. The shipped value is `[trigger]`: effectiveness is reported but does not block until its reviewed cases are tuned. Set it to `[trigger, effectiveness]` to gate on both. A row with an unknown mode always blocks.
 - Per-skill thresholds can only tighten the defaults in `config/hub.yaml`. These are `criteria.fail_rate` and `criteria.warn_rate` in `evals.json`, and `pass_score` in `rubric.json`. A looser value is ignored with a warning, and `skillhub lint` reports it. `max_error_rate` and `min_reviewed_cases` are not per skill. A rubric without `pass_score` uses the default.
 - The scorer takes labels (`expected_skill`, `should_trigger`, `kind`, `reviewed`) from the `evals.json` in the run, never from the dataset table. A reviewed case with no dataset row counts as an error. Duplicate case IDs are rejected.
 - A child run tagged `rubric_stale=true` used a rubric that was generated from other skill content. Regenerate it with `uv run skillhub generate --skills <name> --rubric-only --force`, or review it.

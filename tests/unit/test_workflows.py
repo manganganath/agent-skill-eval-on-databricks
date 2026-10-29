@@ -99,7 +99,10 @@ def test_skills_pr_generate_commit_and_redispatch():
 def test_skills_pr_eval_step_contract():
     wf = load_workflow("skills-pr.yml")
     run = step_named(wf, "Start skill-eval Job and wait")["run"]
-    assert "--timeout 30m" in run and "databricks jobs run-now" in run
+    # Skills run in parallel workers, but a large PR still takes hours: the full gate, not a 30 min cut-off.
+    assert "--timeout 300m" in run and "databricks jobs run-now" in run
+    assert step_named(wf, "Start skill-eval Job and wait")["name"].endswith("(5 h)")
+    assert wf["jobs"]["skills-pr"]["timeout-minutes"] == 330  # the wait plus the steps around it
     assert "-t prod" not in run and "SKILLHUB_JOB_ID_EVAL" in run
     assert "workspace import-dir skills" in run and "--overwrite" in run
     assert 'root="/Workspace$ws_root/$SKILLHUB_CATALOG/candidates/$key"' in run
@@ -367,9 +370,11 @@ def test_eval_merge_uploads_once_and_exposes_one_candidate_path():
     assert "168" in (WORKFLOWS / "skills-publish.yml").read_text()  # documents the cleanup horizon
     text = (WORKFLOWS / "skills-publish.yml").read_text()
     assert text.count("/candidates/$") == 1 and "/Shared/skill-hub" not in text
-    run = step_named(load_workflow("skills-publish.yml"), "Start skill-eval Job and wait")["run"]
+    step = step_named(load_workflow("skills-publish.yml"), "Start skill-eval Job and wait")
+    run = step["run"]
     assert 'trigger_source: "merge"' in run and "skills_root: $skills_root" in run
-    assert "-t prod" not in run and "--timeout 30m" in run and "run_page_url" in run
+    assert "-t prod" not in run and "--timeout 300m" in run and "run_page_url" in run
+    assert step["name"].endswith("(5 h)") and evalj["timeout-minutes"] == 330
 
 
 def test_release_workflows_security_hygiene():
@@ -449,9 +454,78 @@ def test_plan_diffs_from_the_released_tag_with_an_ancestry_guard():
     assert checkout["with"]["fetch-depth"] == 0 and checkout["with"]["fetch-tags"] is True
     run = step_named(wf, "Plan re-evaluation")["run"]
     assert 'git merge-base --is-ancestor refs/tags/skillhub/released "$HEAD_SHA"' in run
-    assert "::error::" in run and 'base="$EVENT_BEFORE_SHA"' in run
-    assert 'changed-skills --base "$base"' in run
+    assert "::error::" in run and "EVENT_BEFORE_SHA" not in run  # the previous push is never the base
+    assert 'changed-skills "${base[@]}"' in run and "base=(--empty-base)" in run
     assert run.index("is-ancestor") < run.index("changed-skills")
+
+
+def _uv_running_the_cli(tmp_path: Path) -> str:
+    """A `uv` whose `uv run skillhub ...` and `uv run python ...` run this checkout's code. Returns its folder."""
+    import sys
+
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir(exist_ok=True)
+    uv = bin_dir / "uv"
+    uv.write_text(
+        "#!/bin/bash\n"
+        '[ "$1" = run ] || exit 9\n'
+        "shift\n"
+        f'if [ "$1" = skillhub ]; then shift; exec "{sys.executable}" -c '
+        '"from skillhub.cli import app; app()" "$@"; fi\n'
+        f'if [ "$1" = python ]; then shift; exec "{sys.executable}" "$@"; fi\n'
+        "exit 9\n"
+    )
+    uv.chmod(0o755)
+    return str(bin_dir)
+
+
+def _plan(repo: Path, tmp_path: Path) -> dict[str, str]:
+    """Run the plan step on `repo` at HEAD and return its outputs."""
+    env = {"PATH": f"{_uv_running_the_cli(tmp_path)}:/usr/bin:/bin:/usr/local/bin:/opt/homebrew/bin"}
+    env |= {"RUNNER_TEMP": str(tmp_path), "GITHUB_OUTPUT": str(tmp_path / "out"), "RUN_ATTEMPT": "1"}
+    env |= {"HEAD_SHA": _git(repo, "rev-parse", "HEAD"), "HOME": str(tmp_path)}
+    run = step_named(load_workflow("skills-publish.yml"), "Plan re-evaluation")["run"]
+    proc = subprocess.run(["bash", "-e", "-c", run], cwd=repo, env=env, capture_output=True, text=True)
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    return dict(ln.split("=", 1) for ln in (tmp_path / "out").read_text().splitlines())
+
+
+def _git(repo: Path, *args: str) -> str:
+    who = ("-c", "user.name=t", "-c", "user.email=t@example.com", "-c", "commit.gpgsign=false")
+    proc = subprocess.run(["git", "-C", str(repo), *who, *args], check=True, capture_output=True, text=True)
+    return proc.stdout.strip()
+
+
+def _add_skill(repo: Path, name: str) -> str:
+    """Commit skills/common/<name> with one trigger case. Returns the commit."""
+    root = repo / "skills" / "common" / name
+    (root / "evals").mkdir(parents=True)
+    (root / "SKILL.md").write_text(f"---\nname: {name}\ndescription: Does {name}.\n---\nUse it.\n")
+    evals = {"skill_name": name, "evals": [{"id": 1, "prompt": "do it", "should_trigger": True}]}
+    (root / "evals" / "evals.json").write_text(json.dumps(evals))
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-q", "-m", f"add {name}")
+    return _git(repo, "rev-parse", "HEAD")
+
+
+def test_plan_publishes_every_unreleased_skill_even_before_the_first_release(tmp_path):
+    """Without the skillhub/released tag nothing was released yet. A first release that failed, was rejected or was
+    replaced must not lose its skills to the next push: the plan diffs from the released state, never from the
+    previous push alone."""
+    repo = tmp_path / "repo"
+    (repo / "config").mkdir(parents=True)
+    (repo / "config" / "hub.yaml").write_text((ROOT / "config" / "hub.yaml").read_text())
+    _git(repo, "init", "-q", "-b", "main")
+    first = _add_skill(repo, "alpha")  # its release failed, so no tag exists
+    _add_skill(repo, "beta")
+    out = _plan(repo, tmp_path)
+    assert out["reeval"] == "common/alpha,common/beta"
+    assert [r["skill"] for r in json.loads(out["publish"])] == ["alpha", "beta"]
+    assert out["retire"] == "[]" and out["has_changes"] == "true"
+    _git(repo, "tag", "skillhub/released", first)  # alpha was released: only beta is left
+    (tmp_path / "out").unlink()
+    out = _plan(repo, tmp_path)
+    assert out["reeval"] == "common/beta" and out["has_changes"] == "true"
 
 
 def test_release_guard_is_first_and_tag_move_is_last_with_lease():
@@ -1337,6 +1411,76 @@ def test_publish_passes_the_planned_cells_as_one_comma_separated_job_parameter(t
     params = json.loads(saved.read_text())["job_parameters"]
     assert params["expect_cells"] == "gpt/trigger,claude-sonnet/with_skill"
     assert params["expect_rubric_hash"] == HASH and params["expect_dataset_digest"] == HASH
+
+
+def _switch_task_argv(params: dict[str, str], job_run_id: str) -> list[str]:
+    """The argv the skill-switch Job's wheel task gets for these job parameters, as resources/jobs.yml maps them."""
+    job = yaml.safe_load((ROOT / "resources" / "jobs.yml").read_text())["resources"]["jobs"]["skill_switch"]
+    declared = {p["name"]: p["default"] for p in job["parameters"]}
+    assert set(params) <= set(declared), sorted(set(params) - set(declared))  # only declared parameters
+    values = declared | params
+    argv = []
+    for arg in job["tasks"][0]["python_wheel_task"]["parameters"]:
+        arg = re.sub(r"\{\{job\.parameters\.(\w+)\}\}", lambda m: values[m.group(1)], arg)
+        argv.append(arg.replace("{{job.run_id}}", job_run_id))
+    return argv
+
+
+def test_release_steps_publish_and_switch_what_the_merge_eval_recorded(reg, cfg, monkeypatch, tmp_path):
+    """The whole hand-off, which no unit test of one piece covers: the plan's eval digests, the merge eval's rows
+    under the plan's run key, the release steps' run-now bodies, the Job's task argv from jobs.yml, and job-switch
+    with its publish gate. Then the live skill is the evaluated content."""
+    import sys
+
+    from typer.testing import CliRunner
+
+    from skillhub import cli
+    from skillhub.naming import make_run_key
+    from tests.unit.eval_rows import add_rows, trust_ci_eval
+
+    skill = tmp_path / "candidate" / "skills" / "common" / "alpha"  # the folder eval-merge uploaded
+    (skill / "evals").mkdir(parents=True)
+    (skill / "SKILL.md").write_text("---\nname: alpha\ndescription: Does alpha.\n---\nUse it.\n")
+    cases = [{"id": 1, "prompt": "do it", "should_trigger": True}]
+    (skill / "evals" / "evals.json").write_text(json.dumps({"skill_name": "alpha", "evals": cases}))
+    digests = CliRunner().invoke(
+        cli.app,
+        ["--config", str(ROOT / "config" / "hub.yaml"), "eval-digests", "--skills", "common/alpha"]
+        + ["--skills-root", str(skill.parents[1]), "--fixtures-root", str(ROOT / "fixtures")],
+    )
+    assert digests.exit_code == 0, digests.output
+    [row] = json.loads(digests.stdout)
+    key = make_run_key("merge-abc1234-a1")  # the plan's run_key; the eval got the label
+    for cell in row["cells"]:  # what the merge eval records: one trusted, passing row per planned cell
+        model, mode = cell.split("/")
+        add_rows(reg.sql, cfg, "common", "alpha", key, row["hash"], ((mode, "pass"),), model=model,
+                 rubric=row["rubric_hash"], dataset=row["dataset_digest"])  # fmt: skip
+    trust_ci_eval(monkeypatch)
+    monkeypatch.setenv("SKILLHUB_CI_PRINCIPAL", "ci-app")
+    monkeypatch.setenv("SKILLHUB_CONFIG", str(ROOT / "config" / "hub.yaml"))
+    monkeypatch.setattr(cli, "_job_run_creator", lambda w, run_id: "ci-app")
+    monkeypatch.setattr(cli, "_services", lambda c: (None, reg.uc, reg.sql, reg.journal))
+    saved = tmp_path / "bodies"
+    stub = (
+        'databricks() { while [ $# -gt 0 ]; do if [ "$1" = --json ]; then printf "%s\\n" "$2" >> "$SAVED"; fi; '
+        """shift; done; echo '{"state": {"result_state": "SUCCESS"}}'; }\n"""
+    )
+    env = {"PATH": "/usr/bin:/bin:/usr/local/bin:/opt/homebrew/bin", "RUNNER_TEMP": str(tmp_path)}
+    env |= {"ROWS": digests.stdout.strip(), "JOB_ID": "42", "SKILLS_ROOT": str(skill.parents[1])}
+    env |= {"MERGE_SHA": "f" * 40, "EVAL_RUN_ID": key, "ACTOR": "a", "SAVED": str(saved)}
+    env["DATABRICKS_HOST"] = "https://ws.example"
+    for prefix in ("Publish", "Switch"):
+        saved.unlink(missing_ok=True)
+        proc = subprocess.run(["bash", "-e", "-c", stub + release_step(prefix)["run"]], env=env, text=True)
+        assert proc.returncode == 0
+        [body] = saved.read_text().splitlines()
+        argv = _switch_task_argv(json.loads(body)["job_parameters"], job_run_id="77")
+        monkeypatch.setattr(sys, "argv", ["skillhub-job", *argv])
+        assert cli.job_main() is None, prefix  # a refused publish or switch raises SystemExit
+    state = reg.journal.live_state("common", "alpha")
+    assert (state.action, state.to_version) == ("switched", 1)
+    published = [r for r in reg.journal.history("common", "alpha") if r.action == "published"]
+    assert [(r.content_hash, r.eval_run_id) for r in published] == [(row["hash"], key)]
 
 
 # --- The runner is configurable: a workspace with an IP access list needs a runner on an allowed network ------

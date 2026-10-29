@@ -22,7 +22,7 @@ jobs:
   skills-pr:
     name: skills-pr
     runs-on: ${{ (github.event.pull_request.head.repo.fork && 'ubuntu-latest') || vars.SKILLHUB_RUNNER || 'ubuntu-latest' }}
-    timeout-minutes: 90
+    timeout-minutes: 330 # the eval wait (5 h) plus the steps around it
     # No reviewers. Holds the ci_eval Databricks secrets; fork pull requests never receive them.
     environment: ci-eval
     permissions:
@@ -187,7 +187,7 @@ jobs:
         with:
           version: 1.20.0
 
-      - name: Start skill-eval Job and wait (30 min)
+      - name: Start skill-eval Job and wait (5 h)
         id: eval
         if: ${{ steps.generate.outputs.generated != 'true' && steps.changed.outputs.non_deleted != '' && steps.pr.outputs.is_fork == 'false' }}
         env:
@@ -230,7 +230,8 @@ jobs:
             '{job_id: $job_id, job_parameters: {run_key: $run_key, skills: $skills, models: "default",
               modes: "trigger,effectiveness", source: $source, trigger_source: "pr",
               requested_by: $actor, skills_root: $skills_root, fixtures_root: $fixtures_root}}')
-          databricks jobs run-now --timeout 30m --json "$params" -o json > "$RUNNER_TEMP/run.json"
+          # Skills run in parallel worker processes, but a PR with many skills still takes hours.
+          databricks jobs run-now --timeout 300m --json "$params" -o json > "$RUNNER_TEMP/run.json"
           echo "Job run: $(jq -r '.run_page_url // "unknown"' "$RUNNER_TEMP/run.json")"
           jq -e '.state.result_state == "SUCCESS"' "$RUNNER_TEMP/run.json" > /dev/null
 

@@ -96,7 +96,7 @@ def require_evaluated(
             f"the eval for {where} ran on other content or other eval inputs, so something changed after it "
             "was evaluated: " + "; ".join(wrong)
         )
-    if any(v not in NON_BLOCKING for v in blocking_verdicts(rows)):
+    if any(v not in NON_BLOCKING for v in blocking_verdicts(rows, cfg.defaults.gating_modes)):
         cells = sorted(
             f"{r.get('model_profile')}/{r.get('mode') or 'none'}={r.get('verdict') or 'none'}"
             for r in gating
