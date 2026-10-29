@@ -1,5 +1,6 @@
 import dataclasses
 import json
+import logging
 import os
 import sys
 import threading
@@ -12,6 +13,7 @@ import mlflow
 import mlflow.openai
 import pandas as pd
 import pytest
+import requests
 from mlflow import MlflowClient
 from typer.testing import CliRunner
 
@@ -27,6 +29,7 @@ from skillhub.gateway.toolnames import ToolNameMap
 from skillhub.prompts import PromptRef, load_packaged
 from skillhub.registry.stage import RunScope, StagedSkill
 from skillhub.results.datasets import case_record
+from skillhub.sql import SqlError
 from tests.fakes import FakeModelClient, FakeSkillsMcp, make_cfg
 
 RUN_KEY = "pr12_ab12cd3"
@@ -741,6 +744,101 @@ def test_setup_failure_creates_no_child_run_and_is_recorded(wired, tmp_path):
     assert _runs(tmp_path, "audit-xls") == []  # no child run that sync could not read
     assert {c.skill for c in summary.children} == {"earnings-preview"}
     assert wired["synced"] == [RUN_KEY]
+
+
+def _too_many_requests() -> requests.HTTPError:
+    """What the managed-evals dataset client raises on a rate limit (its own raise_for_status)."""
+    resp = requests.Response()
+    resp.status_code = 429
+    return requests.HTTPError("429 Client Error: Too Many Requests", response=resp)
+
+
+def _flaky_dataset(wired, monkeypatch, failures, skill="audit-xls"):
+    """sync_dataset raises the next of `failures` for `skill` until there are none left; the calls are counted."""
+    calls = []
+
+    def sync_dataset(cfg, dept, name, ef, exp):
+        if name == skill:
+            calls.append(name)
+            if failures:
+                raise failures.pop(0)
+        return wired["dataset"], "digest-1"
+
+    monkeypatch.setattr(runner, "sync_dataset", sync_dataset)
+    monkeypatch.setattr(runner, "SETUP_BACKOFF_S", 0)  # no real waits
+    return calls
+
+
+def test_setup_is_retried_after_a_rate_limit_and_the_skill_then_runs(wired, monkeypatch, caplog):
+    calls = _flaky_dataset(wired, monkeypatch, [_too_many_requests(), _too_many_requests()])
+    with caplog.at_level(logging.WARNING, logger="skillhub.retry"):
+        summary = run_eval(CFG, request())
+    assert summary.errors == [] and len(calls) == 3
+    assert sorted(c.mode for c in summary.children if c.skill == "audit-xls") == [
+        "trigger",
+        "with_skill",
+        "without_skill",
+    ]
+    retries = [r.getMessage() for r in caplog.records if r.name == "skillhub.retry"]
+    assert len(retries) == 2 and all(m.startswith("common/audit-xls setup: ") for m in retries)
+
+
+def test_setup_gives_up_after_the_last_attempt_with_todays_setup_error(wired, monkeypatch, tmp_path):
+    calls = _flaky_dataset(wired, monkeypatch, [_too_many_requests() for _ in range(20)])
+    summary = run_eval(CFG, request())
+    [err] = summary.errors
+    assert len(calls) == runner.SETUP_ATTEMPTS
+    assert (err.dept, err.skill, err.run_id) == ("common", "audit-xls", None)
+    assert err.message == "setup failed: HTTPError: 429 Client Error: Too Many Requests"
+    assert _runs(tmp_path, "audit-xls") == []
+    assert {c.skill for c in summary.children} == {"earnings-preview"}
+
+
+def test_a_setup_error_that_is_not_transient_is_not_retried(wired, monkeypatch):
+    calls = _flaky_dataset(wired, monkeypatch, [PermissionError("no access to the dataset table")])
+    summary = run_eval(CFG, request())
+    [err] = summary.errors
+    assert len(calls) == 1
+    assert err.message == "setup failed: PermissionError: no access to the dataset table"
+
+
+def test_a_concurrent_rubric_write_is_retried_and_then_recorded(wired, monkeypatch):
+    conflicts = [
+        SqlError(
+            "statement failed: [DELTA_CONCURRENT_APPEND.WHOLE_TABLE_READ] Transaction conflict detected. "
+            "A concurrent WRITE added data to table cat.common_evals.rubrics"
+        )
+        for _ in range(2)
+    ]
+    calls = []
+
+    def record_rubric(cfg, sql, dept, rubric):
+        calls.append(dept)
+        if conflicts:
+            raise conflicts.pop(0)
+        wired["rubrics"].append((dept, rubric))
+
+    monkeypatch.setattr(runner, "record_rubric", record_rubric)
+    monkeypatch.setattr(runner, "RUBRIC_BACKOFF_S", 0)
+    summary = run_eval(CFG, request(skills=["audit-xls"]))
+    assert summary.errors == []
+    assert len(calls) == 3 + 2 and len(wired["rubrics"]) == 3  # one per child run, two retried
+
+
+def test_a_rubric_write_still_failing_after_the_last_attempt_is_the_child_runs_error(wired, monkeypatch):
+    calls = []
+
+    def record_rubric(cfg, sql, dept, rubric):
+        calls.append(dept)
+        raise SqlError("statement failed: [DELTA_CONCURRENT_APPEND] Transaction conflict detected")
+
+    monkeypatch.setattr(runner, "record_rubric", record_rubric)
+    monkeypatch.setattr(runner, "RUBRIC_BACKOFF_S", 0)
+    summary = run_eval(CFG, request(skills=["audit-xls"], modes=["trigger"]))
+    [err] = summary.errors
+    assert len(calls) == runner.RUBRIC_ATTEMPTS
+    assert err.message.startswith("record_rubric: SqlError: statement failed: [DELTA_CONCURRENT_APPEND]")
+    assert err.run_id == summary.children[0].run_id
 
 
 def test_unreadable_evals_json_is_recorded_before_staging_and_the_rest_runs(wired):
@@ -1862,9 +1960,17 @@ def _answer(spec):
 @pytest.fixture
 def workers(wired, monkeypatch):
     """skill_workers > 1 with the worker processes faked by `state['answer'](spec) -> (exit code, out.json)`."""
-    state = {"specs": [], "envs": [], "finished": [], "answer": _answer, "launch": runner._launch_worker}
+    state = {
+        "specs": [],
+        "envs": [],
+        "finished": [],
+        "delays": {},
+        "answer": _answer,
+        "launch": runner._launch_worker,
+    }
 
-    def launch(cmd, env, label, procs):
+    def launch(cmd, env, label, procs, delay=0.0):
+        state["delays"][label] = delay  # not waited out here
         spec = json.loads(Path(cmd[-2]).read_text())
         state["specs"].append(spec)
         state["envs"].append(env)
@@ -1876,6 +1982,7 @@ def workers(wired, monkeypatch):
 
     monkeypatch.setattr(runner, "workspace_client", lambda: _client())
     monkeypatch.setattr(runner, "_launch_worker", launch)
+    monkeypatch.setattr(runner, "WORKER_START_GAP_S", 0)  # the tests that use the real launcher do not wait
     return state
 
 
@@ -1927,6 +2034,42 @@ def test_worker_results_keep_the_plan_order_when_workers_finish_out_of_order(wor
     assert summary.children[0] == ChildRunSummary(
         "run-audit-xls", "common", "audit-xls", None, "sha256:x", "gpt", "trigger", "pass", {"n": 1.0}
     )
+
+
+def test_the_first_wave_of_workers_starts_one_gap_apart(workers, monkeypatch):
+    monkeypatch.setattr(runner, "WORKER_START_GAP_S", 5)
+    run_eval(_hub_cfg(2), request())
+    assert workers["delays"] == {"common/audit-xls": 0, "equity_research/earnings-preview": 5}
+
+
+def test_workers_after_the_first_wave_start_without_a_gap(monkeypatch):
+    monkeypatch.setattr(runner, "WORKER_START_GAP_S", 5)
+    assert [runner._start_delay(i, wave=3) for i in range(6)] == [0, 5, 10, 0, 0, 0]
+
+
+def test_a_first_wave_worker_waits_its_gap_before_it_starts(tmp_path):
+    procs = runner._Workers()
+    t0 = time.monotonic()
+    code, _ = runner._launch_worker([sys.executable, "-c", "pass"], dict(os.environ), "common/x", procs, 0.3)
+    assert code == 0 and time.monotonic() - t0 >= 0.3
+
+
+def test_a_stop_during_the_start_gap_launches_nothing(tmp_path):
+    procs = runner._Workers()
+    marker = tmp_path / "started"
+    cmd = [sys.executable, "-c", f"open({str(marker)!r}, 'w')"]
+    got = {}
+    waiting = threading.Thread(
+        target=lambda: got.update(r=runner._launch_worker(cmd, dict(os.environ), "common/x", procs, 60))
+    )
+    t0 = time.monotonic()
+    waiting.start()
+    time.sleep(0.2)  # it is waiting out its gap
+    procs.stop(1)
+    waiting.join(timeout=5)
+    assert not waiting.is_alive() and time.monotonic() - t0 < 5  # the stop ended the wait
+    assert got["r"] == (None, "not started: the run was interrupted")
+    assert not marker.exists()
 
 
 def test_a_crashed_worker_is_one_error_with_its_stderr_and_the_other_skills_still_report(

@@ -71,6 +71,9 @@ resources:
       environments: *environments
       tasks:
         - task_key: eval
+          # No automatic retries: a retry re-runs every skill under the same run key. A failure surfaces
+          # and the eval is re-run on purpose. Serverless retries a task that sets none.
+          max_retries: 0
           environment_key: default
           environment_variables_key: skillhub_env
           python_wheel_task:
@@ -191,6 +194,9 @@ resources:
       environments: *environments
       tasks:
         - task_key: eval_live
+          # No automatic retries, as for skill-eval's eval task: a retry re-runs every skill under the
+          # same run key.
+          max_retries: 0
           environment_key: default
           environment_variables_key: skillhub_env
           python_wheel_task:
