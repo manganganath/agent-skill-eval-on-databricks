@@ -8,6 +8,7 @@ import UploadDraft from "./pages/UploadDraft";
 import Matrix from "./pages/Matrix";
 import RunEval from "./pages/RunEval";
 import Switch from "./pages/Switch";
+import Access from "./pages/Access";
 
 export function App() {
   return (
@@ -21,6 +22,7 @@ export function App() {
           <Route path="drafts/new" element={<UploadDraft />} />
           <Route path="matrix" element={<Matrix />} />
           <Route path="run" element={<RunEval />} />
+          <Route path="access" element={<Access />} />
           <Route path="*" element={<EmptyState title="Page not found" />} />
         </Route>
       </Routes>

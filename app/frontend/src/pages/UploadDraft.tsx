@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
-import { useNavigate } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { api, ApiError } from "../api/client";
 import type { AppConfig, DraftIn, Me } from "../api/types";
 import { candidatePath, canSeeCandidates } from "../candidates";
@@ -49,7 +49,7 @@ export default function UploadDraft() {
   if (!canSeeCandidates(me.data)) {
     return (
       <EmptyState title="Upload a draft">
-        <p>Only skill authors and reviewers can upload drafts. Ask your team lead to add you to the authors group.</p>
+        <p>Only skill authors and reviewers can upload drafts. Ask your team lead to add you to the authors group. <Link to="/access">Who can do what</Link></p>
       </EmptyState>
     );
   }

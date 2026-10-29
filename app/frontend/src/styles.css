@@ -459,3 +459,14 @@ td.wide { min-width: 18rem; }
   .chip, .badge, .version, .tag, .count-pill { border: 1px solid CanvasText; }
   .card-link:focus-visible::after { outline-color: Highlight; }
 }
+
+/* Access */
+a.badge { text-decoration: none; }
+a.badge:hover { background: var(--accent); color: var(--canvas); }
+.access-roles { display: flex; flex-wrap: wrap; gap: 0.4rem; margin: 0 0 0.75rem; }
+.access-depts, .access-groups, .access-steps { margin: 0 0 0.75rem; }
+.access-depts { list-style: none; padding: 0; display: flex; flex-wrap: wrap; gap: 0.4rem; }
+.access-groups, .access-steps { padding-left: 1.25rem; display: grid; gap: 0.35rem; }
+.access-table tbody th { font-weight: 600; background: transparent; color: var(--ink); }
+.access-table .access-mine { background: var(--accent-soft); }
+.access-table .access-span { text-align: center; color: var(--slate); }

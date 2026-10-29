@@ -10,6 +10,12 @@ def test_config_lists_profiles_and_no_secrets(make_client, monkeypatch):
         "workspace_url": "https://ws.example.test",
         "models": {"claude-sonnet": "frontier", "gemini-flash": "fast"},
         "departments": ["common", "equity_research", "external"],
+        "roles": {"authors": "skillhub-authors", "reviewers": "skillhub-reviewers"},
+        "department_access": {
+            "common": {"readers": ["skillhub-users"], "quarantine": False},
+            "equity_research": {"readers": ["dept-equity-research"], "quarantine": False},
+            "external": {"readers": ["skillhub-reviewers"], "quarantine": True},
+        },
     }
     assert "token" not in str(body).lower()
 

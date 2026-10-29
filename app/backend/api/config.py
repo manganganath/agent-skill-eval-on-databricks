@@ -22,4 +22,9 @@ def app_config(cfg: Annotated[HubConfig, Depends(get_cfg)]) -> dict:
         "workspace_url": host,
         "models": {n: p.class_ for n, p in cfg.models.items()},
         "departments": list(cfg.departments),
+        # Group names for the Access page. Names only; membership is checked per user.
+        "roles": {"authors": cfg.roles.authors, "reviewers": cfg.roles.reviewers},
+        "department_access": {
+            d: {"readers": list(v.readers), "quarantine": v.quarantine} for d, v in cfg.departments.items()
+        },
     }

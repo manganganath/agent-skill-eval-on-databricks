@@ -18,6 +18,10 @@ class MeOut(BaseModel):
     is_author: bool
 
 
+class ReadableOut(BaseModel):
+    departments: list[str]
+
+
 class SkillSummary(BaseModel):
     fqn: str
     dept: str

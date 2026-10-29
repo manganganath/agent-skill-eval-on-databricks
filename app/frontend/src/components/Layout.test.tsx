@@ -51,6 +51,14 @@ describe("Layout", () => {
     expect(screen.getByText("Reviewer")).toBeTruthy();
   });
 
+  it("shows an Author badge that links to the Access page", async () => {
+    vi.mocked(api.me).mockResolvedValue({ user: "ana@example.com", groups: [], is_reviewer: false, is_author: true });
+    renderAt("/");
+    const badge = await screen.findByText("Author");
+    expect(badge.closest("a")?.getAttribute("href")).toBe("/access");
+    expect(screen.queryByText("Reviewer")).toBeNull();
+  });
+
   it("shows no user when the lookup fails", async () => {
     vi.mocked(api.me).mockRejectedValue(new ApiError(401, "no_user_token"));
     renderAt("/");
