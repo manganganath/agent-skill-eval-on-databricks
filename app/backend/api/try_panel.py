@@ -234,7 +234,9 @@ def _run_config(cfg: HubConfig) -> HubConfig:
 
 
 def _live_schemas(cfg: HubConfig, dept: str) -> list[str]:
-    return sorted({live_schema(cfg, dept), live_schema(cfg, "common")})
+    """The department's live schema, then common's. The order matters: the skills server offers a capped number of
+    skill tools per connection (20 in this release), in the order of its schemas, and leaves out the rest."""
+    return list(dict.fromkeys([live_schema(cfg, dept), live_schema(cfg, "common")]))
 
 
 @dataclass(frozen=True)
@@ -606,7 +608,7 @@ def try_candidate(
         models=models,
         token=token,
         requester=me.user,
-        schemas=sorted({schema, live_schema(cfg, dept), live_schema(cfg, "common")}),
+        schemas=[schema, *_live_schemas(cfg, dept)],  # the upload first, so the tool cap never leaves it out
         hidden=frozenset({production, live_fqn(cfg, "common", skill)}),
         rewrite={staged: production},
         ready_fqn=staged,
