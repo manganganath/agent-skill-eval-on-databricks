@@ -383,6 +383,47 @@ def test_detail_has_the_live_version_and_verdicts_the_catalog_shows(make_client,
     assert (listed["live_version"], listed["verdicts"]) == (2, {"claude-sonnet": "warn"})
 
 
+def _hashed(version, content, started, verdict, mode="trigger"):
+    return {
+        "skill": "audit-xls",
+        "skill_version": version,
+        "content_hash": content,
+        "model_profile": "claude-sonnet",
+        "mode": mode,
+        "verdict": verdict,
+        "started_at": started,
+    }
+
+
+HASHED_JOURNAL = {
+    "common": [
+        {"skill": "audit-xls", "action": "switched", "to_version": 1, "content_hash": "sha256:h1"},
+    ]
+}
+
+
+def test_a_release_recorded_before_publishing_counts_in_the_catalog_and_on_the_skill_page(make_client, uc):
+    # The release's merge re-evaluation (version 0) ran before v1 was published with the same content hash.
+    matrix = [_hashed(0, "sha256:h1", datetime(2026, 10, 30), "pass")]
+    sql = FakeUserSql(journal=HASHED_JOURNAL, matrix=matrix)
+    c = make_client(user_w=user_w(), app_w=app_w(), cfg=make_cfg(), sql=sql)
+    detail = c.get("/api/skills/skill_hub.common.audit-xls").json()
+    assert (detail["live_version"], detail["verdicts"]) == (1, {"claude-sonnet": "pass"})
+    listed = next(r for r in c.get("/api/skills").json() if r["fqn"] == detail["fqn"])
+    assert (listed["live_version"], listed["verdicts"]) == (1, {"claude-sonnet": "pass"})
+
+
+def test_a_newer_run_on_the_live_version_replaces_the_pre_release_run(make_client, uc):
+    matrix = [
+        _hashed(0, "sha256:h1", datetime(2026, 10, 30), "fail"),
+        _hashed(1, "sha256:h1", datetime(2026, 10, 31), "pass"),
+    ]
+    sql = FakeUserSql(journal=HASHED_JOURNAL, matrix=matrix)
+    c = make_client(user_w=user_w(), app_w=app_w(), cfg=make_cfg(), sql=sql)
+    listed = next(r for r in c.get("/api/skills").json() if r["name"] == "audit-xls")
+    assert listed["verdicts"] == {"claude-sonnet": "pass"}
+
+
 def test_detail_eval_access_also_covers_the_journal_and_verdict_reads(make_client, uc):
     from backend.data import SqlError
 

@@ -214,7 +214,8 @@ def test_try_uses_the_user_token_and_scopes_to_dept_and_common(make_client, wire
     post(make_client, body())
     bridge = wired["bridges"][0]
     assert bridge.client.headers() == {"Authorization": "Bearer user-token-123"}
-    assert bridge.client.schemas == ["skill_hub.common", "skill_hub.dept_equity_research"]
+    # The department first: the skills server offers a capped number of skill tools, in schema order.
+    assert bridge.client.schemas == ["skill_hub.dept_equity_research", "skill_hub.common"]
     assert bridge.client.host == "https://ws.example.test"  # workspace_host(), like the user client
     assert wired["models"] == [("claude-sonnet", {"Authorization": "Bearer user-token-123"})]
 
@@ -689,8 +690,8 @@ def test_candidate_try_stages_the_upload_into_a_private_schema_and_grants_only_t
     assert [(c.principal, [p.value for p in c.add]) for c in changes] == [
         ("ana@example.com", ["USE_SCHEMA", "READ_VOLUME"])
     ]
-    # The agent's scope: the private schema, then live dept and common, so the run is the one under test.
-    assert wired["bridges"][-1].client.schemas == sorted({schema, "skill_hub.common"})
+    # The agent's scope: the private schema first, then live dept and common, so the tool cap never drops it.
+    assert wired["bridges"][-1].client.schemas == [schema, "skill_hub.common"]
 
 
 def test_candidate_try_hides_the_live_skill_of_the_same_name_from_list_and_call(make_client, wired, staging):
@@ -919,3 +920,12 @@ def test_the_live_copy_is_hidden_whatever_the_case_of_its_name():
         with pytest.raises(RuntimeError):
             hidden.call_tool(name, args)
     assert hidden.call_tool("load_skill", {"full_name": "cat.dept_x.other"}) == "ok"
+
+
+def test_the_department_schema_comes_before_common_and_common_is_not_repeated():
+    cfg = make_cfg()
+    assert try_panel._live_schemas(cfg, "equity_research") == [
+        "skill_hub.dept_equity_research",
+        "skill_hub.common",
+    ]
+    assert try_panel._live_schemas(cfg, "common") == ["skill_hub.common"]

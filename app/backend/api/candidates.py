@@ -39,7 +39,8 @@ def list_candidates(
     cfg: Annotated[HubConfig, Depends(get_cfg)],
     sql: Annotated[UserSql, Depends(get_sql)],
 ) -> list[CandidateSummary]:
-    """The changed skills of each pull request's newest upload, and the drafts, that the user may see. The work is
+    """The changed skills of each pull request's newest upload, and the drafts, that the user may see. A pull request
+    skill whose content is already the live version's is left out: its release lists the skill. The work is
     bounded: two folder listings, one marker per pull request run, one draft.json per draft, one Job-runs listing,
     one SQL read per department and one SKILL.md per pull request candidate, side by side on a small pool."""
     me = authz.fetch_me(user_w)
@@ -78,8 +79,15 @@ def list_candidates(
             d: pool.submit(read_dept, sql, queries.candidate_runs_sql(cfg, d, ks), d)
             for d, ks in sorted(dept_keys.items())
         }
+        # The live content of each visible department: a pull request skill that is already released is left out.
+        journals = (
+            {d: pool.submit(read_dept, sql, queries.journal_sql(cfg, d), d) for d in sorted(depts)}
+            if pr_keys
+            else {}
+        )
         tested = started.result()
         rows: dict[str, tuple[list[dict], EvalAccess]] = {d: r.result() for d, r in reads.items()}
+        live = {d: candidates.live_hashes(j.result()[0]) for d, j in journals.items()}
         # The skills under review of each upload: those its PR eval was started for, and those with eval rows.
         plan: list[tuple[candidates.CandidateKey, datetime | None, str, str]] = []
         for key, stamp in newest:
@@ -122,7 +130,10 @@ def list_candidates(
                 continue
             if data is None:
                 continue  # not in the upload: deleted in the pull request, or the folder went away
-            out.append(summary(key, dept, name, uploaded_at=stamp, description=candidates.description(data)))
+            item = summary(key, dept, name, uploaded_at=stamp, description=candidates.description(data))
+            if item.content_hash is not None and item.content_hash == live.get(dept, {}).get(name):
+                continue  # released: the live version has this content, and the Catalog lists it
+            out.append(item)
         for key, meta in drafts:
             out.append(
                 summary(

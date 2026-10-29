@@ -314,11 +314,13 @@ After an upgrade from a build that used `/Shared/skill-hub`, re-run bootstrap. I
 
 ### Try on skills under review
 
-Trying a candidate or draft needs one catalog-level grant, `CREATE SCHEMA`, for the app's service principal. A person's bootstrap run applies it when `SKILLHUB_APP_PRINCIPAL` is set. The `skillhub-ci` Job applies it only when `skillhub-ci` owns the catalog. To grant it by hand, run this as the catalog owner, with the application ID of the app's service principal:
+The app's service principal needs two catalog-level grants: `USE CATALOG`, for everything it does as itself (Try traces, the effective-permissions fallback), and `CREATE SCHEMA`, for trying a candidate or draft. A person's bootstrap run applies both when `SKILLHUB_APP_PRINCIPAL` is set. The `skillhub-ci` Job applies them only when `skillhub-ci` owns the catalog, so the schema-level grants it gives the app have no effect until `USE CATALOG` is in place. To grant them by hand, run this as the catalog owner, with the application ID of the app's service principal:
 
 ```sql
-GRANT CREATE SCHEMA ON CATALOG <catalog> TO `<app service principal application id>`
+GRANT USE CATALOG, CREATE SCHEMA ON CATALOG <catalog> TO `<app service principal application id>`
 ```
+
+To check, list the principal's effective privileges on the catalog (`GET /api/2.1/unity-catalog/effective-permissions/catalog/<catalog>?principal=<application id>`): both must be there.
 
 A skill under review is not in Unity Catalog, so the app stages it for each run into a private schema `run_try_<id>_<dept>`, which it creates. Only the user who runs the Try gets `USE SCHEMA` and `READ VOLUME` on that schema. The app drops the schema when the run ends, including when it times out. Each candidate Try also drops, beside the run, the app's own `run_try_*` schemas that are more than an hour old. They are left only when a run died with its process. Until the grant is in place, a Try answers 503 `try_setup_required`.
 
