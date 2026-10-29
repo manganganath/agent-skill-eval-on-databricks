@@ -357,6 +357,49 @@ def test_live_rows_drops_a_retired_skill_back_to_the_newest_version():
     assert [r["skill_version"] for r in dashboard.live_rows(rows, journal)] == [2]
 
 
+def hashed(skill, version, content, started, verdict, mode="trigger"):
+    return cell(skill, version, mode, verdict, content_hash=content, started_at=started)
+
+
+def test_live_rows_counts_a_pre_release_row_by_the_live_content_hash():
+    journal = [{"skill": "a", "action": "switched", "to_version": 1, "content_hash": "sha256:h1"}]
+    rows = [
+        hashed("a", 0, "sha256:h1", "2026-10-30", "pass"),
+        hashed("a", 0, "sha256:other", "2026-10-30", "fail", mode="with_skill"),
+    ]
+    live = dashboard.live_rows(rows, journal)
+    assert [(r["skill_version"], r["mode"]) for r in live] == [(0, "trigger")]
+
+
+def test_live_rows_newest_run_per_model_and_mode_replaces_the_pre_release_row():
+    journal = [{"skill": "a", "action": "switched", "to_version": 1, "content_hash": "sha256:h1"}]
+    rows = [
+        hashed("a", 0, "sha256:h1", "2026-10-29", "fail"),
+        hashed("a", 1, "sha256:h1", "2026-10-30", "pass"),
+    ]
+    live = dashboard.live_rows(rows, journal)
+    assert [(r["skill_version"], r["verdict"]) for r in live] == [(1, "pass")]
+
+
+def test_summary_counts_a_release_recorded_before_publishing(make_client):
+    journal = [{"skill": "audit-xls", "action": "switched", "to_version": 1, "content_hash": "sha256:h1"}]
+    data = {
+        "cells": [hashed("audit-xls", 0, "sha256:h1", "2026-10-30", "pass", mode="trigger")],
+        "journal": journal,
+    }
+    sql = DashSql({COMMON: data, SERVING: {"tokens": []}})
+    c = make_client(user_w=FakeWorkspace(), cfg=make_cfg(), sql=sql)
+    body = c.get("/api/results/dashboard").json()
+    assert body["summary"]["verdicts"]["pass"] == 1 and body["summary"]["skills"] == 1
+
+
+def test_dashboard_statements_read_the_content_hash_and_start_time_for_the_live_rule():
+    statements = queries.dashboard_sql(make_cfg(), "common")
+    for name in ("cells", "uplift"):
+        assert "content_hash" in statements[name][0] and "started_at" in statements[name][0], name
+    assert "content_hash" in statements["journal"][0]
+
+
 def test_verdict_counts_and_health_count_a_null_verdict_as_inconclusive():
     cells = [
         cell("a", 1, "trigger", None, error_rate=None),

@@ -1,4 +1,5 @@
 import logging
+from datetime import datetime
 
 import pytest
 from app_fakes import FakeSqlClient
@@ -171,10 +172,9 @@ def test_catalog_verdict_is_worst_across_modes_per_profile():
     rows = [
         _row("a", 3, "claude-sonnet", "trigger", "pass"),
         _row("a", 3, "claude-sonnet", "with_skill", "warn"),
-        _row("a", 3, "claude-sonnet", "trigger", "pass"),
         _row("a", 3, "gemini-flash", "trigger", "pass"),
         _row("a", 3, "gemini-flash", "with_skill", "inconclusive"),
-        _row("a", 3, "gemini-flash", "trigger", "fail"),
+        _row("a", 3, "gemini-flash", "effectiveness", "fail"),
     ]
     assert skill_ref.live_verdicts(rows, {"a": 3}) == {"a": {"claude-sonnet": "warn", "gemini-flash": "fail"}}
 
@@ -230,6 +230,74 @@ def test_null_verdict_counts_as_inconclusive():
 def test_catalog_verdicts_sql_has_no_params():
     sql, params = queries.catalog_verdicts_sql(make_cfg(), "common")
     assert "skill_hub.common_evals.eval_matrix" in sql and params == {}
+
+
+def test_catalog_verdicts_sql_reads_the_content_hash_and_start_time():
+    sql, _ = queries.catalog_verdicts_sql(make_cfg(), "common")
+    assert "content_hash" in sql and "started_at" in sql
+
+
+def _live(version, content, started, verdict="pass", mode="trigger", profile="m", skill="a"):
+    return {
+        "skill": skill,
+        "skill_version": version,
+        "content_hash": content,
+        "model_profile": profile,
+        "mode": mode,
+        "verdict": verdict,
+        "started_at": started,
+    }
+
+
+H1 = "sha256:h1"
+JOURNAL_H1 = [{"action": "switched", "to_version": 1, "content_hash": H1}]
+
+
+def test_a_pre_release_row_counts_for_the_live_version_by_its_content_hash():
+    # The merge re-evaluation runs before publishing: version 0 with the hash the release then publishes as v1.
+    rows = [_live(0, H1, datetime(2026, 10, 30), "pass")]
+    got = skill_ref.live_verdicts(rows, {"a": 1}, live_hashes={"a": skill_ref.live_content_hash(JOURNAL_H1)})
+    assert got == {"a": {"m": "pass"}}
+
+
+def test_a_pre_release_row_of_another_content_hash_does_not_count():
+    rows = [_live(0, "sha256:other", datetime(2026, 10, 30), "fail")]
+    assert skill_ref.live_verdicts(rows, {"a": 1}, live_hashes={"a": H1}) == {}
+
+
+def test_a_newer_run_on_the_live_version_replaces_the_pre_release_row_of_the_same_model_and_mode():
+    pre = _live(0, H1, datetime(2026, 10, 29), "fail")
+    post = _live(1, H1, datetime(2026, 10, 30), "pass")
+    for rows in ([pre, post], [post, pre]):  # the order of the rows does not matter
+        assert skill_ref.live_verdicts(rows, {"a": 1}, live_hashes={"a": H1}) == {"a": {"m": "pass"}}
+
+
+def test_a_pre_release_row_still_counts_for_a_mode_with_no_newer_row():
+    rows = [
+        _live(0, H1, datetime(2026, 10, 29), "pass", mode="trigger"),
+        _live(1, H1, datetime(2026, 10, 30), "warn", mode="with_skill"),
+    ]
+    assert skill_ref.live_verdicts(rows, {"a": 1}, live_hashes={"a": H1}) == {"a": {"m": "warn"}}
+
+
+def test_a_retired_skill_has_no_live_content_and_no_verdicts():
+    journal = [*JOURNAL_H1, {"action": "retired", "to_version": None}]
+    assert skill_ref.live_version(journal) is None and skill_ref.live_content_hash(journal) is None
+    rows = [_live(0, H1, datetime(2026, 10, 30), "pass")]
+    got = skill_ref.live_verdicts(rows, {"a": None}, live_hashes={"a": None})
+    assert got == {}
+
+
+def test_live_content_hash_is_the_latest_switch_and_follows_live_version():
+    journal = [
+        {"action": "published", "version": 2, "content_hash": "sha256:h2"},  # a publish never makes it live
+        {"action": "switched", "to_version": 1, "content_hash": H1},
+        {"action": "switched", "to_version": 2, "content_hash": "sha256:h2"},
+        {"action": "switched", "to_version": 3, "content_hash": None},  # no hash recorded
+    ]
+    assert skill_ref.live_content_hash(journal) is None
+    assert skill_ref.live_content_hash(journal[:3]) == "sha256:h2"
+    assert skill_ref.live_version(journal[:3]) == 2
 
 
 def test_get_sql_builds_user_sql_on_the_user_client(monkeypatch):

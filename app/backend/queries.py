@@ -85,7 +85,10 @@ def catalog_verdicts_sql(
 ) -> tuple[str, dict[str, object]]:
     """Verdict rows for the catalog; reduce them with skill_ref.live_verdicts(). `skill` narrows them to one skill."""
     _check_dept(cfg, dept)
-    sql = f"SELECT skill, skill_version, model_profile, mode, verdict FROM {evals_schema(cfg, dept)}.eval_matrix"
+    sql = (
+        "SELECT skill, skill_version, content_hash, model_profile, mode, verdict, started_at "
+        f"FROM {evals_schema(cfg, dept)}.eval_matrix"
+    )
     if skill is None:
         return sql, {}
     return f"{sql} WHERE skill = :skill", {"skill": skill}
@@ -175,20 +178,21 @@ def dashboard_sql(cfg: HubConfig, dept: str) -> dict[str, tuple[str, dict[str, o
     runs = f"{ev}.eval_runs"
     return {
         # Sums and counts, so the route can combine the departments into exact means.
-        # One row per skill, version, model and mode. The route keeps each skill's live version
-        # (dashboard.live_rows), then counts the summary tiles, the verdicts and the health from those rows.
+        # One row per skill, version, model and mode. The route keeps the rows of each skill's live version
+        # (dashboard.live_rows: the live version or its content hash, newest per model and mode), then counts the
+        # summary tiles, the verdicts and the health from those rows.
         "cells": (
-            "SELECT skill, skill_version, model_profile, mode, verdict, accuracy, uplift_task_quality, error_rate "
-            f"FROM {matrix} WHERE {_GATING}",
+            "SELECT skill, skill_version, content_hash, model_profile, mode, verdict, started_at, accuracy, "
+            f"uplift_task_quality, error_rate FROM {matrix} WHERE {_GATING}",
             {},
         ),
         "uplift": (
-            "SELECT skill, skill_version, model_profile, pass_rate_without, pass_rate, uplift_task_quality, "
-            f"uplift_skill_format FROM {matrix} WHERE mode = 'with_skill'",
+            "SELECT skill, skill_version, content_hash, model_profile, started_at, pass_rate_without, pass_rate, "
+            f"uplift_task_quality, uplift_skill_format FROM {matrix} WHERE mode = 'with_skill'",
             {},
         ),
         "journal": (
-            f"SELECT skill, action, to_version, ts FROM {ev}.skill_versions "
+            f"SELECT skill, action, to_version, content_hash, ts FROM {ev}.skill_versions "
             "WHERE action IN ('switched', 'retired') ORDER BY ts",
             {},
         ),
