@@ -8,16 +8,18 @@ import { Loading } from "../components/Loading";
 type Row = { action: string; everyone: string; authors: string; reviewers: string };
 
 // Who can do what. Keep in step with the checks in app/backend and with the Roles section of docs/onboarding.md.
+// A row with empty author and reviewer cells is one cell across all three columns: it is not a Skill Hub role.
 const ROWS: Row[] = [
   { action: "Browse live skills", everyone: "Own departments", authors: "Own departments", reviewers: "All departments" },
-  { action: "Try a skill", everyone: "Yes", authors: "Yes", reviewers: "Yes" },
+  { action: "Try a live skill", everyone: "Yes", authors: "Yes", reviewers: "Yes" },
   { action: "Run an eval on live skills", everyone: "Yes", authors: "Yes", reviewers: "Yes" },
   { action: "See skills under review", everyone: "No", authors: "Own departments", reviewers: "All departments" },
   { action: "Upload a draft", everyone: "No", authors: "Yes", reviewers: "Yes" },
+  { action: "Try a skill under review", everyone: "No", authors: "Own departments", reviewers: "All departments" },
   { action: "Run an eval on a candidate or draft", everyone: "No", authors: "Yes", reviewers: "Yes" },
   { action: "Switch the live version", everyone: "No", authors: "No", reviewers: "Yes" },
   { action: "Add or edit a skill", everyone: "No", authors: "Through a pull request", reviewers: "Through a pull request" },
-  { action: "Approve a release", everyone: "No", authors: "No", reviewers: "In GitHub, as a required reviewer" },
+  { action: "Approve a release", everyone: "In GitHub: the required reviewers of the production environment", authors: "", reviewers: "" },
   { action: "Publish a version", everyone: "No one: CI publishes after approval", authors: "", reviewers: "" },
 ];
 

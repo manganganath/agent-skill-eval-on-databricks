@@ -250,8 +250,7 @@ export default function Catalog() {
           <div className="group-head">
             <h2 id={`dept-${d}`}>{d}</h2>
             <span>
-              {plural(live.length + review.length, "skill")}
-              {review.length > 0 && `, ${review.length} under review`}
+              {review.length > 0 ? `${live.length} live, ${review.length} under review` : plural(live.length, "skill")}
             </span>
           </div>
           <ul className="cards">

@@ -117,7 +117,9 @@ export function LineChart({ label, days, series, yMax, yTicks, format }: {
         </g>
       ))}
       {labelled.map((i) => (
-        <text key={i} x={x(i)} y={H - 8} textAnchor="middle" className="chart-tick">{dayLabel(days[i])}</text>
+        // The last label ends at the right edge, so it is not clipped.
+        <text key={i} x={x(i)} y={H - 8} textAnchor={days.length > 1 && i === days.length - 1 ? "end" : "middle"}
+          className="chart-tick">{dayLabel(days[i])}</text>
       ))}
       {series.map((s) => {
         const points = s.values.flatMap((v, i) => (v == null ? [] : [{ i, v, px: x(i), py: y(v) }]));

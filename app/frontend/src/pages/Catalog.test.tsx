@@ -207,7 +207,7 @@ describe("Catalog skills under review", () => {
     // DOCUMENT_POSITION_FOLLOWING: the candidate card comes after the live card.
     expect(live.compareDocumentPosition(review) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(screen.queryByRole("region", { name: /under review/i })).toBeNull();
-    expect(within(common).getByText("2 skills, 1 under review")).toBeTruthy();
+    expect(within(common).getByText("1 live, 1 under review")).toBeTruthy();
   });
 
   it("badges a candidate with its pull request, in the live card shape", async () => {

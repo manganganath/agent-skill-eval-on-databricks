@@ -481,11 +481,15 @@ def latest_rows(rows: Iterable[Mapping[str, object]], key: str) -> list[dict]:
     return list(cells.values())
 
 
-def verdicts(latest: Iterable[Mapping[str, object]]) -> dict[str, str]:
-    """{model profile: worst verdict across modes} for one skill. The baseline (without_skill) never counts."""
+def verdicts(
+    latest: Iterable[Mapping[str, object]], gating_modes: Iterable[str] = skill_ref.REQUEST_MODES
+) -> dict[str, str]:
+    """{model profile: worst verdict across the gating modes} for one skill, by the release gate's rule
+    (skill_ref.counts_toward_verdict). The baseline (without_skill) never counts."""
+    gating_modes = tuple(gating_modes)
     by_model: dict[str, list[str | None]] = {}
     for r in latest:
-        if r.get("mode") == skill_ref.BASELINE_MODE:
+        if not skill_ref.counts_toward_verdict(r.get("mode"), gating_modes):
             continue
         by_model.setdefault(str(r.get("model_profile")), []).append(r.get("verdict"))  # type: ignore[arg-type]
     return {m: skill_ref.worst_verdict(v) for m, v in sorted(by_model.items())}

@@ -141,6 +141,7 @@ export default function CandidateDetail() {
                 : s.eval_access === "unavailable" ? "Eval results are temporarily unavailable" : "No results yet"}
             </p>
           )}
+          <p className="hint">Verdicts count the modes that gate a release. The Eval matrix shows every mode, effectiveness included.</p>
         </section>
       </header>
 

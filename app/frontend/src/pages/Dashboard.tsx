@@ -136,12 +136,14 @@ export default function Dashboard() {
   const knownOutcomes = [...OUTCOMES.filter((o) => outcomeNames.includes(o)), ...outcomeNames.filter((o) => !OUTCOMES.includes(o))];
   const outcomeText = (o: string) => OUTCOME_TEXT[o] ?? (o === "none" ? "No outcome" : o);
   const outcomeFill = (o: string) => OUTCOME_FILL[o] ?? "var(--info)";
+  // "-" stands for the cases that expect no skill: unrelated requests, and near-misses aimed at another skill.
+  const expectedText = (e: string) => (e === "-" ? "No skill expected" : e);
   const expectedKeys = uniq(routing.map((r) => `${r.dept}\u0000${r.expected_skill ?? "-"}`)).sort();
   const routeRows = expectedKeys.map((key) => {
     const [rowDept, expected] = key.split("\u0000");
     const rows = routing.filter((r) => r.dept === rowDept && (r.expected_skill ?? "-") === expected);
     return {
-      label: multiDept ? `${expected} (${rowDept})` : expected,
+      label: multiDept ? `${expectedText(expected)} (${rowDept})` : expectedText(expected),
       segments: knownOutcomes.map((o) => ({
         name: outcomeText(o), color: outcomeFill(o),
         value: rows.filter((r) => (r.trigger_outcome ?? "none") === o).reduce((n, r) => n + r.n, 0),
@@ -309,7 +311,7 @@ export default function Dashboard() {
                       domain={upliftDomain} format={signedPct} />
                   </>
                 )}
-                <TableAlt label="Uplift rows" open>
+                <TableAlt label="Uplift rows">
                   <table className="matrix">
                     <caption>Uplift with and without the skill, by skill and model</caption>
                     <thead><tr>
@@ -376,7 +378,7 @@ export default function Dashboard() {
                       <tbody>
                         {misroutes.map((m) => (
                           <tr key={`${m.rowDept}-${m.expected}-${m.invoked}-${m.outcome}`}>
-                            <td>{multiDept ? `${m.expected} (${m.rowDept})` : m.expected}</td>
+                            <td>{multiDept ? `${expectedText(m.expected)} (${m.rowDept})` : expectedText(m.expected)}</td>
                             <td>{m.invoked === "none" ? "None" : m.invoked}</td>
                             <td>{outcomeText(m.outcome)}</td>
                             <td className="num">{count(m.n)}</td>

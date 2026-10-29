@@ -83,6 +83,7 @@ function SummaryVerdicts({ skill }: { skill: SkillDetailT }) {
               : "No results yet"}
         </p>
       )}
+      <p className="hint">Verdicts count the modes that gate a release. The Eval matrix shows every mode, effectiveness included.</p>
     </section>
   );
 }

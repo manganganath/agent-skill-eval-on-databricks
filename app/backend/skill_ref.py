@@ -6,6 +6,7 @@ from collections.abc import Iterable, Mapping
 from backend.authz import Reason
 from backend.deps import problem
 from skillhub.config import HubConfig
+from skillhub.evalspec import CASE_KIND, REQUEST_MODES
 from skillhub.naming import live_schema
 
 _NAME = re.compile(r"[a-z0-9]+(?:-[a-z0-9]+)*")  # used with fullmatch: "$" would let a trailing newline in
@@ -53,18 +54,36 @@ def worst_verdict(verdicts: Iterable[str | None]) -> str:
     return str(min(cleaned, key=_severity))
 
 
-def live_verdicts(
-    rows: Iterable[Mapping[str, object]], live_versions: Mapping[str, int | None]
-) -> dict[str, dict[str, str]]:
-    """{skill: {model_profile: worst verdict across modes}} for each skill's live version.
+def counts_toward_verdict(mode: object, gating_modes: Iterable[str] = REQUEST_MODES) -> bool:
+    """Whether a row of this run mode counts toward a skill's verdict chips: the rule of the release gate. The
+    baseline never counts, a mode left out of `gating_modes` (config defaults.gating_modes) is reported on the
+    matrix only, and an unknown mode always counts (fail closed)."""
+    if mode == BASELINE_MODE:
+        return False
+    kind = CASE_KIND.get(str(mode or ""))
+    return kind is None or kind in set(gating_modes)
 
-    Skills without a live version get no verdicts. Baseline (without_skill) rows are ignored.
+
+def live_verdicts(
+    rows: Iterable[Mapping[str, object]],
+    live_versions: Mapping[str, int | None],
+    gating_modes: Iterable[str] = REQUEST_MODES,
+) -> dict[str, dict[str, str]]:
+    """{skill: {model_profile: worst verdict across the gating modes}} for each skill's live version.
+
+    Skills without a live version get no verdicts. Baseline (without_skill) rows are ignored, and so are rows of
+    a mode that does not gate a release (counts_toward_verdict).
     """
+    gating_modes = tuple(gating_modes)
     grouped: dict[str, dict[str, list[str | None]]] = {}
     for r in rows:
         skill = str(r["skill"])
         live = live_versions.get(skill)
-        if live is None or r.get("skill_version") != live or r.get("mode") == BASELINE_MODE:
+        if (
+            live is None
+            or r.get("skill_version") != live
+            or not counts_toward_verdict(r.get("mode"), gating_modes)
+        ):
             continue
         grouped.setdefault(skill, {}).setdefault(str(r["model_profile"]), []).append(r.get("verdict"))  # type: ignore[arg-type]
     return {s: {p: worst_verdict(v) for p, v in prof.items()} for s, prof in grouped.items()}
