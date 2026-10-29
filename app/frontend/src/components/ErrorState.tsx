@@ -8,10 +8,22 @@ const MESSAGES: Record<string, string> = {
   evals_not_readable: "You do not have access to the evaluation results for this department.",
   authz_check_failed: "Skill Hub could not confirm your access, so it refused this request. Try again later.",
   job_forbidden: "Skill Hub is not allowed to start this job. Ask an administrator.",
+  job_not_found: "The job for this action is not set up in this workspace. Ask an administrator to deploy Skill Hub's jobs.",
+  job_failed: "Skill Hub could not start or check the job. Try again later, or ask an administrator.",
   job_conflict: "Another run is already in progress. Try again shortly.",
+  run_not_found: "That run was not found, or you cannot view it.",
   switch_in_progress: "A version switch is already running for this skill.",
+  finish_or_revert_switch:
+    "The last switch of this skill did not finish. Run that switch again, or switch back to the version it started from.",
   already_live: "This version is already live.",
   version_not_found: "That version does not exist.",
+  version_not_requested: "A pinned version belongs to a skill that is not selected. Select the skill, or clear its version.",
+  department_not_found: "That department is not set up in Skill Hub.",
+  no_access: "You do not have access to these results.",
+  results_unavailable: "These results do not exist yet.",
+  invalid_run_id: "That run ID is not valid.",
+  sql_failed: "Skill Hub could not read the results from the SQL warehouse. Try again later.",
+  uc_failed: "Skill Hub could not read this skill from Unity Catalog. Try again later.",
   try_unavailable: "Trying skills is not available right now.",
   try_failed: "The test run failed. Try again later.",
   try_busy: "Another test run is in progress. Try again in a moment.",
@@ -24,7 +36,7 @@ const MESSAGES: Record<string, string> = {
 export function ErrorState({ error, onRetry }: { error: unknown; onRetry?: () => void }) {
   const reason = error instanceof ApiError ? error.reason : undefined;
   const message =
-    (reason && MESSAGES[reason]) ?? "Something went wrong while loading this page. Try again.";
+    (reason && MESSAGES[reason]) ?? "Something went wrong. Try again.";
   return (
     <div role="alert" className="error">
       <p>{message}</p>

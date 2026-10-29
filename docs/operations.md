@@ -185,7 +185,7 @@ Verdicts: `inconclusive` means infrastructure failed or too many votes were miss
 ### What gates a verdict
 
 - Only reviewed cases gate. Other cases are advisory.
-- A criterion passes only when a strict majority of the whole configured judge panel votes yes. If missing votes could change the result, the criterion counts as an error, not as a pass or fail.
+- A criterion passes only when a strict majority of the whole configured judge panel votes yes. If at least one judge answered but there is no such majority, the criterion counts as not met. If no judge answered, it counts as an error.
 - Per-skill thresholds can only tighten the defaults in `config/hub.yaml`. These are `criteria.fail_rate` and `criteria.warn_rate` in `evals.json`, and `pass_score` in `rubric.json`. A looser value is ignored with a warning, and `skillhub lint` reports it. `max_error_rate` and `min_reviewed_cases` are not per skill. A rubric without `pass_score` uses the default.
 - The scorer takes labels (`expected_skill`, `should_trigger`, `kind`, `reviewed`) from the `evals.json` in the run, never from the dataset table. A reviewed case with no dataset row counts as an error. Duplicate case IDs are rejected.
 - A child run tagged `rubric_stale=true` used a rubric that was generated from other skill content. Regenerate it with `uv run skillhub generate --skills <name> --rubric-only --force`, or review it.

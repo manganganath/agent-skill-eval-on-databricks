@@ -40,7 +40,8 @@ resources:
             value: ${resources.jobs.skill_switch.id}
           - name: OTEL_TRACES_SAMPLER
             value: always_on
-      # Endpoint names are literal: they must match config/hub.yaml (test_app_config checks this).
+      # No serving endpoints are bound: the app calls models with the signed-in user's token, and binding an
+      # endpoint would need MANAGE on it, which the system model endpoints do not grant.
       resources:
         - name: sql-warehouse
           sql_warehouse:
@@ -54,19 +55,3 @@ resources:
           job:
             id: ${resources.jobs.skill_switch.id}
             permission: CAN_MANAGE_RUN
-        - name: endpoint-claude-sonnet
-          serving_endpoint:
-            name: databricks-claude-sonnet-5-5
-            permission: CAN_QUERY
-        - name: endpoint-claude-opus
-          serving_endpoint:
-            name: databricks-claude-opus-5-5
-            permission: CAN_QUERY
-        - name: endpoint-gpt
-          serving_endpoint:
-            name: databricks-gpt-5-5
-            permission: CAN_QUERY
-        - name: endpoint-gemini-flash
-          serving_endpoint:
-            name: databricks-gemini-3-8-flash
-            permission: CAN_QUERY

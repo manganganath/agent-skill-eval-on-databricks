@@ -19,6 +19,8 @@ button { font: inherit; padding: 0.4rem 0.9rem; border: 1px solid var(--accent);
 button:disabled { opacity: 0.6; cursor: not-allowed; }
 input, select, textarea { font: inherit; padding: 0.35rem 0.5rem; border: 1px solid var(--border); border-radius: 4px; }
 table { border-collapse: collapse; width: 100%; }
+/* A wide table scrolls inside this box, so the page itself never scrolls sideways. */
+.table-scroll { overflow-x: auto; max-width: 100%; }
 th, td { text-align: left; padding: 0.5rem 0.75rem; border-bottom: 1px solid var(--border); }
 .muted { color: var(--muted); }
 .error { border: 1px solid var(--fail); border-left-width: 4px; background: #fff5f4; padding: 0.75rem 1rem; border-radius: 4px; }

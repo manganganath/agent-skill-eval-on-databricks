@@ -129,6 +129,11 @@ export default function RunEval() {
       <p className="muted">Each skill runs its live version unless you pick another registered version.</p>
       <fieldset>
         <legend>Skills</legend>
+        {(skills.data ?? []).length === 0 && (
+          <p className="muted">
+            No skills to evaluate. Only published skills that you can read are listed here. Ask your team lead for access.
+          </p>
+        )}
         {(skills.data ?? []).map((s) => (
           <label key={s.fqn}><input type="checkbox" checked={picked.includes(s.fqn)}
             onChange={() => toggle(picked, s.fqn, setPicked)} aria-label={`${s.dept}/${s.name}`} /> {s.dept}/{s.name}</label>

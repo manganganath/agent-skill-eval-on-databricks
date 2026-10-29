@@ -1150,8 +1150,9 @@ def test_create_identities_grants_both_ci_principals_can_use_on_the_warehouse(cf
     ]
     assert wh.kwargs["request_object_id"] == cfg.workspace.sql_warehouse_id
     acl = {(a.service_principal_name, a.permission_level.value) for a in wh.kwargs["access_control_list"]}
-    assert acl == {("app-1", "CAN_USE"), ("app-2", "CAN_USE")}
-    assert f"SQL warehouse {cfg.workspace.sql_warehouse_id}: CAN_USE for app-1, app-2" in log
+    # ci deploys the bundle, and binding a warehouse to the app needs MANAGE on it
+    assert acl == {("app-1", "CAN_MANAGE"), ("app-2", "CAN_USE")}
+    assert f"SQL warehouse {cfg.workspace.sql_warehouse_id}: CAN_MANAGE for app-1, CAN_USE for app-2" in log
 
 
 def _acl(*sps, level="CAN_USE"):
@@ -1183,6 +1184,7 @@ def test_without_the_flag_missing_warehouse_access_only_warns(cfg, tmp_path, cap
     ]
     assert "app-2 may lack CAN_USE" in caplog.text and "Manual step" in caplog.text
     assert f"warning: app-2 may lack CAN_USE on SQL warehouse {cfg.workspace.sql_warehouse_id}" in log
+    assert f"warning: app-1 may lack CAN_MANAGE on SQL warehouse {cfg.workspace.sql_warehouse_id}" in log
     w.permissions.get.return_value = _acl("app-1", "app-2", level="CAN_MANAGE")
     caplog.clear()
     with caplog.at_level("WARNING"):
@@ -1195,7 +1197,7 @@ def test_a_refused_warehouse_grant_warns_and_bootstrap_continues(cfg, tmp_path, 
     w.permissions.update.side_effect = lambda **kw: (_ for _ in ()).throw(PermissionDenied("no"))
     with caplog.at_level("WARNING"):
         log = bootstrap(cfg, w, FakeSql(), create_identities=True, skills_root=tmp_path, results=_steps())
-    assert any(line.startswith("warning: CAN_USE on SQL warehouse") for line in log)
+    assert any(line.startswith("warning: access on SQL warehouse") for line in log)
     assert "Manual step" in caplog.text and any(line.startswith("warning: Genie space") for line in log)
 
 

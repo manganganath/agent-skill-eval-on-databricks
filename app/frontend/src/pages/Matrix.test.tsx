@@ -49,6 +49,32 @@ describe("Matrix", () => {
     expect(vi.mocked(api.matrix)).toHaveBeenCalledWith({ skill: "audit-xls", dept: "common" });
   });
 
+  it("scrolls the wide tables inside their own region, not the whole page", async () => {
+    vi.mocked(api.cases).mockResolvedValue(listed([{
+      run_id: "r1", trace_id: "tr1", assessment_name: "triggered", case_id: 7, repeat: 0, mode: "trigger",
+      user_input: "u", expected_skill: null, invoked_skill: null, trigger_outcome: "tp", value: "yes",
+      rationale: null, judge_model: null, source_type: null, reviewed: false, dept: "common",
+    }]));
+    render(<MemoryRouter><Matrix /></MemoryRouter>);
+    const table = await screen.findByRole("table", { name: /evaluation matrix/i });
+    const region = screen.getByRole("region", { name: /evaluation matrix/i });
+    expect(region).toHaveClass("table-scroll");
+    expect(region).toHaveAttribute("tabindex", "0"); // keyboard users can scroll it
+    expect(region).toContainElement(table);
+    fireEvent.click(screen.getByRole("button", { name: /show cases/i }));
+    const cases = await screen.findByRole("table", { name: /cases in this run/i });
+    expect(screen.getByRole("region", { name: /cases in this run/i })).toContainElement(cases);
+  });
+
+  it("labels version 0 (content that matches no published version) as unpublished, not v0", async () => {
+    vi.mocked(api.matrix).mockResolvedValue(listed([{ ...row, skill_version: 0 }]));
+    render(<MemoryRouter><Matrix /></MemoryRouter>);
+    const table = await screen.findByRole("table", { name: /evaluation matrix/i });
+    expect(within(table).getByText("unpublished")).toBeTruthy();
+    expect(within(table).queryByText("v0")).toBeNull();
+    expect(screen.getByRole("button", { name: "Show cases for claude-sonnet trigger unpublished" })).toBeTruthy();
+  });
+
   it("links to the MLflow run", async () => {
     render(<MemoryRouter><Matrix /></MemoryRouter>);
     const link = await screen.findByRole("link", { name: /mlflow run/i });
