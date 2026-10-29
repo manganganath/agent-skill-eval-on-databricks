@@ -13,7 +13,12 @@ SP_ID = "11111111-2222-3333-4444-555555555555"
 
 
 # Workspace folders: path -> object id. The experiment root of the test catalog is 300.
-DIRS = {"/Shared": 100, "/Shared/skill-hub": 200, "/Shared/skill-hub/skill_hub": 300}
+DIRS = {
+    "/Shared": 100,
+    "/Shared/skill-hub": 200,
+    "/Shared/skill-hub/skill_hub": 300,
+    "/Shared/skill-hub/skill_hub/candidates": 310,
+}
 
 
 class FakeW:
@@ -393,8 +398,12 @@ def test_ensure_experiment_root_replaces_folder_acls_and_gives_users_nothing(mon
     lines = exp.ensure_experiment_root(cfg, w, ci=CI, ci_eval=CI_EVAL, app=APP)
     assert w.mkdirs[0] == ROOT
     assert set(w.mkdirs[1:]) == {f"{ROOT}/candidates", *(f"{ROOT}/{d}" for d in cfg.departments)}
-    (root_id, root), (base_id, base) = w.sets  # root first: replacing the base may drop the caller
-    assert (base_id, root_id) == ("200", "300")
+    (root_id, root), (cand_id, cand), (base_id, base) = (
+        w.sets
+    )  # root first: replacing the base may drop the caller
+    assert (base_id, root_id, cand_id) == ("200", "300", "310")
+    # Creating a run's candidate folder needs MANAGE; ci_eval gets it on the candidates folder only.
+    assert _acl_of(cand) == {CI: "CAN_MANAGE", CI_EVAL: "CAN_MANAGE"}
     assert _acl_of(base) == {CI: "CAN_MANAGE", CI_EVAL: "CAN_EDIT"}
     assert _acl_of(root) == {
         CI: "CAN_MANAGE",
@@ -579,7 +588,13 @@ def test_bootstrap_resolves_the_experiment_root_step_and_its_call_binds():
 # --- The workspace root lives in the ci principal's home folder ---
 
 HOME = f"/Users/{CI}"
-HOME_DIRS = {"/Users": 10, HOME: 20, f"{HOME}/skill-hub": 30, f"{HOME}/skill-hub/skill_hub": 40}
+HOME_DIRS = {
+    "/Users": 10,
+    HOME: 20,
+    f"{HOME}/skill-hub": 30,
+    f"{HOME}/skill-hub/skill_hub": 40,
+    f"{HOME}/skill-hub/skill_hub/candidates": 41,
+}
 
 
 def _home_cfg(monkeypatch):
@@ -593,8 +608,9 @@ def test_the_experiment_root_follows_workspace_root(monkeypatch):
     w = FakeW(dirs=HOME_DIRS)
     exp.ensure_experiment_root(cfg, w, ci=CI, ci_eval=CI_EVAL, app=APP)
     assert w.mkdirs[0] == f"{HOME}/skill-hub/skill_hub"
-    (root_id, root), (base_id, base) = w.sets
+    (root_id, root), (_, cand), (base_id, base) = w.sets
     assert (root_id, base_id) == ("40", "30")
+    assert _acl_of(cand) == {CI: "CAN_MANAGE", CI_EVAL: "CAN_MANAGE"}
     assert _acl_of(base) == {CI: "CAN_MANAGE", CI_EVAL: "CAN_EDIT"}
     assert "users" not in _acl_of(root)
 

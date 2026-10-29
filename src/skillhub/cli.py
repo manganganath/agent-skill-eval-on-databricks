@@ -1303,3 +1303,26 @@ def eval_digests_cmd(
             }
         )
     typer.echo(json.dumps(out, separators=(",", ":")))
+
+
+def job_main() -> None:
+    """Entry point for Databricks Jobs (`skillhub-job`).
+
+    Serverless wheel tasks run under IPython and report a SystemExit as a failed task, even SystemExit(0). So this
+    returns normally on success and raises SystemExit with a non-zero code only when the command fails.
+    """
+    try:
+        code = app(standalone_mode=False)
+    except SystemExit as e:  # --help and click's own exits
+        code = e.code
+    except typer.Exit as e:
+        code = e.exit_code
+    except typer.Abort:
+        code = 1
+    except Exception as e:  # click usage errors: Typer bundles its own click, so match by behaviour
+        if not (callable(getattr(e, "show", None)) and isinstance(getattr(e, "exit_code", None), int)):
+            raise
+        e.show()
+        code = e.exit_code
+    if code not in (None, 0):
+        raise SystemExit(code)

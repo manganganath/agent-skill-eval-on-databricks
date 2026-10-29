@@ -128,7 +128,7 @@ def test_skill_eval_parameters_and_task_chain():
     tasks = {t["task_key"]: t for t in job["tasks"]}
     assert set(tasks) == {"eval", "sync"}
     assert tasks["sync"]["depends_on"] == [{"task_key": "eval"}]
-    assert tasks["eval"]["python_wheel_task"]["entry_point"] == "skillhub"
+    assert tasks["eval"]["python_wheel_task"]["entry_point"] == "skillhub-job"
     assert tasks["sync"]["python_wheel_task"]["parameters"][:2] == ["sync", "--run-key"]
 
 

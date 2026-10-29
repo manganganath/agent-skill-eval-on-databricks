@@ -1,9 +1,13 @@
 import json
+import sys
 from pathlib import Path
 
+import pytest
 from typer.testing import CliRunner
 
 from skillhub.cli import app
+
+ROOT = Path(__file__).resolve().parents[2]
 
 SRC = Path(__file__).resolve().parents[2] / "config" / "hub.yaml"
 
@@ -87,3 +91,37 @@ def test_eval_digests_prints_what_the_gates_expect_without_a_workspace(tmp_path,
     (b.root / "evals" / "evals.json").unlink()
     r = CliRunner().invoke(app, args)
     assert r.exit_code == 1 and "error: common/a:" in r.output
+
+
+# --- The Databricks Jobs entry point ---------------------------------------------------------------------------
+
+
+def test_job_main_returns_normally_on_success(monkeypatch):
+    """Serverless wheel tasks run under IPython and report SystemExit(0) as a failed task, so the Jobs entry
+    point must return normally when the command succeeds."""
+    from skillhub import cli
+
+    monkeypatch.setattr(sys, "argv", ["skillhub-job", "--help"])
+    assert cli.job_main() is None
+
+
+def test_job_main_still_fails_the_task_on_errors(monkeypatch):
+    from skillhub import cli
+
+    monkeypatch.setattr(sys, "argv", ["skillhub-job", "no-such-command"])
+    with pytest.raises(SystemExit) as e:
+        cli.job_main()
+    assert e.value.code not in (0, None)
+
+
+def test_every_job_task_uses_the_jobs_entry_point():
+    import yaml
+
+    jobs = yaml.safe_load((ROOT / "resources" / "jobs.yml").read_text())["resources"]["jobs"]
+    points = [
+        t["python_wheel_task"]["entry_point"]
+        for j in jobs.values()
+        for t in j["tasks"]
+        if "python_wheel_task" in t
+    ]
+    assert points and set(points) == {"skillhub-job"}
