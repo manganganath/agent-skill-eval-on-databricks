@@ -152,3 +152,14 @@ def test_candidates_is_not_a_department_key(tmp_path):
     p = _variant(tmp_path, "  operations:", "  candidates:")
     with pytest.raises(ConfigError, match="reserved"):
         load_config(p)
+
+
+def test_gating_modes_default_to_both_and_reject_unknown_or_empty():
+    from pydantic import ValidationError
+
+    from skillhub.config import Defaults
+
+    assert Defaults(models=["gpt"]).gating_modes == ["trigger", "effectiveness"]
+    for bad in ([], ["with_skill"]):
+        with pytest.raises(ValidationError):
+            Defaults(models=["gpt"], gating_modes=bad)

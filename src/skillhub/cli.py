@@ -1158,7 +1158,7 @@ def pr_comment_cmd(
             status = e.response.status_code if isinstance(e, httpx.HTTPStatusError) else type(e).__name__
             raise SkillHubError(f"GitHub API call failed ({status})") from None
     typer.echo(f"pr comment {action}")
-    raise typer.Exit(exit_code(blocking_verdicts(rows)))
+    raise typer.Exit(exit_code(blocking_verdicts(rows, cfg.defaults.gating_modes)))
 
 
 @app.command("check-verdict")
@@ -1223,7 +1223,7 @@ def check_verdict_cmd(
             rows = load_matrix_rows(sql.execute, cfg, key, trusted=trusted_run_authors(w))
         except ValueError as e:
             raise SkillHubError(str(e)) from None
-    verdicts = blocking_verdicts(rows)
+    verdicts = blocking_verdicts(rows, cfg.defaults.gating_modes)
     typer.echo(f"verdicts: {sorted(set(verdicts)) or 'none'}")
     missing = missing_skills(rows, [*_csv(skills), *expected])
     if missing:

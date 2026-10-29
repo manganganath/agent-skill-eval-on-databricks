@@ -471,3 +471,15 @@ def test_check_verdict_fails_when_a_planned_cell_has_no_row(cli_env, tmp_path):
     )
     state["rows"] = [row(), row(mode="with_skill")]
     assert _invoke(cfg_path, "check-verdict", "--run-key", "k", "--expect-file", str(path)).exit_code == 0
+
+
+def test_blocking_verdicts_skip_modes_outside_gating_modes_but_never_unknown_ones():
+    from skillhub.ci.pr_comment import blocking_verdicts, exit_code
+
+    rows = [row(), row(mode="with_skill", verdict="fail"), row(mode="without_skill", verdict="fail")]
+    assert blocking_verdicts(rows, ["trigger"]) == ["pass"]
+    assert blocking_verdicts(rows, ["trigger", "effectiveness"]) == ["pass", "fail"]
+    assert blocking_verdicts([row(mode="mystery", verdict="pass")], ["trigger"]) == ["pass"]  # fail closed
+    assert (
+        exit_code(blocking_verdicts([row(mode="with_skill", verdict="pass")], ["trigger"])) == 1
+    )  # nothing gated

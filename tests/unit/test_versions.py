@@ -256,6 +256,7 @@ def test_gate_refuses_content_that_changed_after_the_eval(reg, make_bundle):
 @pytest.mark.parametrize("verdict", ["fail", "inconclusive", None, "bogus"])
 @pytest.mark.parametrize("mode", ["trigger", "with_skill"])
 def test_gate_refuses_a_blocking_latest_verdict(reg, make_bundle, verdict, mode):
+    reg.cfg.defaults.gating_modes = ["trigger", "effectiveness"]
     cells = {"trigger": "pass", "with_skill": "pass"} | {mode: verdict}
     b = evaluated(reg, make_bundle("common", "audit-xls"), cells=tuple(cells.items()))
     with pytest.raises(PublishRefused, match=f"gpt/{mode}={verdict or 'none'}"):
@@ -460,3 +461,17 @@ def test_cli_publish_plans_the_cells_of_the_local_checkout(cli_reg, tmp_path):
     assert _REAL_LOCAL_CELLS(cli_reg.cfg, bundle) == ("gpt/trigger",)
     (root / "evals" / "evals.json").unlink()
     assert _REAL_LOCAL_CELLS(cli_reg.cfg, bundle) is None
+
+
+@pytest.mark.parametrize("verdict", ["fail", "inconclusive"])
+def test_gate_reports_but_does_not_block_on_a_mode_outside_gating_modes(reg, make_bundle, verdict):
+    reg.cfg.defaults.gating_modes = ["trigger"]
+    b = evaluated(
+        reg, make_bundle("common", "audit-xls"), cells=(("trigger", "pass"), ("with_skill", verdict))
+    )
+    _gate(reg, b)  # effectiveness is advisory: published on the trigger verdict alone
+    blocked = evaluated(
+        reg, make_bundle("common", "comps"), cells=(("trigger", "fail"), ("with_skill", "pass"))
+    )
+    with pytest.raises(PublishRefused, match="gpt/trigger=fail"):
+        _gate(reg, blocked)

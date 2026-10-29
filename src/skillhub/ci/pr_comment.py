@@ -11,7 +11,7 @@ from typing import Any
 
 import httpx
 
-from skillhub.evalspec import NO_RUBRIC
+from skillhub.evalspec import CASE_KIND, NO_RUBRIC, REQUEST_MODES
 from skillhub.naming import evals_schema
 
 MARKER = "<!-- skillhub:pr-comment -->"
@@ -61,12 +61,19 @@ def _gating(r: dict[str, Any]) -> bool:
     return r.get("mode") != "without_skill"
 
 
-def blocking_verdicts(rows: list[dict[str, Any]]) -> list[str]:
-    """Verdicts that decide the exit code. `without_skill` rows are the baseline and are ignored.
+def blocking_verdicts(rows: list[dict[str, Any]], gating_modes: Iterable[str] = REQUEST_MODES) -> list[str]:
+    """Verdicts that decide the exit code. `without_skill` rows are the baseline and are ignored, and so are
+    rows of a request mode left out of `gating_modes` (reported, not blocking).
 
-    A NULL verdict, or a row with no mode, becomes "" so that `exit_code` blocks on it.
+    A NULL verdict, or a row with no mode or an unknown one, becomes or stays a blocker (fail closed).
     """
-    return [(r.get("verdict") or "") if r.get("mode") else "" for r in rows if _gating(r)]
+    kinds = set(gating_modes)
+
+    def counts(r: dict[str, Any]) -> bool:
+        kind = CASE_KIND.get(r.get("mode") or "")
+        return kind is None or kind in kinds
+
+    return [(r.get("verdict") or "") if r.get("mode") else "" for r in rows if _gating(r) and counts(r)]
 
 
 def _ref(r: dict[str, Any]) -> str:
