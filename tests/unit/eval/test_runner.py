@@ -283,7 +283,10 @@ def wired(tmp_path, monkeypatch):
         state["evaluated"].append((run_id, sorted(row["inputs"]["case_id"] for row in data)))
         state["rows"].append((run_id, list(data)))
         state["env"].append(
-            {k: os.environ.get(k) for k in (runner.SKIP_TRACE_VALIDATION, runner.MAX_SCORER_WORKERS)}
+            {
+                k: os.environ.get(k)
+                for k in (runner.SKIP_TRACE_VALIDATION, runner.MAX_WORKERS, runner.MAX_SCORER_WORKERS)
+            }
         )
         for row in data:
             predict_fn(**row["inputs"])
@@ -366,14 +369,20 @@ def test_each_mode_runs_only_its_kind_of_case(wired):
     summary = run_eval(CFG, request())
     mode_of = {c.run_id: c.mode for c in summary.children}
     for run_id, ids in wired["evaluated"]:
-        assert ids == ([1, 2] if mode_of[run_id] == "trigger" else [101, 102])
+        assert ids == sorted(([1, 2] if mode_of[run_id] == "trigger" else [101, 102]) * REPEATS)
     assert set(wired["expected"]) == {2 * REPEATS}  # records of the mode x repeats
     assert all(c.metrics["n_cases"] == 2 for c in summary.children)
 
 
-def test_repeats_drive_one_evaluate_call_per_repeat(wired):
-    run_eval(CFG, request())
-    assert wired["evaluate_calls"] == 6 * REPEATS
+def test_one_evaluate_per_child_run_holds_each_record_once_per_repeat(wired):
+    """Two evaluate calls at once in a process deadlocked MLflow, so the repeats share one evaluate."""
+    summary = run_eval(CFG, request())
+    assert wired["evaluate_calls"] == 6
+    cases = {c.id: c for c in CASES}
+    for run_id, rows in wired["rows"]:
+        skill = next(c.skill for c in summary.children if c.run_id == run_id)
+        once = sorted({r["inputs"]["case_id"] for r in rows})
+        assert rows == [record(cases[cid], skill) for cid in once] * REPEATS  # plain records, no repeat input
 
 
 def test_children_verdicts_are_logged_and_tagged_with_parent_and_run_key(wired):
@@ -514,7 +523,7 @@ def test_repeats_run_inside_one_child_run(wired):
     summary = run_eval(CFG, request())
     counts = Counter(wired["eval_runs"])
     assert set(counts) == {c.run_id for c in summary.children}  # evaluate ran inside each child's active run
-    assert set(counts.values()) == {REPEATS}
+    assert set(counts.values()) == {1}
 
 
 def test_child_runs_log_repeats_and_per_trace_tags(wired):
@@ -939,10 +948,17 @@ def test_pins_on_one_name_in_two_departments_both_reach_stage(wired, monkeypatch
 def test_evaluate_runs_with_bounded_judges_and_restores_the_environment(wired, monkeypatch):
     monkeypatch.delenv(runner.MAX_SCORER_WORKERS, raising=False)
     run_eval(CFG, request(skills=["audit-xls"]))
-    assert {(e[runner.SKIP_TRACE_VALIDATION], e[runner.MAX_SCORER_WORKERS]) for e in wired["env"]} == {
-        ("true", "2")
-    }
-    assert runner.MAX_SCORER_WORKERS not in os.environ and runner.SKIP_TRACE_VALIDATION not in os.environ
+    monkeypatch.delenv(runner.MAX_WORKERS, raising=False)
+    run_eval(CFG, request(skills=["audit-xls"]))
+    assert {
+        (e[runner.SKIP_TRACE_VALIDATION], e[runner.MAX_WORKERS], e[runner.MAX_SCORER_WORKERS])
+        for e in wired["env"]
+    } == {("true", "2", "2")}
+    for k in (runner.MAX_WORKERS, runner.MAX_SCORER_WORKERS, runner.SKIP_TRACE_VALIDATION):
+        assert k not in os.environ
+    monkeypatch.setattr(CFG.defaults, "concurrency_per_endpoint", 15)
+    run_eval(CFG, request(skills=["audit-xls"]))
+    assert (wired["env"][-1][runner.MAX_WORKERS], wired["env"][-1][runner.MAX_SCORER_WORKERS]) == ("15", "4")
     monkeypatch.setenv(runner.MAX_SCORER_WORKERS, "5")  # an operator's own setting is kept
     run_eval(CFG, request(skills=["audit-xls"]))
     assert wired["env"][-1][runner.MAX_SCORER_WORKERS] == "5"
@@ -997,7 +1013,7 @@ def test_predict_tags_the_trace_before_any_call_that_can_fail(tmp_path):
 
     case = EvalCase(id=7, prompt="p", should_trigger=True, reviewed=False)
     predict = runner._predict_fn(
-        _ctx(tmp_path, case), Down(), "with_skill", 1, threading.BoundedSemaphore(1), None
+        _ctx(tmp_path, case), Down(), "with_skill", threading.BoundedSemaphore(1), None
     )
     with mlflow.start_run() as run:
         with pytest.raises(RuntimeError, match="endpoint down"):
@@ -1005,7 +1021,7 @@ def test_predict_tags_the_trace_before_any_call_that_can_fail(tmp_path):
     trace = _only_trace(run.info.run_id)
     assert {k: trace.info.tags[k] for k in ("case_id", "repeat", "mode", "reviewed")} == {
         "case_id": "7",
-        "repeat": "1",
+        "repeat": "0",
         "mode": "with_skill",
         "reviewed": "false",
     }
@@ -1023,7 +1039,7 @@ def test_agent_error_is_a_model_fail_recorded_on_the_trace(tmp_path):
     case = EvalCase(id=8, prompt="p", should_trigger=True)
     model = FakeModelClient([loop] * runner.MAX_TURNS)
     predict = runner._predict_fn(
-        _ctx(tmp_path, case), model, "without_skill", 0, threading.BoundedSemaphore(1), None
+        _ctx(tmp_path, case), model, "without_skill", threading.BoundedSemaphore(1), None
     )
     with mlflow.start_run() as run:
         assert predict(prompt="p", case_id=8) == ""
@@ -1156,7 +1172,7 @@ def test_a_stale_expected_skill_in_the_dataset_never_turns_a_false_trigger_into_
     assert trig.verdict == "warn"
     assert trig.metrics["precision"] == pytest.approx(0.5) and trig.metrics["accuracy"] == pytest.approx(0.5)
     evaluated = next(rows for run_id, rows in wired["rows"] if run_id == trig.run_id)
-    assert [r["expectations"]["expected_skill"] for r in evaluated] == ["earnings-preview", ""]
+    assert [r["expectations"]["expected_skill"] for r in evaluated] == ["earnings-preview", ""] * REPEATS
 
 
 def test_a_trigger_assessment_without_invoked_skill_is_an_error_not_a_pass(wired):
@@ -1177,7 +1193,7 @@ def test_a_reviewed_case_without_a_dataset_row_is_an_error_in_its_cells(wired, c
     with caplog.at_level("WARNING"):
         summary = run_eval(CFG, request(skills=["earnings-preview"], modes=["trigger"]))
     trig = child(summary, "earnings-preview", "trigger")
-    assert next(ids for run_id, ids in wired["evaluated"] if run_id == trig.run_id) == [1]
+    assert next(ids for run_id, ids in wired["evaluated"] if run_id == trig.run_id) == [1] * REPEATS
     assert trig.metrics["n_cases"] == 2 and trig.metrics["error_rate"] == pytest.approx(0.5)
     assert trig.verdict == "inconclusive"
     assert "trigger case 2 has no row in the eval dataset" in caplog.text
@@ -1755,94 +1771,64 @@ def test_set_experiment_runs_once_per_skill(wired, monkeypatch):
     assert all(main for main, _ in calls)
 
 
-def _terminations(monkeypatch):
-    """(set by the main thread, status) per run, in call order."""
-    real = MlflowClient.set_terminated
-    seen: dict[str, list[tuple[bool, str]]] = {}
+def test_the_predict_counter_gives_each_case_every_repeat_once_even_from_many_threads(tmp_path, monkeypatch):
+    from concurrent.futures import ThreadPoolExecutor
 
-    def spy(self, run_id, status=None, end_time=None):
-        seen.setdefault(run_id, []).append((threading.current_thread() is threading.main_thread(), status))
-        return real(self, run_id, status, end_time)
+    from mlflow.pyfunc.context import Context, set_prediction_context
 
-    monkeypatch.setattr(MlflowClient, "set_terminated", spy)
-    return seen
-
-
-def _repeat_of(monkeypatch):
-    """The repeat each predict_fn was built for."""
-    real = runner._predict_fn
-    repeat_of = {}
-
-    def spy(ctx, client, mode, repeat, sem, skills):
-        fn = real(ctx, client, mode, repeat, sem, skills)
-        repeat_of[id(fn)] = repeat
-        return fn
-
-    monkeypatch.setattr(runner, "_predict_fn", spy)
-    return repeat_of
-
-
-def test_the_repeats_of_a_child_run_at_once_each_with_the_child_run_active(wired, monkeypatch):
-    inner = mlflow.genai.evaluate
-    together = threading.Barrier(REPEATS)
-    seen = []
-
-    def evaluate(data, predict_fn, scorers):
-        together.wait(timeout=10)  # breaks unless every repeat is evaluating at the same time
-        seen.append((threading.current_thread() is threading.main_thread(), mlflow.active_run().info.run_id))
-        return inner(data=data, predict_fn=predict_fn, scorers=scorers)
-
-    monkeypatch.setattr(mlflow.genai, "evaluate", evaluate)
-    ends = _terminations(monkeypatch)
-    summary = run_eval(CFG, request(skills=["earnings-preview"]))
-    assert not summary.errors and len(summary.children) == 3
-    for c in summary.children:
-        assert [main for main, run_id in seen if run_id == c.run_id] == [False] * REPEATS
-        mine = ends[c.run_id]
-        assert [m for m, _ in mine].count(True) == 1 and mine[-1] == (True, "FINISHED")  # set last, once
-        assert MlflowClient().get_run(c.run_id).info.status == "FINISHED"
-
-
-def test_one_failing_repeat_fails_the_child_as_before(wired, monkeypatch, tmp_path):
-    inner = mlflow.genai.evaluate
-    repeat_of = _repeat_of(monkeypatch)
-
-    def evaluate(data, predict_fn, scorers):
-        if repeat_of[id(predict_fn)] == 1:
-            raise RuntimeError("judge endpoint down")
-        return inner(data=data, predict_fn=predict_fn, scorers=scorers)
-
-    monkeypatch.setattr(mlflow.genai, "evaluate", evaluate)
-    ends = _terminations(monkeypatch)
-    summary = run_eval(CFG, request(skills=["earnings-preview"], modes=["trigger"]))
-    [c] = summary.children
-    [e] = summary.errors
-    assert (e.message, e.run_id, e.mode, c.verdict) == (
-        "RuntimeError: judge endpoint down",
-        c.run_id,
-        "trigger",
-        "inconclusive",
+    cases = {c.id: c for c in CASES}
+    ctx = SimpleNamespace(
+        cases=cases, names=ToolNameMap(), fixtures=FixtureStore(tmp_path), system_prompt="sys"
     )
-    run = MlflowClient().get_run(c.run_id)
-    assert (run.info.status, run.data.tags["error"]) == ("FAILED", "RuntimeError: judge endpoint down")
-    assert ends[c.run_id][-1] == (True, "FAILED")
+    tags = []
+    monkeypatch.setattr(runner, "_tag_current_trace", lambda t: tags.append(t) if "repeat" in t else None)
+
+    def agent(case, **kw):
+        time.sleep(0.001)  # let the threads interleave
+        return SimpleNamespace(final_text="ok", error=None)
+
+    monkeypatch.setattr(runner, "run_agent", agent)
+    predict = runner._predict_fn(ctx, None, "trigger", threading.BoundedSemaphore(8), None)
+    repeats = 5
+    rows = [(i, c) for i, c in enumerate([c.id for c in CASES] * repeats)]
+
+    def row(item):
+        i, cid = item
+        with set_prediction_context(Context(request_id=f"row-{i}", is_evaluate=True)):
+            predict(prompt=cases[cid].prompt, case_id=cid)
+            if i % 3 == 0:  # MLflow re-runs a rate-limited row: the retry keeps its repeat
+                predict(prompt=cases[cid].prompt, case_id=cid)
+
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        list(pool.map(row, rows))
+    got = Counter((int(t["case_id"]), int(t["repeat"])) for t in tags)
+    retried = Counter(cid for i, cid in rows if i % 3 == 0)
+    assert set(got) == {(cid, r) for cid in cases for r in range(repeats)}
+    assert sum(got.values()) == len(rows) + sum(retried.values())
 
 
-def test_the_first_failing_repeat_is_the_error_whichever_fails_first(wired, monkeypatch):
-    repeat_of = _repeat_of(monkeypatch)
-    second_failed = threading.Event()
+def test_a_single_repeat_evaluates_the_dataset_object_itself(wired, monkeypatch):
+    class Dataset(list):
+        """Stands in for an EvaluationDataset: its identity carries the lineage."""
+
+    ds = Dataset(record(c) for c in TRIGGER)  # every row is current, so the trigger mode keeps the object
+    wired["dataset"] = ds
+    inner = mlflow.genai.evaluate
+    got = []
 
     def evaluate(data, predict_fn, scorers):
-        repeat = repeat_of[id(predict_fn)]
-        if repeat == 0:
-            second_failed.wait(timeout=10)
-        else:
-            second_failed.set()
-        raise RuntimeError(f"repeat {repeat} failed")
+        got.append(data)
+        return inner(data=data, predict_fn=predict_fn, scorers=scorers)
 
     monkeypatch.setattr(mlflow.genai, "evaluate", evaluate)
-    summary = run_eval(CFG, request(skills=["earnings-preview"], modes=["trigger"]))
-    assert [e.message for e in summary.errors] == ["RuntimeError: repeat 0 failed"]
+    monkeypatch.setattr(CFG.defaults, "repeats", 1)
+    run_eval(CFG, request(skills=["earnings-preview"], modes=["trigger"]))
+    assert len(got) == 1 and got[0] is ds
+    monkeypatch.setattr(CFG.defaults, "repeats", REPEATS)
+    got.clear()
+    run_eval(CFG, request(skills=["earnings-preview"], modes=["trigger"]))
+    [batched] = got
+    assert type(batched) is list and len(batched) == 2 * REPEATS
 
 
 # --- skills in worker processes ------------------------------------------------------------------------------

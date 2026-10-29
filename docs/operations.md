@@ -186,10 +186,10 @@ Verdicts: `inconclusive` means infrastructure failed or too many votes were miss
 
 `config/hub.yaml` sets how much one eval run does at once:
 
-- `defaults.skill_workers` (8): skills evaluated at once, each in its own worker process. A worker uses about 290 MB of memory at start.
-- `defaults.concurrency_per_endpoint` (15): agent runs at once per serving endpoint, in each worker. One skill's 3 repeats of 5 effectiveness cases run at once.
+- `defaults.skill_workers` (10): skills evaluated at once, each in its own worker process. A worker peaks at about 400 to 500 MB of memory.
+- `defaults.concurrency_per_endpoint` (15): agent runs at once per serving endpoint, in each worker. A child run's 3 repeats of 5 effectiveness cases are 15 records of one `evaluate`. Each case runs at most 4 judges at once.
 
-Each skill is isolated in its own process because MLflow keeps tracing state per process (see Evaluation method in the architecture document). Inside a worker, one child run runs at a time; its repeats run at once. Each skill starts on a different model of its list, so the workers spread over the endpoints. Lower either value if endpoints answer 429 often; the model client retries with backoff. `skill_workers: 1` evaluates the skills one after another in the Job's own process. Several `skill-eval` runs can run at the same time (`max_concurrent_runs: 4`), and each adds its own load.
+Each skill is isolated in its own process because MLflow keeps tracing state per process (see Evaluation method in the architecture document). Inside a worker, one child run and one `evaluate` call run at a time; that call holds all the repeats. Two `evaluate` calls at once in one process deadlocked inside MLflow. Each skill starts on a different model of its list, so the workers spread over the endpoints. Lower either value if endpoints answer 429 often; the model client retries with backoff. `skill_workers: 1` evaluates the skills one after another in the Job's own process. Several `skill-eval` runs can run at the same time (`max_concurrent_runs: 4`), and each adds its own load.
 
 A worker's log lines appear in the Job output, prefixed with `[dept/skill]`. A worker that crashes is recorded as an error of its skill (`evaluation worker failed: ...` with the end of its log), and the other skills carry on. In a serverless Job, the runtime credentials do not reach a child process, so each worker gets the workspace host and a token of the Job's identity in its environment. CI waits up to 5 hours for the eval Job.
 

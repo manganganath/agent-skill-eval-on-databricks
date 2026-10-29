@@ -15,11 +15,13 @@ The run schemas are dropped in `finally`. `sync` copies the verdict tag, so it c
   `error` tag, so sync completes and the gate blocks (fail closed).
 - The model sees production names only: the `ToolNameMap` rewrite covers every staged FQN of the scope.
 - Up to `defaults.skill_workers` skills run at once, each in its own worker process (`skillhub.eval.worker`).
-  In a process, child runs run one at a time; the repeats of a child run run at once. Results keep plan order.
+  In a process, child runs run one at a time, each with one `evaluate` over all its repeats. Results keep plan
+  order.
 """
 
 from __future__ import annotations
 
+import copy
 import dataclasses
 import hashlib
 import importlib
@@ -47,6 +49,7 @@ import mlflow
 import mlflow.openai
 from mlflow import MlflowClient
 from mlflow.entities import SpanType
+from mlflow.pyfunc.context import get_prediction_context
 
 from skillhub import SkillHubError, evalspec
 from skillhub.agent.fixtures import FixtureStore
@@ -111,7 +114,10 @@ TRACE_POLL_S = 5
 TRACE_STALL_S = 60  # how long the trace count may stay unchanged after the evaluation returns
 ERROR_MAX = 500  # characters kept of an error message on a run tag or in the summary
 SKIP_TRACE_VALIDATION = "MLFLOW_GENAI_EVAL_SKIP_TRACE_VALIDATION"
+MAX_WORKERS = "MLFLOW_GENAI_EVAL_MAX_WORKERS"  # the predict pool of one evaluate
 MAX_SCORER_WORKERS = "MLFLOW_GENAI_EVAL_MAX_SCORER_WORKERS"
+# Judges at once per case. It multiplies with the predict workers, so it stays small.
+SCORER_WORKERS = 4
 TRIGGER = "skill_trigger"
 PLANTED = "planted_bugs_found"
 _YES = frozenset({"yes", "true", "pass"})
@@ -288,18 +294,21 @@ def read_child_traces(
 
 
 @contextmanager
-def _evaluating(scorer_workers: int) -> Iterator[None]:
+def _evaluating(concurrency: int) -> Iterator[None]:
     """Settings for `mlflow.genai.evaluate`, restored afterwards.
 
     - `predict` is already traced, so MLflow's trace-validation call (one extra prediction) is skipped.
-    - Each case runs at most `scorer_workers` judges at a time (`concurrency_per_endpoint`), unless the
-      environment sets MLFLOW_GENAI_EVAL_MAX_SCORER_WORKERS. MLflow's scorer rate limit is in calls per
-      second, not a concurrency, so it keeps its adaptive default (it backs off on 429).
+    - One evaluate predicts up to `concurrency` (`concurrency_per_endpoint`) records at once, and each case
+      runs at most min(`concurrency`, SCORER_WORKERS) judges at a time, unless the environment sets
+      MLFLOW_GENAI_EVAL_MAX_WORKERS or MLFLOW_GENAI_EVAL_MAX_SCORER_WORKERS. MLflow's scorer rate limit is in
+      calls per second, not a concurrency, so it keeps its adaptive default (it backs off on 429).
     - MLflow prints a banner per `evaluate`; it goes to stderr so stdout stays the RunSummary JSON.
     """
     env = {SKIP_TRACE_VALIDATION: "true"}
+    if MAX_WORKERS not in os.environ:
+        env[MAX_WORKERS] = str(concurrency)
     if MAX_SCORER_WORKERS not in os.environ:
-        env[MAX_SCORER_WORKERS] = str(scorer_workers)
+        env[MAX_SCORER_WORKERS] = str(min(concurrency, SCORER_WORKERS))
     prev = {k: os.environ.get(k) for k in env}
     os.environ.update(env)
     try:
@@ -491,6 +500,7 @@ class _ModeData:
     case_ids: list[int]  # the cases that are evaluated
     n_records: int
     missing_ids: list[int] = field(default_factory=list)  # cases of this kind with no dataset row: errors
+    records: list[dict] = field(default_factory=list)  # the records rebuilt from evals.json, one per case
 
 
 @dataclass
@@ -1126,16 +1136,50 @@ def _mode_data(ds, cases: dict[int, EvalCase], kind: str, skill: str, label: str
     records = [keep[cid] for cid in sorted(keep)]
     whole = len(records) == len(rows) and not stale
     return _ModeData(
-        data=ds if whole else records, case_ids=sorted(keep), n_records=len(records), missing_ids=missing
+        data=ds if whole else records,
+        case_ids=sorted(keep),
+        n_records=len(records),
+        missing_ids=missing,
+        records=records,
     )
 
 
-def _predict_fn(ctx, client, mode: str, repeat: int, sem, skills):
+def _repeated(md: _ModeData, repeats: int) -> object:
+    """What the child run's one `evaluate` gets: each record `repeats` times.
+
+    Two evaluate calls at once in one process deadlocked inside MLflow (seen live), and one after another is
+    slow, so the repeats share one evaluate. With more than one repeat the records are plain dicts, which gives
+    up the dataset lineage that a single repeat over the dataset object keeps."""
+    if repeats == 1:
+        return md.data
+    return [copy.deepcopy(r) for _ in range(repeats) for r in md.records]
+
+
+def _predict_fn(ctx, client, mode: str, sem, skills):
+    """`predict` for one evaluate over every repeat. Each call of a case takes that case's next repeat number,
+    so each case gets 0..repeats-1 once; `repeat` is not an input, because the judges and sync read the inputs.
+    MLflow re-runs a rate-limited record under the same prediction context, so a retry keeps its number."""
     trigger = mode == "trigger"
+    lock = threading.Lock()
+    handed: dict[int, int] = {}  # case_id -> repeats handed out
+    by_record: dict[str, int] = {}  # evaluate's request ID of a record -> its repeat
+
+    def next_repeat(case_id: int) -> int:
+        pc = get_prediction_context()
+        record = pc.request_id if pc is not None else None
+        with lock:  # evaluate calls predict from its worker threads
+            if record is not None and record in by_record:
+                return by_record[record]
+            repeat = handed.get(case_id, 0)
+            handed[case_id] = repeat + 1
+            if record is not None:
+                by_record[record] = repeat
+            return repeat
 
     @mlflow.trace(name="eval_case", span_type=SpanType.CHAIN)
     def predict(prompt: str, case_id: int) -> str:
         case = ctx.cases[int(case_id)]  # the runner resolves each case from evals.json by case_id
+        repeat = next_repeat(case.id)
         # Tag first, before any model or tool call that can fail, so an errored trace still has them.
         _tag_current_trace(
             {
@@ -1179,31 +1223,6 @@ def _open_skills(ctx: _SkillCtx) -> _CachedSkills:
     except Exception as e:  # the server URL holds the staged schema
         raise RuntimeError(ctx.names.to_production(f"skills server: {type(e).__name__}: {e}")) from None
     return _CachedSkills(bridge, ctx.names)
-
-
-def _evaluate_repeats(run_id: str, repeats: int, evaluate: Callable[[int], object]) -> None:
-    """`evaluate(repeat)` for every repeat at once, each in its own thread with the child run active there.
-
-    Repeats of one child run may run at once; two child runs in one process may not. MLflow links a new trace
-    to the newest active run of any thread (`SOURCE_RUN`), and `mlflow.genai.evaluate` keeps one evaluation
-    context per process and sets its run ID. Two child runs active at once would take each other's traces;
-    the repeats all belong to one run in one experiment, so both lookups still find it.
-
-    Each thread's `with` ends the run as it leaves; the caller sets the final status after every repeat. The
-    first failing repeat raises, as a loop over the repeats would have."""
-
-    def one(repeat: int) -> None:
-        with mlflow.start_run(run_id=run_id):  # the active run is per thread
-            evaluate(repeat)
-
-    pool = ThreadPoolExecutor(max_workers=repeats, thread_name_prefix="repeat")
-    futures = [pool.submit(one, r) for r in range(repeats)]
-    try:
-        _wait_all(futures)
-    finally:
-        pool.shutdown(wait=False, cancel_futures=True)
-    for f in futures:
-        f.result()
 
 
 def _fail_child(run_id: str, message: str) -> VerdictResult:
@@ -1281,14 +1300,10 @@ def _run_child(ctx: _SkillCtx, client, profile: str, mode: str, without_scores: 
         if mode != "trigger" and ctx.rubric is not None and ctx.rubric.source_hash != ctx.skill.content_hash:
             mlflow.set_tag("rubric_stale", "true")  # The rubric was generated from other skill content
         sem = _endpoint_semaphore(endpoint, cfg.defaults.concurrency_per_endpoint)
-        _evaluate_repeats(  # one evaluate per repeat, over the same data
-            run_id,
-            repeats,
-            lambda repeat: mlflow.genai.evaluate(
-                data=md.data,
-                predict_fn=_predict_fn(ctx, client, mode, repeat, sem, skills),
-                scorers=scorers,
-            ),
+        mlflow.genai.evaluate(  # one evaluate over every repeat; never two at once in a process
+            data=_repeated(md, repeats),
+            predict_fn=_predict_fn(ctx, client, mode, sem, skills),
+            scorers=scorers,
         )
         traces = read_child_traces(
             ctx.exp_id,
@@ -1332,7 +1347,7 @@ def _run_child(ctx: _SkillCtx, client, profile: str, mode: str, without_scores: 
                 skills.close()
             except Exception:
                 log.warning("could not close the skills bridge of run %s", run_id, exc_info=True)
-        mlflow.end_run(status)  # after every repeat thread ended the run: this status is the final one
+        mlflow.end_run(status)
     if ctx.rubric is not None:  # Once per child run, after the verdict
         try:
             record_rubric(cfg, ctx.sql, ctx.scope.dept, ctx.rubric)
