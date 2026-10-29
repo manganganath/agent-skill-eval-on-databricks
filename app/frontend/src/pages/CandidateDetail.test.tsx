@@ -1,4 +1,4 @@
-import { render, screen, within } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import CandidateDetail from "./CandidateDetail";
@@ -7,7 +7,7 @@ import type { CandidateDetail as CandidateDetailT } from "../api/types";
 
 vi.mock("../api/client", async (orig) => {
   const real = await orig<typeof import("../api/client")>();
-  return { ...real, api: { ...real.api, candidate: vi.fn(), me: vi.fn() } };
+  return { ...real, api: { ...real.api, candidate: vi.fn(), me: vi.fn(), config: vi.fn(), tryCandidate: vi.fn() } };
 });
 
 const KEY = "pr5_c7ecd3e_a1";
@@ -43,6 +43,14 @@ const detail: CandidateDetailT = {
 
 beforeEach(() => {
   vi.mocked(api.candidate).mockReset();
+  vi.mocked(api.config).mockResolvedValue({
+    models: { "claude-sonnet": "frontier" }, departments: ["common"], workspace_url: "https://ws.example.test",
+  });
+  vi.mocked(api.tryCandidate).mockReset();
+  vi.mocked(api.tryCandidate).mockResolvedValue([
+    { model: "claude-sonnet", with_skill: { text: "draft", invoked: true }, without_skill: { text: "plain" },
+      trace_url: null },
+  ]);
   vi.mocked(api.me).mockResolvedValue({ user: "ana@example.com", groups: [], is_reviewer: false, is_author: true });
 });
 
@@ -121,5 +129,30 @@ describe("CandidateDetail for a draft", () => {
     expect(screen.getByRole("link", { name: /run eval/i })).toHaveAttribute(
       "href", `/run?candidate=${DRAFT}&skill=common%2Fnew-skill`,
     );
+  });
+});
+
+describe("CandidateDetail try panel", () => {
+  it("offers Try after the files and runs the candidate at its own path", async () => {
+    vi.mocked(api.candidate).mockResolvedValue(detail);
+    renderAt();
+    const heading = await screen.findByRole("heading", { name: "Try this skill" });
+    expect(heading.compareDocumentPosition(screen.getByRole("list", { name: /files/i }))
+      & Node.DOCUMENT_POSITION_PRECEDING).toBeTruthy();
+    fireEvent.change(screen.getByLabelText(/test input/i), { target: { value: "draft the note" } });
+    fireEvent.click(screen.getByRole("checkbox", { name: "claude-sonnet" }));
+    fireEvent.click(screen.getByRole("button", { name: /try skill/i }));
+    await waitFor(() => expect(api.tryCandidate).toHaveBeenCalledWith(KEY, "common", "new-skill", {
+      prompt: "draft the note", models: ["claude-sonnet"],
+    }));
+  });
+
+  it("offers Try on a draft too", async () => {
+    vi.mocked(api.candidate).mockResolvedValue({
+      ...detail, rubric: null,
+      candidate: { ...detail.candidate, kind: "draft", pr_number: null, run_key: "draft_6720a1b2c3d4e5f6a7b8c9d0" },
+    });
+    renderAt("/candidates/draft_6720a1b2c3d4e5f6a7b8c9d0/common/new-skill");
+    expect(await screen.findByRole("heading", { name: "Try this skill" })).toBeTruthy();
   });
 });

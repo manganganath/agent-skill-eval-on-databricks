@@ -7,9 +7,13 @@ import { Loading } from "./Loading";
 
 const MAX_MODELS = 3;
 const MAX_PROMPT = 4000;
+const CANDIDATE_INTRO = "Runs as you. The agent sees this upload in place of the live version, next to the live skills you can use. Nobody else can load it. Pick up to 3 models. Answers are shown as plain text.";
+
+// A live skill, or a skill under review (a candidate) that is staged for the run only.
+export type TryTarget = { fqn: string } | { runKey: string; dept: string; skill: string };
 
 // Answers are model output: they are shown as React text only, never as HTML or Markdown.
-export function TryPanel({ fqn, evalAccess }: { fqn: string; evalAccess: EvalAccess }) {
+export function TryPanel({ target, evalAccess }: { target: TryTarget; evalAccess: EvalAccess }) {
   const config = useAsync<AppConfig>(() => api.config(), []);
   const [prompt, setPrompt] = useState("");
   const [models, setModels] = useState<string[]>([]);
@@ -27,7 +31,9 @@ export function TryPanel({ fqn, evalAccess }: { fqn: string; evalAccess: EvalAcc
     setError(null);
     setResults(null);
     try {
-      const out = await api.tryPrompt({ fqn, prompt, models });
+      const out = "fqn" in target
+        ? await api.tryPrompt({ fqn: target.fqn, prompt, models })
+        : await api.tryCandidate(target.runKey, target.dept, target.skill, { prompt, models });
       if (mounted.current) setResults(out);
     } catch (err) {
       if (mounted.current) setError(err);
@@ -47,7 +53,9 @@ export function TryPanel({ fqn, evalAccess }: { fqn: string; evalAccess: EvalAcc
     <section aria-labelledby="try-heading">
       <h2 id="try-heading">Try this skill</h2>
       <p className="muted">
-        Runs as you, so you only get the skills you can use. Pick up to {MAX_MODELS} models. Answers are shown as plain text.
+        {"fqn" in target
+          ? `Runs as you, so you only get the skills you can use. Pick up to ${MAX_MODELS} models. Answers are shown as plain text.`
+          : CANDIDATE_INTRO}
       </p>
       <div className="field">
         <label htmlFor="try-prompt">Test input</label>

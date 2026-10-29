@@ -1,6 +1,6 @@
 import type {
   AppConfig, CandidateDetail, CandidateSummary, CaseRow, DraftIn, DraftOut, EvalRunIn, EvalRunOut, EvalRunStatus,
-  JournalRow, MatrixRow, Me, SkillDetail, SkillSummary, SwitchOut, TryIn, TryModelResult,
+  JournalRow, MatrixRow, Me, SkillDetail, SkillSummary, SwitchOut, TryCandidateIn, TryIn, TryModelResult,
 } from "./types";
 
 // `errors` carries the plain-language problems of a refused draft upload (reason draft_invalid).
@@ -107,4 +107,7 @@ export const api = {
     request<SwitchOut>(`/skills/${enc(fqn)}/switch`, { method: "POST", body: JSON.stringify({ to_version: toVersion }) }),
   tryPrompt: (body: TryIn) =>
     request<TryModelResult[]>("/try", { method: "POST", body: JSON.stringify(body) }),
+  tryCandidate: (runKey: string, dept: string, name: string, body: TryCandidateIn) =>
+    request<TryModelResult[]>(`/candidates/${enc(runKey)}/${enc(dept)}/${enc(name)}/try`,
+      { method: "POST", body: JSON.stringify(body) }),
 };

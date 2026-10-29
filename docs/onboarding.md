@@ -37,6 +37,8 @@ A new or changed skill can be evaluated before it is released: in its pull reque
 
 A Skill Hub run gets its own run key (`<candidate run key>_h<8 hex digits>`) and `trigger_source` `manual`, so it never changes the pull request's gate. Its results appear on the candidate's page next to the pull request's own eval. To change the skill or its cases, push to the pull request; the next upload replaces the candidate.
 
+**Try it.** On a candidate's or draft's page, **Try this skill** runs the upload as you, in place of the live version, and nobody else can load it.
+
 Who sees a candidate: reviewers see every department. An author sees a candidate only in a department whose live skills they can read, and always sees their own drafts. Everyone else sees no candidates. The nightly cleanup removes a candidate or draft folder 7 days after its upload.
 
 **As a draft.** To try a skill before you open a pull request:

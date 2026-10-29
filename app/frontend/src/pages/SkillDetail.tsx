@@ -132,7 +132,7 @@ export default function SkillDetail() {
       <FilesSection files={s.files} />
 
       <div className="panel">
-        <TryPanel fqn={s.fqn} evalAccess={s.eval_access} />
+        <TryPanel target={{ fqn: s.fqn }} evalAccess={s.eval_access} />
       </div>
 
       <VersionHistory fqn={fqn} />
