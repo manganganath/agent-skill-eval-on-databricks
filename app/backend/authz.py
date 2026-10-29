@@ -75,6 +75,7 @@ class Reason(StrEnum):
     TOO_MANY_MODELS = "too_many_models"
     TRY_BUSY = "try_busy"
     TRY_TIMEOUT = "try_timeout"
+    TRY_SETUP_REQUIRED = "try_setup_required"
     PROMPT_TOO_LONG = "prompt_too_long"
     NOT_AUTHOR = "not_author"
     CANDIDATE_NOT_FOUND = "candidate_not_found"
