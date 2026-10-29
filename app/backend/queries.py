@@ -146,3 +146,92 @@ def candidate_runs_sql(
         f"ORDER BY started_at DESC, run_id LIMIT {_FETCH}"
     )
     return sql, params
+
+
+# The Dashboard's aggregates. A verdict counts every matrix row but the baseline (without_skill), which only the
+# uplift is measured against.
+_GATING = "mode <> 'without_skill'"
+DASHBOARD_WINDOW = "INTERVAL 30 DAYS"
+
+
+def _run_trend_sql(runs: str, mode: str, column: str) -> tuple[str, dict[str, object]]:
+    """Child runs of one mode, averaged per day, skill, version and model over the last 30 days."""
+    day = "CAST(started_at AS DATE)"
+    sql = (
+        f"SELECT skill, skill_version, model_profile, {day} AS day, AVG({column}) AS {column}, COUNT(*) AS runs "
+        f"FROM {runs} WHERE parent_run_id IS NOT NULL AND mode = :mode "
+        f"AND started_at >= current_timestamp() - {DASHBOARD_WINDOW} "
+        f"GROUP BY skill, skill_version, model_profile, {day}"
+    )
+    return sql, {"mode": mode}
+
+
+def dashboard_sql(cfg: HubConfig, dept: str) -> dict[str, tuple[str, dict[str, object]]]:
+    """The statements the Dashboard runs on one department's eval tables. Each returns a small result: counts, sums
+    and means. `journal` names the live versions; the route does not return it."""
+    _check_dept(cfg, dept)
+    ev = evals_schema(cfg, dept)
+    matrix = f"{ev}.eval_matrix"
+    runs = f"{ev}.eval_runs"
+    return {
+        # Sums and counts, so the route can combine the departments into exact means.
+        "summary": (
+            "SELECT COUNT(DISTINCT skill) AS skills, "
+            "SUM(CASE WHEN mode = 'trigger' THEN accuracy END) AS accuracy_sum, "
+            "COUNT(CASE WHEN mode = 'trigger' THEN accuracy END) AS accuracy_n, "
+            "SUM(CASE WHEN mode = 'with_skill' THEN uplift_task_quality END) AS uplift_sum, "
+            "COUNT(CASE WHEN mode = 'with_skill' THEN uplift_task_quality END) AS uplift_n, "
+            "SUM(error_rate) AS error_sum, COUNT(error_rate) AS error_n "
+            f"FROM {matrix} WHERE {_GATING}",
+            {},
+        ),
+        "verdicts": (
+            f"SELECT model_profile, verdict, COUNT(*) AS n FROM {matrix} WHERE {_GATING} "
+            "GROUP BY model_profile, verdict",
+            {},
+        ),
+        "uplift": (
+            "SELECT skill, skill_version, model_profile, pass_rate_without, pass_rate, uplift_task_quality, "
+            f"uplift_skill_format FROM {matrix} WHERE mode = 'with_skill'",
+            {},
+        ),
+        "journal": (
+            f"SELECT skill, action, to_version, ts FROM {ev}.skill_versions "
+            "WHERE action IN ('switched', 'retired') ORDER BY ts",
+            {},
+        ),
+        "routing": (
+            "SELECT r.model_profile, c.expected_skill, c.invoked_skill, c.trigger_outcome, COUNT(*) AS n "
+            f"FROM {ev}.eval_cases AS c JOIN {runs} AS r ON c.run_id = r.run_id "
+            "WHERE c.assessment_name = 'skill_trigger' "
+            "GROUP BY r.model_profile, c.expected_skill, c.invoked_skill, c.trigger_outcome",
+            {},
+        ),
+        "trigger_trend": _run_trend_sql(runs, "trigger", "accuracy"),
+        "pass_rate_trend": _run_trend_sql(runs, "with_skill", "pass_rate"),
+        "health": (
+            "SELECT model_profile, COUNT(*) AS cells, AVG(error_rate) AS error_rate, "
+            "AVG(CASE WHEN verdict = 'inconclusive' THEN 1.0 ELSE 0.0 END) AS inconclusive_rate "
+            f"FROM {matrix} WHERE {_GATING} GROUP BY model_profile",
+            {},
+        ),
+    }
+
+
+def tokens_sql(endpoints: list[str]) -> tuple[str, dict[str, object]]:
+    """Input and output tokens per day for the given serving endpoints, over the last 30 days. Reads the
+    system.serving tables with the user's credentials, so the caller maps a refusal to no tokens section."""
+    if not endpoints:
+        raise ValueError("at least one endpoint")
+    params: dict[str, object] = {f"e{i}": e for i, e in enumerate(endpoints)}
+    names = ", ".join(f":e{i}" for i in range(len(endpoints)))
+    sql = (
+        "WITH latest AS (SELECT served_entity_id, endpoint_name FROM system.serving.served_entities "
+        "QUALIFY ROW_NUMBER() OVER (PARTITION BY served_entity_id ORDER BY change_time DESC) = 1) "
+        "SELECT l.endpoint_name, CAST(u.request_time AS DATE) AS day, "
+        "SUM(u.input_token_count) AS input_tokens, SUM(u.output_token_count) AS output_tokens "
+        "FROM system.serving.endpoint_usage AS u JOIN latest AS l ON u.served_entity_id = l.served_entity_id "
+        f"WHERE l.endpoint_name IN ({names}) AND u.request_time >= current_timestamp() - {DASHBOARD_WINDOW} "
+        "GROUP BY l.endpoint_name, CAST(u.request_time AS DATE) ORDER BY day"
+    )
+    return sql, params
