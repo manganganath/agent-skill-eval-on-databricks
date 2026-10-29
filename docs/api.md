@@ -22,6 +22,7 @@ The Skill Hub REST API serves the app's UI and any custom UI. The OpenAPI schema
 | `GET /api/eval-runs/{job_run_id}` | | `{state, result_state, run_key}` | |
 | `POST /api/skills/{fqn}/switch` | `{to_version}` | `{job_run_id}` | 403 unless the user is a reviewer. An invalid Job parameter answers 502 `job_failed`. |
 | `POST /api/try` | `{fqn, prompt, models}` | One entry per model, with `with_skill` and `without_skill` answers, whether the skill was invoked, and a trace link | Beta. Answers 504 `try_timeout` after 180 seconds. The next Try can start at once. |
+| `POST /api/candidates/{run_key}/{dept}/{skill}/try` | `{prompt, models}` | The same as `/api/try` | Beta. Tries a skill under review: a pull request candidate or a draft. The upload is staged as the app into a private run schema that only the caller can read, and the live skill of the same name is left out of the run. The schema is dropped when the run ends. 403 `not_author` and 404 `candidate_not_found` as for [candidate detail](#candidates). 503 `try_setup_required` until the catalog grant is in place (see [Try on skills under review](operations.md#try-on-skills-under-review)). The other answers are as for `/api/try`. |
 
 Example:
 
