@@ -13,7 +13,7 @@ Skill Hub manages agent skills (`SKILL.md` bundles) as Unity Catalog objects. It
 | Skills MCP server (Beta) and model serving endpoints | Agents discover and load skills; models are called | Unity Gateway |
 | One experiment per skill, traces, judges, prompts | Evidence and scoring | MLflow 3 (tracing, `make_judge`, Prompt Registry) |
 | `skills-pr.yml`, `skills-publish.yml`, `skills-switch.yml`, `platform.yml` | CI/CD pipelines | GitHub Actions |
-| Alerts and dashboard over the result tables | Notification and reporting | SQL alerts, AI/BI dashboard |
+| Alerts over the result tables | Notification | SQL alerts |
 | Natural-language questions over the eval tables | Exploration | Genie space |
 
 ## Data flow
@@ -143,7 +143,7 @@ Naming rules:
 - Only `skillhub-ci-eval` and the app service principal may run `skill-eval`. Only `skillhub-ci` and the app service principal may run `skill-switch`, and a publish runs only in a `skill-switch` run that `skillhub-ci` started. Users cannot start these Jobs directly.
 - If a check cannot be made, the request is refused (fail closed).
 - If user authorisation does not cover the skills API in a workspace (the user-token call answers permission denied), the app lists skills as its service principal and filters them with the effective-permissions API for the signed-in user. After a fallback "yes", the app reads the skill files as its service principal. That principal therefore needs `READ VOLUME` on the live skill schemas and access to the effective-permissions API. If the fallback also fails, browsing is refused.
-- The app is open to the group `users` (`CAN_USE`). Reviewers get `CAN_RUN` on the dashboard.
+- The app is open to the group `users` (`CAN_USE`).
 - A quarantined department (`quarantine: true`) is granted to reviewers and the two CI principals only. Moving a skill out of it needs an operator; CI refuses the change.
 - Experiment permissions are derived from the grants on `<d>_evals`. The experiment folder `<workspace_root>/<catalog>` has its own access list: `CAN_MANAGE` for `skillhub-ci`, `CAN_EDIT` for `skillhub-ci-eval` and the app (Try traces), `CAN_READ` for reviewers, nothing for `users`. Its `candidates/` folder adds `CAN_MANAGE` for the two CI principals, and its `drafts/` folder adds `CAN_MANAGE` for them and the app. The workspace root is the home folder of `skillhub-ci` (`/Users/<ci principal>/skill-hub`), because every folder under `/Workspace/Shared` inherits `CAN_MANAGE` for `users`. A nightly check reports drift.
 - Results are trusted by author. Sync and every gate read only MLflow runs written by `skillhub-ci-eval`, the deployer or the running identity. The app service principal is not trusted; it never writes eval runs. `eval_runs.run_author` records the author. Databricks does not return a server-side author for a run, so the author comes from the MLflow `mlflow.user` tag, which the client sets. The tag is only as trustworthy as write access to the experiments, which bootstrap limits to the CI and app principals.
@@ -203,7 +203,7 @@ MLflow is the source of truth. Delta is synced from it.
 - `skillhub sync --run-key <key>` reads each run back from MLflow and inserts missing rows into `eval_runs` and `eval_cases`. It never updates or deletes rows. It skips runs by untrusted authors, runs with a runner field in the wrong place (for example a `verdict` param), runs whose department differs from their experiment's, and runs in badly named experiments, with a warning.
 - **Harness.** `eval_runs` has a `harness` column. The built-in agent loop is `reference`, and it is the only harness in this release. Other harnesses come later. The matrix, the alerts and the Skill Hub show the column.
 - `eval_matrix` shows the latest run per skill, version, model profile and mode. It carries the verdict, `n_reviewed` and `n_cases`, and the experiment ID so the UI can link to MLflow. The cross-department matrix shows `dept`.
-- The AI/BI dashboard, the SQL alerts and the Genie space read these tables.
+- The SQL alerts and the Genie space read these tables.
 - Retention: product code never deletes rows. Delta time travel is not an audit trail.
 - OpenTelemetry: traces are stored as OTel-shaped Delta tables in the customer's Unity Catalog account. The Unity Gateway unified trace table (Beta, enabled per workspace) can record skill usage across the workspace when it is available.
 

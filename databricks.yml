@@ -55,9 +55,6 @@ variables:
       Group given CAN_USE on the Skill Hub app. The app enforces Unity Catalog permissions per user
       (on-behalf-of), so a wide group is safe
     default: users
-  reviewers_group:
-    description: Group given CAN_RUN on the results dashboard. Must match roles.reviewers in config/hub.yaml
-    default: skillhub-reviewers
   job_failure_notifications:
     description: >-
       webhook_notifications of the skill-switch and nightly Jobs. Empty unless the prod deploy sets it,
