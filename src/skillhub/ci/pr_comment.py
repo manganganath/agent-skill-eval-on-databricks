@@ -30,6 +30,7 @@ COLUMNS = (
     "Unreviewed",
 )
 LINK_COLUMN = "Run"
+COMMENT_MAX = 65536  # characters: GitHub refuses a longer comment body (422)
 _EXPECT = re.compile(r"^(?P<ref>[a-z0-9_]+/[a-z0-9][a-z0-9_-]*)=(?P<hash>sha256:[0-9a-f]{64})$")
 _REF = re.compile(r"[a-z0-9_]+/[a-z0-9][a-z0-9_-]*")
 _SHA = re.compile(r"sha256:[0-9a-f]{64}")
@@ -59,6 +60,10 @@ def exit_code(verdicts: list[str]) -> int:
 
 def _gating(r: dict[str, Any]) -> bool:
     return r.get("mode") != "without_skill"
+
+
+def _blocking(r: dict[str, Any]) -> bool:
+    return _gating(r) and (not r.get("mode") or r.get("verdict") not in PASSING)
 
 
 def blocking_verdicts(rows: list[dict[str, Any]]) -> list[str]:
@@ -188,7 +193,8 @@ def render_matrix_markdown(
 ) -> str:
     """The comment body. The repository can be public, so by default it holds no workspace host, run or
     experiment ID and no Skill Hub URL. `links` (SKILLHUB_PR_LINKS=true, for private repositories)
-    adds an MLflow link per row (`run_url`) and the Skill Hub URL."""
+    adds an MLflow link per row (`run_url`) and the Skill Hub URL. A body too long for one GitHub comment shows
+    the blocking rows first and says how many rows it leaves out."""
     lines = [MARKER, f"### Skill evaluation `{_cell(run_key)}`", ""]
     if not rows:
         lines += [
@@ -199,31 +205,47 @@ def render_matrix_markdown(
         return "\n".join(lines)
     columns = (*COLUMNS, LINK_COLUMN) if links else COLUMNS
     lines += ["| " + " | ".join(columns) + " |", "|" + "---|" * len(columns)]
-    for r in sorted(
+    ordered = sorted(
         rows, key=lambda r: tuple(str(r.get(k) or "") for k in ("skill", "model_profile", "mode"))
-    ):
-        unreviewed = (r.get("n_cases") or 0) - (r.get("n_reviewed") or 0)
-        cells = [
-            r["skill"],
-            r["model_profile"],
-            r.get("model_class") or "-",
-            r["mode"] or "-",
-            r["verdict"] or "-",
-            _pct(r.get("accuracy")),
-            _num(r.get("uplift_task_quality")),
-            _num(r.get("uplift_skill_format")),
-            _num(r.get("spread")),
-            unreviewed,
-        ]
-        if links:
-            cells.append(f"[MLflow]({r['run_url']})" if r.get("run_url") else "-")
-        lines.append("| " + " | ".join(_cell(c) for c in cells) + " |")
-    lines.append("")
-    if links and hub_url:
-        lines.append(f"Skill Hub: {hub_url}")
-    else:
-        lines.append("Details in Skill Hub.")
-    return "\n".join(lines)
+    )
+    table = [_matrix_line(r, links) for r in ordered]
+    footer = ["", f"Skill Hub: {hub_url}" if links and hub_url else "Details in Skill Hub."]
+    body = "\n".join([*lines, *table, *footer])
+    if len(body) <= COMMENT_MAX:
+        return body
+
+    def note(left_out: int) -> str:
+        return f"{left_out} of {len(rows)} rows are not shown: a comment holds {COMMENT_MAX} characters."
+
+    # Too long for one comment: the blocking rows first, then as many others as fit.
+    room = COMMENT_MAX - len("\n".join([*lines, "", note(len(rows)), *footer]))
+    shown: list[str] = []
+    for r in sorted(ordered, key=lambda r: not _blocking(r)):  # stable: each group keeps its order
+        line = _matrix_line(r, links)
+        if len(line) + 1 > room:
+            break
+        shown.append(line)
+        room -= len(line) + 1
+    return "\n".join([*lines, *shown, "", note(len(rows) - len(shown)), *footer])
+
+
+def _matrix_line(r: dict[str, Any], links: bool) -> str:
+    unreviewed = (r.get("n_cases") or 0) - (r.get("n_reviewed") or 0)
+    cells = [
+        r["skill"],
+        r["model_profile"],
+        r.get("model_class") or "-",
+        r["mode"] or "-",
+        r["verdict"] or "-",
+        _pct(r.get("accuracy")),
+        _num(r.get("uplift_task_quality")),
+        _num(r.get("uplift_skill_format")),
+        _num(r.get("spread")),
+        unreviewed,
+    ]
+    if links:
+        cells.append(f"[MLflow]({r['run_url']})" if r.get("run_url") else "-")
+    return "| " + " | ".join(_cell(c) for c in cells) + " |"
 
 
 def _headers(token: str) -> dict[str, str]:
