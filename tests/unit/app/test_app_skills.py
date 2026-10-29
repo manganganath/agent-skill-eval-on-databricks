@@ -1,4 +1,6 @@
 import json
+import threading
+from collections import Counter
 from datetime import datetime
 
 import pytest
@@ -19,7 +21,8 @@ def me_api(groups):
 
 class FakeUserSql:
     """Stands in for UserSql. Routes SQL by table. `denied` lists dept keys whose evals schema the user cannot read.
-    `datasets` maps a skill name to its ds_ rows, and `rubrics` maps it to rubrics rows, newest first."""
+    `datasets` maps a skill name to its ds_ rows, and `rubrics` maps it to rubrics rows, newest first.
+    `calls` records each statement and its parameters; `gate`, when set, is called first by every query."""
 
     def __init__(self, journal=None, matrix=None, denied=(), datasets=None, rubrics=None):
         self.journal = journal or {}
@@ -27,8 +30,13 @@ class FakeUserSql:
         self.denied = set(denied)
         self.datasets = datasets or {}
         self.rubrics = rubrics or {}
+        self.calls: list[tuple[str, dict]] = []
+        self.gate = None
 
     def query(self, statement, params=None):
+        self.calls.append((statement, dict(params or {})))
+        if self.gate is not None:
+            self.gate()
         if any(f"{d}_evals" in statement for d in self.denied):
             raise SqlDenied("no SELECT")
         if "skill_versions" in statement:
@@ -47,7 +55,8 @@ class FakeUserSql:
 class FakeUC:
     """Stands in for UCSkills. `visible` maps schema -> [SkillInfo]. `files` maps fqn -> {path: bytes}.
     `deny_user_schemas` makes the user's listing of those schemas raise PermissionDenied, and `deny_user_skills`
-    does the same for the user's get and read_files. `read_by` records the client of each read_files call."""
+    does the same for the user's get and read_files. `read_by` records the client of each read_files call, and
+    `listed` the (client, schema) of each list call. `gate`, when set, is called first by list and read_files."""
 
     def __init__(self, visible=None, files=None, deny_user_schemas=(), deny_user_skills=()):
         self.visible = visible or {}
@@ -55,6 +64,8 @@ class FakeUC:
         self.deny_user_schemas = set(deny_user_schemas)
         self.deny_user_skills = set(deny_user_skills)
         self.read_by: list[object] = []
+        self.listed: list[tuple[object, str]] = []
+        self.gate = None
 
     def factory(self):
         outer = self
@@ -64,6 +75,9 @@ class FakeUC:
                 self.w = w
 
             def list(self, schema):
+                outer.listed.append((self.w, schema))
+                if outer.gate is not None:
+                    outer.gate()
                 if getattr(self.w, "is_user", False) and schema in outer.deny_user_schemas:
                     raise PermissionDenied("Provided OAuth token does not have required scopes")
                 return list(outer.visible.get(schema, []))
@@ -78,6 +92,8 @@ class FakeUC:
                 return None
 
             def read_files(self, fqn):
+                if outer.gate is not None:
+                    outer.gate()
                 if getattr(self.w, "is_user", False) and fqn in outer.deny_user_skills:
                     raise PermissionDenied("Provided OAuth token does not have required scopes")
                 outer.read_by.append(self.w)
@@ -239,6 +255,62 @@ def test_catalog_resolves_the_identity_once_per_request(make_client, uc):
     assert c.get("/api/skills").status_code == 200
     me_calls = [call for call in user.api_client.calls if call[1].endswith("/Me")]
     assert len(me_calls) == 1
+
+
+class Overlap:
+    """A gate that holds each call until `n` calls are in flight at once. Calls made one after another never get
+    there: the first one waits 5 s, and the gate records that it broke."""
+
+    def __init__(self, n):
+        self._barrier = threading.Barrier(n, timeout=5)
+        self.broken = False
+
+    def __call__(self):
+        try:
+            self._barrier.wait()
+        except threading.BrokenBarrierError:
+            self.broken = True
+
+
+SCHEMAS = ("skill_hub.common", "skill_hub.dept_equity_research", "skill_hub.external")
+
+
+def test_catalog_calls_for_n_departments_on_the_fallback(make_client, uc):
+    """Per department: one listing as the user (refused for want of the scope), one effective-permissions answer
+    for the schema and one listing as the app, then two statements. Per request: the identity and the catalog's
+    effective permissions, once each. (Before: two schema answers and one catalog answer per department.)"""
+    uc.visible["skill_hub.external"] = [skill("skill_hub.external.ext-skill")]
+    uc.deny_user_schemas = set(SCHEMAS)
+    user, app, sql = user_w(), app_w(readable=SCHEMAS), FakeUserSql()
+    c = make_client(user_w=user, app_w=app, cfg=make_cfg(), sql=sql)
+    assert len(c.get("/api/skills").json()) == len(SCHEMAS)
+    eff = "/api/2.1/unity-catalog/effective-permissions/"
+    assert Counter(path for _, path, _ in app.api_client.calls) == {
+        **{f"{eff}schema/{schema}": 1 for schema in SCHEMAS},
+        f"{eff}catalog/skill_hub": 1,
+    }
+    assert [path for _, path, _ in user.api_client.calls] == [ME]
+    assert Counter(w.is_user for w, _ in uc.listed) == {True: len(SCHEMAS), False: len(SCHEMAS)}
+    assert len(sql.calls) == 2 * len(SCHEMAS)
+
+
+def test_catalog_reads_the_departments_side_by_side(make_client, uc):
+    uc.visible["skill_hub.external"] = [skill("skill_hub.external.ext-skill")]
+    uc.gate = listings = Overlap(len(SCHEMAS))  # every department's listing is in flight at once
+    sql = FakeUserSql()
+    sql.gate = reads = Overlap(2 * len(SCHEMAS))  # and then every journal and verdict read
+    c = make_client(user_w=user_w(), app_w=app_w(), cfg=make_cfg(), sql=sql)
+    r = c.get("/api/skills")
+    assert r.status_code == 200 and not listings.broken and not reads.broken
+    assert [x["name"] for x in r.json()] == ["audit-xls", "earnings-preview", "ext-skill"]  # config order
+
+
+def test_detail_reads_the_files_and_eval_tables_side_by_side(make_client, uc):
+    sql = FakeUserSql()
+    uc.gate = sql.gate = together = Overlap(3)  # the files, the cases and the rubric at once
+    c = make_client(user_w=user_w(), app_w=app_w(), cfg=make_cfg(), sql=sql)
+    assert c.get("/api/skills/skill_hub.common.audit-xls").status_code == 200
+    assert not together.broken and len(sql.calls) == 2
 
 
 def test_detail_without_the_skills_scope_reads_files_as_the_app_after_the_fallback(make_client, uc):

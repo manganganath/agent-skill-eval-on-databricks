@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import logging
 from collections import Counter
+from concurrent.futures import Future, ThreadPoolExecutor
 from typing import Annotated
 
 from databricks.sdk import WorkspaceClient
@@ -17,10 +18,16 @@ from backend.schemas import EvalAccess, JournalRowOut, SkillDetail, SkillSummary
 from skillhub.config import HubConfig
 from skillhub.evalspec import EvalCase, EvalFile, Rubric
 from skillhub.naming import live_schema
-from skillhub.registry.uc_skills import UCSkills
+from skillhub.registry.uc_skills import SkillInfo, UCSkills
 
 log = logging.getLogger("skillhub.app.skills")
 router = APIRouter(tags=["skills"])
+# Reads that do not depend on one another run side by side on a small pool that lives for one request: the
+# departments of a catalog load, and the files and eval tables of a skill page. Each read still runs with the
+# same client as before (the user's, or the app's only after the effective-permissions check), so running
+# them at once changes no answer.
+MAX_PARALLEL = 8
+_ACCESS_ORDER: tuple[EvalAccess, ...] = ("ok", "denied", "unavailable")
 
 
 def _read_dept(
@@ -39,9 +46,30 @@ def _read_dept(
         return [], "unavailable"
 
 
-def _worse(a: EvalAccess, b: EvalAccess) -> EvalAccess:
-    order = ("ok", "denied", "unavailable")
-    return a if order.index(a) >= order.index(b) else b
+def _worst(*accesses: EvalAccess) -> EvalAccess:
+    return max(accesses, key=_ACCESS_ORDER.index)
+
+
+LiveReads = tuple[Future, Future]
+LiveState = tuple[dict[str, int | None], dict[str, dict[str, str]], EvalAccess]
+
+
+def _start_live_reads(pool: ThreadPoolExecutor, sql: UserSql, cfg: HubConfig, dept: str) -> LiveReads:
+    """Start the department's journal and verdict reads, side by side."""
+    return (
+        pool.submit(_read_dept, sql, queries.journal_sql(cfg, dept), dept),
+        pool.submit(_read_dept, sql, queries.catalog_verdicts_sql(cfg, dept), dept),
+    )
+
+
+def _live_state(reads: LiveReads) -> LiveState:
+    """({skill: live version}, {skill: {model_profile: verdict}}, access) from the two reads."""
+    (journal, access), (matrix, matrix_access) = (read.result() for read in reads)
+    by_skill: dict[str, list[dict]] = {}
+    for r in journal:
+        by_skill.setdefault(r["skill"], []).append(r)
+    live = {k: skill_ref.live_version(v) for k, v in by_skill.items()}
+    return live, skill_ref.live_verdicts(matrix, live), _worst(access, matrix_access)
 
 
 @router.get("/skills", response_model=list[SkillSummary])
@@ -55,37 +83,40 @@ def list_skills(
     needle = q.lower() if q else None
     out: list[SkillSummary] = []
     me = authz.CachedMe(user_w)  # one identity lookup per request, not per department
-    for dept in cfg.departments:
-        try:
-            infos = authz.list_visible_skills(user_w, app_w, live_schema(cfg, dept), me)
-        except authz.Forbidden:  # fail closed for this department only; the others still load
-            log.warning("skipped department %s: its access could not be checked", dept)
-            continue
-        if not infos:
-            continue
-        journal, access = _read_dept(sql, queries.journal_sql(cfg, dept), dept)
-        by_skill: dict[str, list[dict]] = {}
-        for r in journal:
-            by_skill.setdefault(r["skill"], []).append(r)
-        live = {k: skill_ref.live_version(v) for k, v in by_skill.items()}
-        matrix, matrix_access = _read_dept(sql, queries.catalog_verdicts_sql(cfg, dept), dept)
-        access = _worse(access, matrix_access)
-        verdicts = skill_ref.live_verdicts(matrix, live)
-        for info in infos:
-            name = info.fqn.rsplit(".", 1)[1]
-            if needle and needle not in name.lower() and needle not in (info.description or "").lower():
+    memo = authz.RequestMemo()  # one catalog-level permissions lookup per request, not per department
+    with ThreadPoolExecutor(max_workers=MAX_PARALLEL) as pool:
+
+        def visible(dept: str) -> tuple[list[SkillInfo], LiveReads | None]:
+            infos = authz.list_visible_skills(user_w, app_w, live_schema(cfg, dept), me, memo)
+            # Only a department with skills to show has its eval tables read, as soon as its listing is in. The
+            # reads go on the pool and this task ends, so it never waits for a worker.
+            return infos, _start_live_reads(pool, sql, cfg, dept) if infos else None
+
+        listings = [(dept, pool.submit(visible, dept)) for dept in cfg.departments]
+        for dept, listing in listings:  # config order, as before
+            try:
+                infos, reads = listing.result()
+            except authz.Forbidden:  # fail closed for this department only; the others still load
+                log.warning("skipped department %s: its access could not be checked", dept)
                 continue
-            out.append(
-                SkillSummary(
-                    fqn=info.fqn,
-                    dept=dept,
-                    name=name,
-                    description=info.description,
-                    live_version=live.get(name),
-                    verdicts=verdicts.get(name, {}),
-                    eval_access=access,
+            if reads is None:
+                continue
+            live, verdicts, access = _live_state(reads)
+            for info in infos:
+                name = info.fqn.rsplit(".", 1)[1]
+                if needle and needle not in name.lower() and needle not in (info.description or "").lower():
+                    continue
+                out.append(
+                    SkillSummary(
+                        fqn=info.fqn,
+                        dept=dept,
+                        name=name,
+                        description=info.description,
+                        live_version=live.get(name),
+                        verdicts=verdicts.get(name, {}),
+                        eval_access=access,
+                    )
                 )
-            )
     return out
 
 
@@ -209,18 +240,22 @@ def skill_detail(
     sql: Annotated[UserSql, Depends(get_sql)],
 ) -> SkillDetail:
     dept, name = skill_ref.parse_fqn(cfg, fqn)
-    info, reader = _authorize_or_404(user_w, app_w, fqn)
-    try:
-        # SKILL.md and other text files, read as the user. When the user token cannot call the skills API, the
-        # fallback has already checked the user's READ VOLUME, and the app reads the files.
-        files = UCSkills(reader).read_files(fqn)
-    except (NotFound, PermissionDenied):
-        raise problem(404, Reason.SKILL_NOT_FOUND) from None
-    except Exception as exc:
-        log.warning("reading skill files failed: %s", type(exc).__name__)
-        raise problem(502, Reason.UC_FAILED) from None
-    evals, evals_access = _dataset_cases(sql, cfg, dept, name)  # never from the skill files
-    rubric, rubric_access = _latest_rubric(sql, cfg, dept, name)
+    info, reader = _authorize_or_404(user_w, app_w, fqn)  # nothing is read before the user may read the skill
+    with ThreadPoolExecutor(max_workers=MAX_PARALLEL) as pool:
+        # The eval-table reads, as the user, run while the files are read.
+        cases_read = pool.submit(_dataset_cases, sql, cfg, dept, name)  # never from the skill files
+        rubric_read = pool.submit(_latest_rubric, sql, cfg, dept, name)
+        try:
+            # SKILL.md and other text files, read as the user. When the user token cannot call the skills API,
+            # the fallback has already checked the user's READ VOLUME, and the app reads the files.
+            files = UCSkills(reader).read_files(fqn)
+        except (NotFound, PermissionDenied):
+            raise problem(404, Reason.SKILL_NOT_FOUND) from None
+        except Exception as exc:
+            log.warning("reading skill files failed: %s", type(exc).__name__)
+            raise problem(502, Reason.UC_FAILED) from None
+        evals, evals_access = cases_read.result()
+        rubric, rubric_access = rubric_read.result()
     return SkillDetail(
         fqn=fqn,
         dept=dept,
@@ -229,7 +264,7 @@ def skill_detail(
         files=_decode_text(files),
         evals=evals,
         rubric=rubric,
-        eval_access=_worse(evals_access, rubric_access),
+        eval_access=_worst(evals_access, rubric_access),
     )
 
 

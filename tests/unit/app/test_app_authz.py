@@ -1,3 +1,7 @@
+import threading
+import time
+from concurrent.futures import ThreadPoolExecutor
+
 import pytest
 from app_fakes import FakeApi, FakeWorkspace
 from backend import authz
@@ -324,11 +328,40 @@ def test_effective_read_matches_user_case_insensitively_and_groups():
 def test_effective_read_query_is_exactly_the_user():
     api = app_api()
     authz.effective_read_schema(FakeWorkspace(api=api), "ana@example.com", "skill_hub.common")
+    # One schema answer holds both READ VOLUME and USE SCHEMA, so the schema is asked once.
     assert api.calls == [
-        ("GET", EFF, {"principal": "ana@example.com"}),
         ("GET", EFF, {"principal": "ana@example.com"}),
         ("GET", EFF_CAT, {"principal": "ana@example.com"}),
     ]
+
+
+def test_effective_read_with_a_request_memo_asks_for_a_shared_catalog_once_per_principal():
+    other = "/api/2.1/unity-catalog/effective-permissions/schema/skill_hub.dept_equity_research"
+    api = app_api(**{other: effective(["READ_VOLUME", "USE_SCHEMA"])})
+    app, memo = FakeWorkspace(api=api), authz.RequestMemo()
+    assert authz.effective_read_schema(app, "ana@example.com", "skill_hub.common", memo=memo)
+    assert authz.effective_read_schema(app, "ana@example.com", "skill_hub.dept_equity_research", memo=memo)
+    assert [c[1] for c in api.calls] == [EFF, EFF_CAT, other]
+    # Another principal never gets an answer fetched for the first one.
+    assert not authz.effective_read_schema(app, "bob@example.com", "skill_hub.common", memo=memo)
+    assert api.calls[3:] == [("GET", EFF, {"principal": "bob@example.com"})]
+
+
+def test_request_memo_computes_a_key_once_when_threads_ask_together():
+    memo, computed, together = authz.RequestMemo(), [], threading.Barrier(4, timeout=5)
+
+    def compute():
+        computed.append(1)
+        time.sleep(0.05)  # still running while the other threads ask
+        return "answer"
+
+    def ask(_):
+        together.wait()
+        return memo.get("key", compute)
+
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        assert list(pool.map(ask, range(4))) == ["answer"] * 4
+    assert len(computed) == 1
 
 
 @pytest.mark.parametrize(
