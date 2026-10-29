@@ -129,3 +129,95 @@ class CandidateDetail(BaseModel):
     eval_access: EvalAccess
     results: list[CandidateResult]
     candidate: CandidateBlock
+
+
+class DashboardSummary(BaseModel):
+    """The summary tiles. Means are None when no row has the value. Mirrors DashboardSummary in types.ts."""
+
+    skills: int
+    verdicts: dict[str, int]
+    trigger_accuracy: float | None
+    uplift_task_quality: float | None
+    error_rate: float | None
+
+
+class DashboardVerdict(BaseModel):
+    dept: str
+    model_profile: str
+    verdict: str
+    n: int
+
+
+class DashboardUplift(BaseModel):
+    dept: str
+    skill: str
+    skill_version: int
+    model_profile: str
+    pass_rate_without: float | None
+    pass_rate: float | None
+    uplift_task_quality: float | None
+    uplift_skill_format: float | None
+
+
+class DashboardRouting(BaseModel):
+    """Trigger outcomes of one expected and invoked skill pair, for one model. invoked_skill is None when no skill ran."""
+
+    dept: str
+    model_profile: str
+    expected_skill: str | None
+    invoked_skill: str | None
+    trigger_outcome: str | None
+    n: int
+
+
+class DashboardTriggerTrend(BaseModel):
+    """Trigger accuracy of one day's runs. `day` is a calendar date, YYYY-MM-DD."""
+
+    dept: str
+    skill: str
+    skill_version: int
+    model_profile: str
+    day: str
+    accuracy: float | None
+    runs: int
+
+
+class DashboardPassRateTrend(BaseModel):
+    dept: str
+    skill: str
+    skill_version: int
+    model_profile: str
+    day: str
+    pass_rate: float | None
+    runs: int
+
+
+class DashboardHealth(BaseModel):
+    """Error and inconclusive rates of one model over its latest gating rows. `cells` is the row count behind them."""
+
+    dept: str
+    model_profile: str
+    cells: int
+    error_rate: float | None
+    inconclusive_rate: float | None
+
+
+class DashboardTokens(BaseModel):
+    model_profile: str
+    endpoint_name: str
+    day: str
+    input_tokens: int | None
+    output_tokens: int | None
+
+
+class DashboardOut(BaseModel):
+    """GET /api/results/dashboard. `tokens` is None when the system.serving tables cannot be read."""
+
+    summary: DashboardSummary
+    verdicts: list[DashboardVerdict]
+    uplift: list[DashboardUplift]
+    routing: list[DashboardRouting]
+    trigger_trend: list[DashboardTriggerTrend]
+    pass_rate_trend: list[DashboardPassRateTrend]
+    health: list[DashboardHealth]
+    tokens: list[DashboardTokens] | None

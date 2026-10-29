@@ -6,10 +6,11 @@ from typing import Annotated
 from databricks.sdk import WorkspaceClient
 from fastapi import APIRouter, Depends, Query, Response
 
-from backend import authz, queries, skill_ref
+from backend import authz, dashboard, queries, skill_ref
 from backend.authz import Reason
-from backend.data import SqlDenied, UserSql
+from backend.data import SqlDenied, SqlError, UserSql
 from backend.deps import get_cfg, get_sql, get_user_client, problem
+from backend.schemas import DashboardOut
 from skillhub.config import HubConfig
 
 router = APIRouter(tags=["results"])
@@ -91,3 +92,72 @@ def cases(
     return _read_departments(
         sql, list(cfg.departments), lambda d: queries.cases_sql(cfg, d, run_id), response
     )
+
+
+def _dashboard_statement(sql: UserSql, statement: str, params: dict[str, object]) -> list[dict]:
+    try:
+        return sql.query(statement, params)
+    except SqlDenied as exc:
+        if exc.not_found:  # the table does not exist yet: nothing to count
+            return []
+        raise
+
+
+def _read_dashboard(sql: UserSql, cfg: HubConfig, response: Response) -> dict[str, list[dict]]:
+    """The Dashboard's aggregate rows from every department the user can read, tagged with the department.
+
+    A department is read whole or not at all: one refused statement leaves it out and names it in
+    X-Eval-Denied-Departments. As in _read_departments, a refusal with no matrix rows read is a 403.
+    """
+    out: dict[str, list[dict]] = {}
+    refused: list[str] = []
+    for d in cfg.departments:
+        try:
+            section = {
+                name: _dashboard_statement(sql, statement, params)
+                for name, (statement, params) in queries.dashboard_sql(cfg, d).items()
+            }
+        except SqlDenied:
+            refused.append(d)
+            continue
+        section["uplift"] = dashboard.live_uplift(section["uplift"], section.pop("journal"))
+        for name, rows in section.items():
+            out.setdefault(name, []).extend({**r, "dept": d} for r in rows)
+    if refused and not out.get("verdicts"):
+        raise problem(403, Reason.EVALS_NOT_READABLE)
+    if refused:
+        response.headers[DENIED_HEADER] = ",".join(refused)
+    return out
+
+
+def _tokens(sql: UserSql, cfg: HubConfig) -> list[dict] | None:
+    """Tokens per day of the configured serving endpoints. None when the system.serving tables cannot be read."""
+    profiles = {m.endpoint: name for name, m in cfg.models.items() if m.route == "serving" and m.endpoint}
+    if not profiles:
+        return []
+    try:
+        rows = sql.query(*queries.tokens_sql(sorted(profiles)))
+    except (SqlDenied, SqlError):
+        return None
+    return [{**r, "model_profile": profiles.get(r["endpoint_name"])} for r in rows]
+
+
+@router.get("/results/dashboard", response_model=DashboardOut)
+def dashboard_results(
+    response: Response,
+    cfg: Annotated[HubConfig, Depends(get_cfg)],
+    sql: Annotated[UserSql, Depends(get_sql)],
+) -> dict:
+    """Aggregates for the Dashboard tab, over the departments the user can read. Denied departments are named in
+    X-Eval-Denied-Departments; `tokens` is null when the user cannot read the system.serving tables."""
+    rows = _read_dashboard(sql, cfg, response)
+    return {
+        "summary": dashboard.summary(rows.get("summary", []), rows.get("verdicts", [])),
+        "verdicts": rows.get("verdicts", []),
+        "uplift": rows.get("uplift", []),
+        "routing": rows.get("routing", []),
+        "trigger_trend": rows.get("trigger_trend", []),
+        "pass_rate_trend": rows.get("pass_rate_trend", []),
+        "health": rows.get("health", []),
+        "tokens": _tokens(sql, cfg),
+    }

@@ -5,7 +5,7 @@ Authors write skills, reviewers mark cases as reviewed and switch versions, and 
 | Role | Group | Can do |
 |---|---|---|
 | Author | `skillhub-authors` | Open pull requests with skills and cases. Upload drafts, and see and evaluate candidates (skills under review) in the Skill Hub, in the departments they can read |
-| Reviewer | `skillhub-reviewers` | Mark generated cases and rubrics as reviewed, switch versions in the Skill Hub, upload drafts, see and evaluate the candidates of every department, and read the cross-department results and the dashboard |
+| Reviewer | `skillhub-reviewers` | Mark generated cases and rubrics as reviewed, switch versions in the Skill Hub, upload drafts, see and evaluate the candidates of every department, and read the cross-department results and the Dashboard tab |
 | Reader | The department group named in `config/hub.yaml` (for example `dept-equity-research`), or `skillhub-users` | Load skills through agents and browse them in the Skill Hub |
 
 The customer's administrator grants group membership.

@@ -111,6 +111,41 @@ export interface TryModelResult {
 
 export type TryOut = TryModelResult[];
 
+// The Dashboard tab's aggregates. Mirrors DashboardOut in app/backend/schemas.py. Rows carry `dept` where a
+// department matters; `tokens` is null when the user cannot read the system.serving tables.
+export interface DashboardSummary {
+  skills: number; verdicts: Record<Verdict, number>; trigger_accuracy: number | null;
+  uplift_task_quality: number | null; error_rate: number | null;
+}
+export interface DashboardVerdict { dept: string; model_profile: string; verdict: Verdict; n: number }
+export interface DashboardUplift {
+  dept: string; skill: string; skill_version: number; model_profile: string; pass_rate_without: number | null;
+  pass_rate: number | null; uplift_task_quality: number | null; uplift_skill_format: number | null;
+}
+export interface DashboardRouting {
+  dept: string; model_profile: string; expected_skill: string | null; invoked_skill: string | null;
+  trigger_outcome: string | null; n: number;
+}
+export interface DashboardTriggerTrend {
+  dept: string; skill: string; skill_version: number; model_profile: string; day: string; accuracy: number | null; runs: number;
+}
+export interface DashboardPassRateTrend {
+  dept: string; skill: string; skill_version: number; model_profile: string; day: string; pass_rate: number | null; runs: number;
+}
+export interface DashboardHealth {
+  dept: string; model_profile: string; cells: number; error_rate: number | null; inconclusive_rate: number | null;
+}
+export interface DashboardTokens {
+  model_profile: string; endpoint_name: string; day: string; input_tokens: number | null; output_tokens: number | null;
+}
+export interface DashboardOut {
+  summary: DashboardSummary; verdicts: DashboardVerdict[]; uplift: DashboardUplift[]; routing: DashboardRouting[];
+  trigger_trend: DashboardTriggerTrend[]; pass_rate_trend: DashboardPassRateTrend[]; health: DashboardHealth[];
+  tokens: DashboardTokens[] | null;
+}
+/** The dashboard and the departments left out of it (X-Eval-Denied-Departments). */
+export interface Dashboard extends DashboardOut { deniedDepartments: string[] }
+
 export interface AppConfig {
   workspace_url: string;
   models: Record<string, "frontier" | "fast">;

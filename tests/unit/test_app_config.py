@@ -76,14 +76,6 @@ def test_app_yaml_sets_no_env():
     assert "env" not in app_yaml
 
 
-def test_dashboard_is_bound_to_the_catalog_and_no_viewer_credentials():
-    d = load_bundle()["resources"]["dashboards"]["skill_eval_dashboard"]
-    assert d["file_path"] == "../src/skillhub/results/dashboard/skill_eval.lvdash.json"
-    assert d["warehouse_id"] == "${var.warehouse_id}"
-    assert d["dataset_catalog"] == "${var.catalog}${var.catalog_suffix}"
-    assert d["embed_credentials"] is False
-
-
 def test_build_script_is_executable_and_stages_the_app():
     script = ROOT / "scripts" / "build_app.sh"
     assert script.stat().st_mode & stat.S_IXUSR
