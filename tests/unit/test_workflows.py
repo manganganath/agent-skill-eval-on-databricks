@@ -96,6 +96,35 @@ def test_skills_pr_generate_commit_and_redispatch():
     assert "non_deleted != ''" in step_named(wf, "Start skill-eval Job and wait")["if"]
 
 
+@pytest.mark.parametrize("platform_ok", [True, False])
+def test_the_bot_commit_starts_both_required_checks_without_a_deploy(tmp_path, platform_ok):
+    """A GITHUB_TOKEN push starts no pull_request run, and main requires skills-pr and platform: the bot dispatches
+    both on the PR branch after its push, platform with deploy=none so no deploy job asks for production. A branch
+    whose platform.yml has no deploy input refuses that dispatch: the step warns instead of failing."""
+    commit = step_named(load_workflow("skills-pr.yml"), "Commit generated files")
+    log = tmp_path / "calls"
+    stub = (
+        f'git() {{ echo "git $*" >> {log}; }}\n'
+        f'gh() {{ echo "gh $*" >> {log}; [ "$3" != platform.yml ] || {"true" if platform_ok else "false"}; }}\n'
+    )
+    env = {"PATH": "/usr/bin:/bin", "PR_NUMBER": "12", "HEAD_REF": "feature", "GITHUB_REPOSITORY": "o/r"}
+    proc = subprocess.run(["bash", "-e", "-c", stub + commit["run"]], env=env, capture_output=True, text=True)
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    calls = log.read_text().splitlines()
+    assert calls[-2:] == [
+        "gh workflow run skills-pr.yml --repo o/r --ref feature -f pr_number=12",
+        "gh workflow run platform.yml --repo o/r --ref feature -f deploy=none",
+    ]
+    assert any(c.startswith("git ") and " push origin HEAD:refs/heads/feature" in c for c in calls[:-2])
+    if platform_ok:
+        assert "::notice::Generated evals committed. New skills-pr and platform runs" in proc.stdout
+    else:
+        assert "::warning::" in proc.stdout and "the platform check did not start" in proc.stdout
+    assert load_workflow("skills-pr.yml")["jobs"]["skills-pr"]["permissions"]["actions"] == "write"
+    deploy = load_workflow(PLATFORM)["on"]["workflow_dispatch"]["inputs"]["deploy"]
+    assert "none" in deploy["options"]
+
+
 def test_skills_pr_eval_step_contract():
     wf = load_workflow("skills-pr.yml")
     run = step_named(wf, "Start skill-eval Job and wait")["run"]
@@ -819,22 +848,35 @@ def test_platform_cancels_superseded_pull_request_runs_on_the_check_job_only():
         assert wf["jobs"][name]["concurrency"]["cancel-in-progress"] is False
 
 
+def test_platform_dispatch_names_the_deploy_and_defaults_to_dev():
+    """`deploy` picks what a dispatch deploys after the checks. dev stays the default of a run started by hand;
+    none runs the checks only (the skills-pr bot's dispatch)."""
+    inputs = load_workflow(PLATFORM)["on"]["workflow_dispatch"]["inputs"]
+    assert set(inputs) == {"deploy"}
+    assert inputs["deploy"]["type"] == "choice"
+    assert inputs["deploy"]["options"] == ["none", "dev", "prod"]
+    assert inputs["deploy"]["default"] == "dev"
+
+
 def test_platform_dev_deploy_is_manual_and_approved_in_production():
     job = load_workflow(PLATFORM)["jobs"]["deploy-dev"]
     assert job["needs"] == ["platform"]
     assert job["environment"] == "production"
-    assert job["if"] == "${{ github.event_name == 'workflow_dispatch' }}"
+    assert job["if"] == "${{ github.event_name == 'workflow_dispatch' && inputs.deploy == 'dev' }}"
     assert job["concurrency"] == {"group": "skillhub-deploy-dev", "cancel-in-progress": False}
     runs = run_text(job)
     assert "bundle validate -t dev" in runs and "bundle deploy -t dev" in runs
     assert "-t prod" not in runs
 
 
-def test_platform_prod_deploy_is_main_pushes_in_the_release_group():
+def test_platform_prod_deploy_is_main_pushes_or_a_prod_dispatch_from_main_in_the_release_group():
     job = load_workflow(PLATFORM)["jobs"]["deploy-prod"]
     assert job["needs"] == ["platform"]
     assert job["environment"] == "production"
-    assert job["if"] == "${{ github.event_name == 'push' }}"
+    assert job["if"] == (
+        "${{ github.event_name == 'push' || (github.event_name == 'workflow_dispatch' "
+        "&& inputs.deploy == 'prod' && github.ref == 'refs/heads/main') }}"
+    )
     assert job["concurrency"] == {"group": "skillhub-release", "cancel-in-progress": False}
     runs = run_text(job)
     assert "bundle validate -t prod" in runs
