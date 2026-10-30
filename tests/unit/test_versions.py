@@ -155,9 +155,10 @@ def _invoke(*extra):
     return CliRunner().invoke(app, args)
 
 
-def test_cli_publish_creates_a_version(cli_reg):
+def test_cli_publish_creates_a_version(cli_reg, published_experiments):
     r = _invoke("--job-run-id", "job-7")
     assert r.exit_code == 0, r.output
+    assert published_experiments == [("common", "audit-xls")]  # its own experiment, from now on
     assert json.loads(r.output) == {
         "version": 1,
         "versioned_fqn": "skill_hub.common_versions.audit-xls-v1",

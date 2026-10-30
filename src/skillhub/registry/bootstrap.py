@@ -763,6 +763,10 @@ def run_hooks(cfg: HubConfig, sql, skills_root: Path | None) -> list[str]:
     else:
         for b in discover_bundles(skills_root):
             experiment_ids.append(ensure_experiment(cfg, b.dept, b.name))
+        # Evals of a skill that is not on main yet run there: ci_eval and the app cannot create experiments.
+        ensure_unreleased = _optional("skillhub.results.experiments", "ensure_unreleased_experiment")
+        for dept in cfg.departments:
+            experiment_ids.append(ensure_unreleased(cfg, dept))
         ran.append("ensure_experiment")
     register_prompts = _optional("skillhub.prompts", "register_prompts")
     if register_prompts:

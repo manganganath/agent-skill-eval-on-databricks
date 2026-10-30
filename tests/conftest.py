@@ -37,6 +37,17 @@ def _reset_auth_client():
     auth._default_client.cache_clear()
 
 
+@pytest.fixture(autouse=True)
+def published_experiments(monkeypatch):
+    """(dept, skill) of each publish's experiment step. The real step creates the experiment in the workspace's
+    MLflow, which a unit test must never reach. A test of the step itself keeps the function from import time."""
+    from skillhub import cli
+
+    calls: list[tuple[str, str]] = []
+    monkeypatch.setattr(cli, "_ensure_skill_experiment", lambda cfg, dept, skill: calls.append((dept, skill)))
+    return calls
+
+
 @pytest.fixture
 def cfg(monkeypatch):
     monkeypatch.setenv("DATABRICKS_HOST", "https://example.invalid")

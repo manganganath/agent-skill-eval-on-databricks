@@ -34,3 +34,12 @@ def test_run_keys(cfg):
         n.run_schema(cfg, "Bad-Key", "common")
     with pytest.raises(ValueError):
         n.run_schema(cfg, n.make_run_key(""), "common")
+
+
+def test_the_unreleased_experiment_cannot_collide_with_a_skill(cfg):
+    path = n.unreleased_experiment_path(cfg, "common")
+    assert path == "/Shared/skill-hub/skill_hub/common/_unreleased"
+    assert n.experiment_parts(cfg, path) == ("common", None)  # its runs name their skill
+    assert n.experiment_parts(cfg, n.experiment_path(cfg, "common", "audit-xls")) == ("common", "audit-xls")
+    with pytest.raises(ValueError):
+        n.check_skill_name(n.UNRELEASED)

@@ -13,7 +13,7 @@ from mlflow import MlflowClient
 
 from skillhub.config import HubConfig
 from skillhub.evalspec import Rubric, rubric_hash
-from skillhub.naming import evals_schema, experiment_parts
+from skillhub.naming import SKILL_RE, evals_schema, experiment_parts
 from skillhub.results.experiments import configure_mlflow, skill_experiments, trusted_run_authors
 
 if TYPE_CHECKING:
@@ -178,6 +178,20 @@ def _ts(ms: int | None) -> str | None:
     return None if ms is None else datetime.fromtimestamp(ms / 1000, tz=UTC).isoformat()
 
 
+def _home_matches(run, home: tuple[str, str | None] | None) -> bool:
+    """Whether the run's dept and skill params match its experiment. The department always comes from the
+    experiment, so a run cannot write into another department's tables. The unreleased experiment holds the skills
+    of its department that have no experiment of their own: its runs name their skill, which must be a valid name.
+    Every experiment of a department has the same ACL (derived from that department's grants), so this lets no
+    one write anything they could not already write to the skill's own experiment."""
+    if home is None or _param(run, "dept") != home[0]:
+        return False
+    skill = _param(run, "skill")
+    if home[1] is None:
+        return isinstance(skill, str) and SKILL_RE.fullmatch(skill) is not None
+    return skill == home[1]
+
+
 def child_runs(cfg: HubConfig, run_key: str, *, trusted: frozenset[str] | None = None) -> list[Any]:
     """Trusted child runs (one per skill x model x mode) for a run_key.
 
@@ -186,12 +200,12 @@ def child_runs(cfg: HubConfig, run_key: str, *, trusted: frozenset[str] | None =
     WARNING and counted, never raised: an experiment that is not <root>/<dept>/<skill> for a configured
     department, a run whose author (`run_author`) is not in `trusted` (default:
     trusted_run_authors()), a run that someone else wrote to (`tampering`), and a run whose dept or skill differs
-    from its experiment's.
+    from its experiment's. A run in the department's unreleased experiment names its skill (`_home_matches`).
     """
     if not re.fullmatch(r"[a-z0-9_]+", run_key):
         raise ValueError(f"invalid run_key {run_key!r}")
     trusted = trusted_run_authors() if trusted is None else trusted
-    home: dict[str, tuple[str, str]] = {}  # experiment_id -> (dept, skill)
+    home: dict[str, tuple[str, str | None]] = {}  # experiment_id -> (dept, skill or None when unreleased)
     by_dept: dict[str, list[str]] = {}
     for e in skill_experiments(cfg):
         try:
@@ -224,7 +238,7 @@ def child_runs(cfg: HubConfig, run_key: str, *, trusted: frozenset[str] | None =
                 elif (why := tampering(r)) is not None:
                     tampered += 1
                     log.warning("run_key %s: skipped tampered child run %s: %s", run_key, r.info.run_id, why)
-                elif (_param(r, "dept"), _param(r, "skill")) != home.get(r.info.experiment_id):
+                elif not _home_matches(r, home.get(r.info.experiment_id)):
                     mismatched += 1
                 else:
                     found.append(r)
