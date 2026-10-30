@@ -9,6 +9,9 @@ on:
     branches: [main]
     paths:
       - "skills/**"
+  # Starts a release again after a run failed outside the eval (for example the runner lost the workspace). The plan
+  # diffs from the skillhub/released tag, so it picks up every unreleased change. main only: see the plan job.
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -25,6 +28,8 @@ concurrency:
 jobs:
   plan:
     name: plan
+    # A dispatch from another branch plans nothing; the production environment also takes deployments from main only.
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     outputs:
@@ -51,6 +56,8 @@ jobs:
         env:
           HEAD_SHA: ${{ github.sha }}
           RUN_ATTEMPT: ${{ github.run_attempt }}
+          # A dispatch can run on a commit a push run already evaluated: its run number keeps the run keys apart.
+          RUN_TAG: ${{ github.event_name == 'workflow_dispatch' && format('r{0}-', github.run_number) || '' }}
         run: |
           # Diff from the last released commit so a failed, rejected or replaced release loses no changes.
           # Without the tag nothing is released yet: every skill counts as added, not only those of this push.
@@ -69,7 +76,7 @@ jobs:
             echo "::error::Moving a skill out of a quarantined department needs an operator: see docs. The rows with moved_from_quarantine true are listed above."
             exit 1
           fi
-          label="merge-${HEAD_SHA:0:7}-a${RUN_ATTEMPT}"
+          label="merge-${HEAD_SHA:0:7}-${RUN_TAG}a${RUN_ATTEMPT}"
           key=$(RUN_LABEL="$label" uv run python -c 'import os; from skillhub.naming import make_run_key; print(make_run_key(os.environ["RUN_LABEL"]))')
           reeval=$(jq -r '[.[] | select(.status != "deleted") | "\(.dept)/\(.skill)"] | join(",")' "$RUNNER_TEMP/changed.json")
           retire=$(jq -c '[.[] | select(.status == "deleted") | {dept, skill}]' "$RUNNER_TEMP/changed.json")

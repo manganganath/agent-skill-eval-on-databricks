@@ -287,6 +287,15 @@ def test_publish_triggers_on_main_skills_pushes():
     assert wf["permissions"] == {"contents": "read"}
 
 
+def test_a_release_can_be_started_again_by_hand_from_main_only():
+    wf = load_workflow("skills-publish.yml")
+    assert "workflow_dispatch" in wf["on"] and not (wf["on"]["workflow_dispatch"] or {}).get("inputs")
+    assert wf["jobs"]["plan"]["if"] == "github.ref == 'refs/heads/main'"
+    env = step_named(wf, "Plan re-evaluation")["env"]
+    # A dispatch on a commit that a push run already evaluated gets its own run keys.
+    assert env["RUN_TAG"] == "${{ github.event_name == 'workflow_dispatch' && format('r{0}-', github.run_number) || '' }}"
+
+
 def test_release_workflows_share_one_serialised_concurrency_group():
     groups = set()
     for name in RELEASE_WORKFLOWS:
@@ -357,7 +366,7 @@ def test_plan_computes_the_eval_digests_from_the_merge_checkout():
     )
     assert "content_hash(load_bundle(" not in run
     assert '"\\(.dept)/\\(.skill)"' in run
-    assert "merge-${HEAD_SHA:0:7}-a${RUN_ATTEMPT}" in run
+    assert "merge-${HEAD_SHA:0:7}-${RUN_TAG}a${RUN_ATTEMPT}" in run
 
 
 def test_eval_merge_uploads_once_and_exposes_one_candidate_path():
