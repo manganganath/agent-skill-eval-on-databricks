@@ -100,6 +100,8 @@ def passed_the_guard(r) -> bool:
         {"origin": f"https://{APP_HOST}", "host": APP_HOST},
         {"sec-fetch-site": "same-origin", "origin": "http://testserver"},
         {"sec-fetch-site": "none"},  # the user's own action, such as a bookmark
+        # The browser's word decides: a proxy that forwards some other host does not lock out the app's own pages.
+        {"sec-fetch-site": "same-origin", "origin": f"https://{APP_HOST}", "host": "127.0.0.1:8000"},
     ],
 )
 def test_the_apps_own_pages_and_clients_without_the_headers_pass(make_client, headers):

@@ -3,12 +3,11 @@
 The browser's session with the app is the Databricks Apps proxy's cookie, which the browser may send with a form that
 another site posts to the app. So a request with an unsafe method to /api/ is refused, with 403 `cross_site_request`,
 when the browser says another site sent it: `Sec-Fetch-Site` is `cross-site` or `same-site` (another app on the same
-apps domain is the same site). It is refused too when it has an `Origin` whose host is not the app's. Behind the proxy
-the app's public host arrives in `X-Forwarded-Host`; without the proxy (a local run) it is `Host`. An Origin that
-matches either is the app's own.
+apps domain is the same site). Browsers send that header, and when it is there it alone decides, so the app's own
+pages (`same-origin`) never depend on the host the proxy forwards. A request without it is refused when it has an
+`Origin` whose host is not the app's: the proxy's `X-Forwarded-Host`, or `Host` for a local run.
 
-A request with neither header passes: curl, scripts and other clients that send a bearer token do not send them. The
-app's own pages send `Sec-Fetch-Site: same-origin` and their own Origin, so they pass too.
+A request with neither header passes: curl, scripts and other clients that send a bearer token do not send them.
 """
 
 from __future__ import annotations
@@ -57,8 +56,9 @@ def is_cross_site(method: str, path: str, headers: Headers) -> bool:
     """Whether a request to the API that would change something came from another site."""
     if method.upper() not in UNSAFE_METHODS or not (path == "/api" or path.startswith("/api/")):
         return False
-    if headers.get("sec-fetch-site", "").strip().lower() in OTHER_SITES:
-        return True
+    site = headers.get("sec-fetch-site", "").strip().lower()
+    if site:
+        return site in OTHER_SITES
     origin = headers.get("origin")
     return origin is not None and not _same_host(origin, headers)
 
