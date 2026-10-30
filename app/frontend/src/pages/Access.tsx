@@ -15,6 +15,7 @@ const ROWS: Row[] = [
   { action: "Run an eval on live skills", everyone: "Yes", authors: "Yes", reviewers: "Yes" },
   { action: "See skills under review", everyone: "No", authors: "Own departments", reviewers: "All departments" },
   { action: "Upload a draft", everyone: "No", authors: "Yes", reviewers: "Yes" },
+  { action: "Discard a draft", everyone: "No", authors: "Their own", reviewers: "Any draft" },
   { action: "Try a skill under review", everyone: "No", authors: "Own departments", reviewers: "All departments" },
   { action: "Run an eval on a candidate or draft", everyone: "No", authors: "Yes", reviewers: "Yes" },
   { action: "Switch the live version", everyone: "No", authors: "No", reviewers: "Yes" },
@@ -62,14 +63,17 @@ function YourAccess({ me, readable, departments }: {
 function Matrix({ me }: { me: Me }) {
   const mine = { everyone: true, authors: me.is_author, reviewers: me.is_reviewer };
   const cols = [
-    { key: "everyone", title: "Everyone signed in" },
-    { key: "authors", title: "Authors" },
-    { key: "reviewers", title: "Reviewers" },
+    { key: "everyone", title: "Reader" },
+    { key: "authors", title: "Author" },
+    { key: "reviewers", title: "Reviewer" },
   ] as const;
   return (
     <section aria-labelledby="who-can" className="panel">
       <h2 id="who-can">Who can do what</h2>
-      <p className="muted">A role adds to the one before it. Your own columns are marked.</p>
+      <p className="muted">
+        A reader is anyone signed in who can read a department's skills. Each role adds to the one before it. Your own
+        columns are marked.
+      </p>
       <div className="table-scroll" role="region" aria-label="Who can do what" tabIndex={0}>
         <table className="access-table">
           <caption className="visually-hidden">Who can do what</caption>

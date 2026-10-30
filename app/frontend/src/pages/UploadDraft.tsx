@@ -36,11 +36,8 @@ export default function UploadDraft() {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<unknown>(null);
   const errorRef = useRef<HTMLDivElement>(null);
-  const folderInput = useRef<HTMLInputElement>(null);
   const mounted = useRef(true);
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
-  // A folder picker: React has no prop for it, so the attribute is set on the element.
-  useEffect(() => { folderInput.current?.setAttribute("webkitdirectory", ""); }, [source, me.data, config.data]);
   useEffect(() => { if (error) errorRef.current?.focus(); }, [error]); // the problems are read out and in view
 
   if (me.loading || config.loading) return <Loading label="Loading" />;
@@ -56,6 +53,10 @@ export default function UploadDraft() {
 
   const chosen = source === "zip" ? archive !== null : folder.length > 0;
   const ready = dept !== "" && chosen && !submitting;
+  const missing = [
+    ...(dept === "" ? ["choose a department"] : []),
+    ...(chosen ? [] : [source === "zip" ? "choose a zip file" : "choose the skill folder"]),
+  ];
 
   async function submit(e: FormEvent) {
     e.preventDefault();
@@ -118,13 +119,18 @@ export default function UploadDraft() {
             {source === "zip" ? (
               <div className="field">
                 <label htmlFor="draft-zip">Zip of the skill folder</label>
-                <input id="draft-zip" type="file" accept=".zip,application/zip" aria-describedby="draft-needs"
+                {/* A key per picker, so React never reuses the folder picker's element for the zip picker. */}
+                <input key="zip" id="draft-zip" type="file"
+                  accept=".zip,application/zip,application/x-zip-compressed" aria-describedby="draft-needs"
                   onChange={(e) => setArchive(e.target.files?.[0] ?? null)} />
+                {archive && <p className="hint">{archive.name}</p>}
               </div>
             ) : (
               <div className="field">
                 <label htmlFor="draft-folder">Skill folder</label>
-                <input id="draft-folder" ref={folderInput} type="file" multiple aria-describedby="draft-needs"
+                {/* A folder picker: React has no prop for it, so the attribute is set when the element mounts. */}
+                <input key="folder" id="draft-folder" type="file" multiple aria-describedby="draft-needs"
+                  ref={(el) => el?.setAttribute("webkitdirectory", "")}
                   onChange={(e) => setFolder(Array.from(e.target.files ?? []))} />
                 {folder.length > 0 && <p className="hint">{folder.length} files chosen</p>}
               </div>
@@ -142,8 +148,14 @@ export default function UploadDraft() {
           </div>
         </fieldset>
         <div className="form-actions">
-          <button type="submit" className="btn-primary" disabled={!ready}>Upload draft</button>
+          <button type="submit" className="btn-primary" disabled={!ready} aria-describedby="draft-missing">Upload draft</button>
           <p role="status" aria-live="polite" className="status-line">{submitting ? "Checking and uploading the draft" : ""}</p>
+        </div>
+        <div>
+          {/* Why the button is off, so a disabled button is never a dead end. */}
+          {!ready && !submitting && missing.length > 0 && (
+            <p id="draft-missing" className="hint upload-missing">To upload: {missing.join(" and ")}.</p>
+          )}
         </div>
       </form>
       {error ? (

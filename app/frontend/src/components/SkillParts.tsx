@@ -76,6 +76,13 @@ export function RubricSection({ rubric, access, note, empty }: {
   return (
     <section aria-labelledby="rubric" className="panel">
       <h2 id="rubric">Rubric</h2>
+      <p className="rubric-help">
+        The criteria the judges use to score each answer in effectiveness mode, with and without the skill.
+        Task-quality criteria check what the answer says; skill-format criteria check that it follows the skill's
+        format. Each criterion has a weight from 1 to 5. An answer passes when the weight of the criteria it meets
+        reaches {Math.round((rubric?.pass_score ?? 0.7) * 100)}% of the total and its case's assertions hold. Trigger
+        mode does not use the rubric.
+      </p>
       <p className="muted">{note}</p>
       {rubric ? (
         <>

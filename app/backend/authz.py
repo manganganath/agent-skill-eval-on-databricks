@@ -86,6 +86,7 @@ class Reason(StrEnum):
     DRAFT_STORE_FAILED = "draft_store_failed"
     DEPARTMENT_NOT_ALLOWED = "department_not_allowed"
     RUBRIC_REQUIRED = "rubric_required"
+    NOT_DRAFT_OWNER = "not_draft_owner"
 
 
 class Forbidden(Exception):

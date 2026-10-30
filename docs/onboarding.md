@@ -14,13 +14,14 @@ The customer's administrator grants group membership.
 
 The Skill Hub shows the same table on its Access page, with your own roles marked. Each role adds to the one before it.
 
-| Action | Everyone signed in | Authors | Reviewers |
+| Action | Reader | Author | Reviewer |
 |---|---|---|---|
 | Browse live skills | Own departments | Own departments | All departments |
 | Try a live skill | Yes | Yes | Yes |
 | Run an eval on live skills | Yes | Yes | Yes |
 | See skills under review | No | Own departments | All departments |
 | Upload a draft | No | Yes | Yes |
+| Discard a draft | No | Their own | Any draft |
 | Try a skill under review | No | Own departments | All departments |
 | Run an eval on a candidate or draft | No | Yes | Yes |
 | Switch the live version | No | No | Yes |

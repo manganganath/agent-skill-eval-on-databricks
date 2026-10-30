@@ -70,6 +70,7 @@ def adapt_request(
     *,
     max_tokens: int | None,
     trigger: bool,
+    usage_context: dict[str, str] | None = None,
 ) -> dict:
     """Build the chat-completions body. Drops every parameter the provider rejects."""
     prov = profile.provider
@@ -103,6 +104,9 @@ def adapt_request(
             body["reasoning_effort"] = params["reasoning_effort"]
     if prov == "gpt" and trigger and tools:
         body["reasoning_effort"] = "none"
+    # The endpoints record it in system.serving.endpoint_usage. Unset, the body carries nothing.
+    if usage_context:
+        body["usage_context"] = dict(usage_context)
     return body
 
 
@@ -174,9 +178,11 @@ class ServingModelClient:
         http_client: Any = None,
         max_tries: int = MAX_TRIES,
         timeout: float = TIMEOUT_S,
+        usage_context: dict[str, str] | None = None,
     ):
         self.profile_name = profile_name
         self.profile = profile
+        self.usage_context = usage_context
         self.host = host.rstrip("/")
         self.headers = headers
         self.max_tries = max(1, max_tries)
@@ -211,8 +217,13 @@ class ServingModelClient:
         a numeric Retry-After."""
         for attempt in range(self.max_tries):
             try:
-                # No credentials here: HeaderAuth sets them on the request.
-                completion = self._client.chat.completions.create(**body)
+                # No credentials here: HeaderAuth sets them on the request. usage_context is not a create() parameter:
+                # extra_body merges it into the top level of the JSON body.
+                usage = body.get("usage_context")
+                kwargs = {k: v for k, v in body.items() if k != "usage_context"}
+                completion = self._client.chat.completions.create(
+                    **kwargs, extra_body={"usage_context": usage} if usage else None
+                )
                 return _wire_dict(completion)
             except (openai.APIStatusError, openai.APIConnectionError) as exc:
                 retryable = isinstance(exc, openai.APIConnectionError) or exc.status_code in RETRY_STATUSES
@@ -230,7 +241,14 @@ class ServingModelClient:
         max_tokens: int | None = None,
         trigger: bool = False,
     ) -> ChatResult:
-        body = adapt_request(self.profile, messages, tools, max_tokens=max_tokens, trigger=trigger)
+        body = adapt_request(
+            self.profile,
+            messages,
+            tools,
+            max_tokens=max_tokens,
+            trigger=trigger,
+            usage_context=self.usage_context,
+        )
         try:
             raw = self._create(body)
         except openai.BadRequestError as exc:
@@ -248,11 +266,20 @@ def model_client(
     *,
     max_tries: int = MAX_TRIES,
     timeout: float = TIMEOUT_S,
+    usage_context: dict[str, str] | None = None,
 ) -> ModelClient:
-    """`max_tries` and `timeout` let a caller with its own deadline (the Skill Hub Try panel) bound each call."""
+    """`max_tries` and `timeout` let a caller with its own deadline (the Skill Hub Try panel) bound each call.
+    `usage_context` is sent with every request as the body's `usage_context`, so the endpoints' usage table
+    records who made it (the eval runner and Try tag their calls with the skill and the source)."""
     profile = cfg.models[profile_name]
     if profile.route != "serving":
         raise NotImplementedError("ug-anthropic route is not supported yet")
     return ServingModelClient(
-        profile_name, profile, cfg.workspace.host, headers, max_tries=max_tries, timeout=timeout
+        profile_name,
+        profile,
+        cfg.workspace.host,
+        headers,
+        max_tries=max_tries,
+        timeout=timeout,
+        usage_context=usage_context,
     )

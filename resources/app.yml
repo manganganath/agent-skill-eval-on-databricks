@@ -38,6 +38,9 @@ resources:
             value: ${resources.jobs.skill_eval.id}
           - name: SKILLHUB_JOB_ID_SWITCH
             value: ${resources.jobs.skill_switch.id}
+          # The eval service principal's application ID. The Dashboard counts its requests as evaluation tokens.
+          - name: SKILLHUB_CI_EVAL_PRINCIPAL
+            value: ${var.ci_eval_principal}
           - name: OTEL_TRACES_SAMPLER
             value: always_on
       # No serving endpoints are bound: the app calls models with the signed-in user's token, and binding an

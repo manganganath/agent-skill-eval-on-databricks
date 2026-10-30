@@ -10,7 +10,7 @@ from fastapi import APIRouter, Depends, Query, Response
 from backend import authz, dashboard, queries, skill_ref
 from backend.authz import Reason
 from backend.data import SqlDenied, SqlError, UserSql
-from backend.deps import get_cfg, get_sql, get_user_client, problem
+from backend.deps import ci_eval_principal, get_cfg, get_sql, get_user_client, problem
 from backend.schemas import DashboardOut
 from skillhub.config import HubConfig
 
@@ -138,12 +138,13 @@ def _read_dashboard(sql: UserSql, cfg: HubConfig, response: Response) -> dict[st
 
 
 def _tokens(sql: UserSql, cfg: HubConfig) -> list[dict] | None:
-    """Tokens per day of the configured serving endpoints. None when the system.serving tables cannot be read."""
+    """Tokens per day and source of the configured serving endpoints. None when the system.serving tables cannot
+    be read."""
     profiles = {m.endpoint: name for name, m in cfg.models.items() if m.route == "serving" and m.endpoint}
     if not profiles:
         return []
     try:
-        rows = sql.query(*queries.tokens_sql(sorted(profiles)))
+        rows = sql.query(*queries.tokens_sql(sorted(profiles), ci_eval_principal()))
     except (SqlDenied, SqlError):
         return None
     except Exception as exc:  # any other failure of this optional read leaves the rest of the page answering

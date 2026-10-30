@@ -36,6 +36,7 @@ export default function Switch() {
   const rows = versions.data ?? [];
   const current = liveVersion(rows); // a published row never makes a version live
   const published = [...new Set(rows.filter((r) => r.action === "published" && r.version != null).map((r) => r.version!))];
+  const others = published.filter((v) => v !== current); // the versions a switch can go to
 
   const rowsFor = (v: number | null) => (matrix.data ?? []).filter((r) => r.skill_version === v);
   const before = rowsFor(current);
@@ -78,11 +79,18 @@ export default function Switch() {
           <p className="stat stat-value">Live version: {current ?? "none"}</p>
           <div className="field">
             <label htmlFor="target">Target version</label>
-            <select id="target" value={target ?? ""}
+            <select id="target" value={target ?? ""} disabled={others.length === 0} aria-describedby="target-none"
               onChange={(e) => { setTarget(e.target.value ? Number(e.target.value) : null); setAck(false); setJob(null); setError(null); }}>
-              <option value="">Choose a version</option>
-              {published.filter((v) => v !== current).map((v) => <option key={v} value={v}>v{v}</option>)}
+              <option value="">{others.length === 0 ? "No other version" : "Choose a version"}</option>
+              {others.map((v) => <option key={v} value={v}>v{v}</option>)}
             </select>
+            {others.length === 0 && (
+              <p id="target-none" className="hint switch-none">
+                {current == null ? "No version of this skill is published yet." : `v${current} is the only published version.`}{" "}
+                A new version is published when a pull request that changes this skill merges and a reviewer approves the
+                release. Then you can switch between them here.
+              </p>
+            )}
           </div>
         </div>
       </fieldset>
