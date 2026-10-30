@@ -1,0 +1,51 @@
+{
+  "skill_name": "guidance-tracker",
+  "source_hash": "sha256:428b26483182a5538dee61639f0cde59b3aedbf9a5423698a4c36764e9788337",
+  "generated_by": "human",
+  "pass_score": 0.7,
+  "reviewed": true,
+  "criteria": [
+    {
+      "id": "c1",
+      "text": "The response gives a table with the prior guidance and the reported figure for each line both sources cover, a result of met, beat or missed, and the gap to the range and to the midpoint.",
+      "type": "task_quality",
+      "weight": 5,
+      "source": "Workflow: steps 3 and 4"
+    },
+    {
+      "id": "c2",
+      "text": "Every figure matches the materials; a line with no prior guidance or no reported figure is marked as not in the materials instead of being estimated or compared with a different period.",
+      "type": "task_quality",
+      "weight": 5,
+      "source": "Rules: never invent a figure"
+    },
+    {
+      "id": "c3",
+      "text": "The response lists guidance changes (raised, cut, new or withdrawn) with the old and new range, gives the reason management stated, and says when no reason was stated.",
+      "type": "task_quality",
+      "weight": 4,
+      "source": "Workflow: step 5"
+    },
+    {
+      "id": "c4",
+      "text": "The response flags any earlier management statement that the current quarter contradicts, or says none in the materials.",
+      "type": "task_quality",
+      "weight": 3,
+      "source": "Workflow: step 6"
+    },
+    {
+      "id": "c5",
+      "text": "The note uses the heading, the table columns Line, Prior guidance, Reported, Result, Gap vs range and Gap vs midpoint, the bullets for changes, contradicted or withdrawn and not covered, and the Sources line with dates.",
+      "type": "skill_format",
+      "weight": 4,
+      "source": "Output format"
+    },
+    {
+      "id": "c6",
+      "text": "Revenue is in $M with one decimal, EPS in dollars with two decimals, margins in % with one decimal, and the note fits one screen.",
+      "type": "skill_format",
+      "weight": 2,
+      "source": "Rules: units and length"
+    }
+  ]
+}
