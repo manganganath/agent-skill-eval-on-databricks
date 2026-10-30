@@ -7,7 +7,8 @@ environment in GitHub.
 from __future__ import annotations
 
 import hashlib
-from collections.abc import Collection
+import time
+from collections.abc import Callable, Collection
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 
@@ -25,6 +26,10 @@ PUBLISH_WORKFLOW = "skills-publish.yml"
 HUB_MARKER = "This pull request was opened from the Skill Hub."
 FILE_MODE = "100644"
 BLOB_WORKERS = 8
+# GitHub works out whether a pull request can be merged in the background, and reports `unknown` (or null) meanwhile.
+UNSETTLED = (None, "unknown")
+MERGEABLE_READS = 3  # more reads of the pull request while its mergeable state is unknown
+MERGEABLE_WAIT_S = 1.0  # the pause before each of them
 
 
 class AlreadySubmitted(Exception):
@@ -159,18 +164,22 @@ def open_pull(
 
 
 def gate_state(checks: dict[str, str]) -> str:
-    """pending, passed, failed, or none when the gate has not run on the commit."""
+    """pending, passed, failed, cancelled, or none when the gate has not run on the commit. A newer push cancels the
+    gate of the commit before it."""
     return checks.get(GATE_CHECK, "none")
 
 
 def release_state(run: Run | None) -> str:
-    """The release of a merge commit: not_started, running, waiting_approval, succeeded or failed."""
+    """The release of a merge commit: not_started, running, waiting_approval, succeeded, failed or cancelled. A run is
+    cancelled when a newer run of the release concurrency group replaced it, or when someone cancelled it."""
     if run is None:
         return "not_started"
     if run.waiting:
         return "waiting_approval"
     if run.status != "completed":
         return "running"
+    if run.conclusion == "cancelled":
+        return "cancelled"
     return "succeeded" if run.conclusion == "success" else "failed"
 
 
@@ -190,6 +199,18 @@ def skill_of(path: str, depts: Collection[str]) -> tuple[str, str] | None:
     return parts[1], parts[2]
 
 
+def settled_pull(gh: GitHubClient, pull: Pull, *, sleep: Callable[[float], object] = time.sleep) -> Pull:
+    """The pull request once GitHub has worked out its mergeable state. Right after a push, or when a check finishes,
+    GitHub answers `unknown` for a while, so an open pull request is read again, up to MERGEABLE_READS times, a short
+    pause apart. The last read is returned, settled or not. `gh` must read fresh answers (connect(cached=False))."""
+    for _ in range(MERGEABLE_READS):
+        if pull.mergeable_state not in UNSETTLED or pull.state != "open" or pull.merged:
+            break
+        sleep(MERGEABLE_WAIT_S)
+        pull = gh.pull(pull.number)
+    return pull
+
+
 def unmet_merge_rules(
     pull: Pull, paths: list[str], checks: dict[str, str], cfg: HubConfig, visible: set[str]
 ) -> list[str]:
@@ -198,7 +219,8 @@ def unmet_merge_rules(
     The pull request is open. It touches only skills/<department>/<skill>/ paths. It was opened from the Skill Hub, or
     it names only skills the reviewer may see. Every required check passed. Its mergeable state is clean: GitHub
     reports that only when branch protection is satisfied, and the token owner may be an administrator who could
-    bypass it, so the rule is checked here as well."""
+    bypass it, so the rule is checked here as well. A state GitHub has not worked out yet is `mergeable_unknown`, not
+    `clean`: the reviewer tries again in a few seconds."""
     unmet: list[str] = []
     if pull.state != "open" or pull.merged:
         unmet.append("open")
@@ -209,6 +231,8 @@ def unmet_merge_rules(
     if HUB_MARKER not in pull.body and not (skills and all(dept in visible for dept, _ in skills)):
         unmet.append("from_hub_or_visible_skill")
     unmet += [f"check:{name}" for name in REQUIRED_CHECKS if checks.get(name) != "passed"]
-    if pull.mergeable_state != "clean":
+    if pull.mergeable_state in UNSETTLED:
+        unmet.append("mergeable_unknown")
+    elif pull.mergeable_state != "clean":
         unmet.append("clean")
     return unmet

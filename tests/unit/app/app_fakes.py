@@ -235,7 +235,9 @@ class FakeGitHub:
     A tree is a snapshot `S<n>` of every file (path -> bytes); a folder's tree sha is `S<n>:<folder>`. A commit names
     its snapshot, a branch names its commit. `pulls` holds the pull requests, `checks` the check states of a commit,
     `runs` the publish run of a commit. `paths` overrides the files a pull request changes, which otherwise come from
-    the diff of its branch. `fail` maps a method name to the exception it raises. `calls` records each method called."""
+    the diff of its branch. `mergeable_reads` holds the mergeable state of a pull request's next reads, one per read,
+    as GitHub works it out; once they are used up a read returns the pull request as it is. `fail` maps a method name
+    to the exception it raises. `calls` records each method called."""
 
     def __init__(self, main: dict[str, bytes] | None = None):
         self.snapshots: dict[str, dict[str, bytes]] = {"S0": dict(main or {})}
@@ -247,6 +249,7 @@ class FakeGitHub:
         self.bodies: dict[int, str] = {}
         self.bases: dict[int, str] = {}
         self.paths: dict[int, list[str]] = {}
+        self.mergeable_reads: dict[int, list[str | None]] = {}
         self.checks: dict[str, dict[str, str]] = {}
         self.runs: dict[str, github.Run] = {}
         self.merges: list[tuple[int, str]] = []
@@ -349,6 +352,8 @@ class FakeGitHub:
         self._touch("pull")
         if number not in self.pulls:
             raise github.GitHubNotFound(404)
+        if self.mergeable_reads.get(number):
+            return replace(self.pulls[number], mergeable_state=self.mergeable_reads[number].pop(0))
         return self.pulls[number]
 
     def pull_paths(self, number):

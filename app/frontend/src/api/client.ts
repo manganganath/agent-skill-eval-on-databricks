@@ -4,13 +4,22 @@ import type {
   SkillSummary, SubmitOut, SwitchOut, TryCandidateIn, TryIn, TryModelResult,
 } from "./types";
 
-// `errors` carries the plain-language problems of a refused draft upload (reason draft_invalid).
+// `errors` carries the plain-language problems of a refused draft upload (reason draft_invalid), and `unmet` the
+// merge rules that do not hold (reason not_mergeable).
 export class ApiError extends Error {
-  constructor(public readonly status: number, public readonly reason: string, public readonly errors: string[] = []) {
+  constructor(
+    public readonly status: number,
+    public readonly reason: string,
+    public readonly errors: string[] = [],
+    public readonly unmet: string[] = [],
+  ) {
     super(reason);
     this.name = "ApiError";
   }
 }
+
+const strings = (value: unknown): string[] =>
+  Array.isArray(value) ? value.filter((e: unknown): e is string => typeof e === "string") : [];
 
 /** A results list plus the partial-read signals the API sends in headers. */
 export interface Listed<T> {
@@ -32,14 +41,16 @@ async function send(path: string, init?: RequestInit): Promise<Response> {
   if (!res.ok) {
     let reason = `http_${res.status}`;
     let errors: string[] = [];
+    let unmet: string[] = [];
     try {
       const body = await res.json();
       if (body?.detail && typeof body.detail.reason === "string") reason = body.detail.reason;
-      if (Array.isArray(body?.detail?.errors)) errors = body.detail.errors.filter((e: unknown) => typeof e === "string");
+      errors = strings(body?.detail?.errors);
+      unmet = strings(body?.detail?.unmet);
     } catch {
       // not JSON: keep the http_<status> reason
     }
-    throw new ApiError(res.status, reason, errors);
+    throw new ApiError(res.status, reason, errors, unmet);
   }
   return res;
 }

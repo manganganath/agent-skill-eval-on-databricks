@@ -1,7 +1,7 @@
 import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { POLL_MS, ReleasePath, releaseDone } from "./ReleasePath";
+import { POLL_MS, RESTART_RELEASE, ReleasePath, STILL_CHECKING, releaseDone } from "./ReleasePath";
 import { api, ApiError } from "../api/client";
 import type { ReleaseStatus } from "../api/types";
 
@@ -125,6 +125,58 @@ describe("ReleasePath", () => {
     fireEvent.click(screen.getByRole("button", { name: "Merge" }));
     expect(await screen.findByText(/cannot be merged from the Skill Hub yet/i)).toBeTruthy();
     expect(screen.getByRole("heading", { name: "Release path" })).toBeTruthy();
+  });
+
+  it("asks the reviewer to try again in a few seconds while GitHub works out whether it can merge", async () => {
+    vi.mocked(api.releaseStatus).mockResolvedValue(OPEN);
+    vi.mocked(api.mergePull)
+      .mockRejectedValueOnce(new ApiError(409, "not_mergeable", [], ["mergeable_unknown"]))
+      .mockResolvedValueOnce({ pr_number: 5, merged: true, sha: "9f8e7d6c5b4a" });
+    renderPath(true);
+    fireEvent.click(await screen.findByRole("button", { name: "Merge pull request" }));
+    fireEvent.click(screen.getByRole("button", { name: "Merge" }));
+    expect(await screen.findByText(STILL_CHECKING)).toBeTruthy();
+    expect(screen.queryByText(/cannot be merged from the Skill Hub yet/i)).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Merge" })); // the confirmation stays, to try again
+    await act(async () => {});
+    expect(api.mergePull).toHaveBeenCalledTimes(2);
+  });
+
+  it("keeps the general words when another rule does not hold as well", async () => {
+    vi.mocked(api.releaseStatus).mockResolvedValue(OPEN);
+    vi.mocked(api.mergePull).mockRejectedValue(
+      new ApiError(409, "not_mergeable", [], ["check:platform", "mergeable_unknown"]),
+    );
+    renderPath(true);
+    fireEvent.click(await screen.findByRole("button", { name: "Merge pull request" }));
+    fireEvent.click(screen.getByRole("button", { name: "Merge" }));
+    expect(await screen.findByText(/cannot be merged from the Skill Hub yet/i)).toBeTruthy();
+    expect(screen.queryByText(STILL_CHECKING)).toBeNull();
+  });
+
+  it("says a cancelled gate check was cancelled, not that it failed", async () => {
+    vi.mocked(api.releaseStatus).mockResolvedValue({ ...OPEN, gate: { state: "cancelled", url: `${URL}/checks` } });
+    renderPath(true);
+    const gate = (await screen.findByText(/the check was cancelled/i)).closest("li") as HTMLElement;
+    expect(gate).toHaveTextContent("Re-run it in GitHub, or push again.");
+    expect(gate).not.toHaveTextContent("Failed");
+    expect(gate.className).not.toContain("release-step-failed");
+    expect(screen.queryByRole("button", { name: "Merge pull request" })).toBeNull();
+  });
+
+  it("says a cancelled release was replaced, and how an operator starts it again", async () => {
+    vi.mocked(api.releaseStatus).mockResolvedValue({
+      ...MERGED_WAITING,
+      release: { state: "cancelled", url: "https://github.test/acme/skills/actions/runs/9" },
+    });
+    renderPath(false);
+    const release = (await screen.findByText(/a newer release or deploy replaced this run/i)).closest("li") as HTMLElement;
+    expect(within(release).getByText(RESTART_RELEASE).tagName).toBe("CODE");
+    expect(RESTART_RELEASE).toBe("gh workflow run skills-publish.yml --ref main");
+    expect(release).not.toHaveTextContent("failed");
+    expect(within(release).getByRole("link", { name: "Open the run in GitHub" })).toHaveAttribute(
+      "href", "https://github.test/acme/skills/actions/runs/9",
+    );
   });
 
   it("says so when GitHub is not set up for the Hub", async () => {

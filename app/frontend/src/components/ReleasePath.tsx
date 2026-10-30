@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { api } from "../api/client";
+import { api, ApiError } from "../api/client";
 import type { ReleaseStatus } from "../api/types";
 import { useAsync } from "../hooks/useAsync";
 import { ErrorState } from "./ErrorState";
@@ -14,11 +14,15 @@ export function releaseDone(s: ReleaseStatus): boolean {
   return s.live.switched_after_merge || (s.opened.state === "closed" && !s.merged.merged);
 }
 
+// Starts a release again after its run was cancelled; it still waits for the production approval.
+export const RESTART_RELEASE = "gh workflow run skills-publish.yml --ref main";
+
 type Tone = "done" | "active" | "waiting" | "failed" | "todo";
 interface Step {
   label: string;
   tone: Tone;
   text: string;
+  command?: string; // shown after the text, as code
   link?: { to: string; text: string; internal?: boolean };
 }
 
@@ -28,14 +32,22 @@ export function releaseSteps(s: ReleaseStatus): Step[] {
   const closedUnmerged = opened.state === "closed" && !merged.merged;
   const gateStep: Step = gate.state === "passed" ? { label: "Eval gate", tone: "done", text: "Passed" }
     : gate.state === "failed" ? { label: "Eval gate", tone: "failed", text: "Failed" }
-      : gate.state === "pending" ? { label: "Eval gate", tone: "active", text: "Running" }
-        : { label: "Eval gate", tone: "todo", text: "Not run yet" };
+      : gate.state === "cancelled"
+        ? { label: "Eval gate", tone: "waiting", text: "The check was cancelled. Re-run it in GitHub, or push again." }
+        : gate.state === "pending" ? { label: "Eval gate", tone: "active", text: "Running" }
+          : { label: "Eval gate", tone: "todo", text: "Not run yet" };
   const mergeStep: Step = merged.merged
     ? { label: "Merged", tone: "done", text: `Merged${merged.sha ? ` at ${merged.sha.slice(0, 7)}` : ""}` }
     : closedUnmerged ? { label: "Merged", tone: "failed", text: "Closed without merging" }
       : { label: "Merged", tone: "todo", text: "Waiting for a reviewer" };
   const releaseStep: Step = release.state === "succeeded" ? { label: "Release approved", tone: "done", text: "Approved and published" }
     : release.state === "failed" ? { label: "Release approved", tone: "failed", text: "The release run failed" }
+      : release.state === "cancelled" ? {
+        label: "Release approved",
+        tone: "waiting",
+        text: "Cancelled: a newer release or deploy replaced this run. An operator can start the release again with",
+        command: RESTART_RELEASE,
+      }
       : release.state === "waiting_approval" ? { label: "Release approved", tone: "waiting", text: "Waiting for approval in GitHub" }
         : release.state === "running" ? { label: "Release approved", tone: "active", text: "Running" }
           : { label: "Release approved", tone: "todo", text: "Not started" };
@@ -59,6 +71,16 @@ export function releaseSteps(s: ReleaseStatus): Step[] {
     },
     liveStep,
   ];
+}
+
+// GitHub works out whether a pull request can be merged in the background. A merge refused only because it has not
+// finished is worth trying again in a moment.
+export const STILL_CHECKING =
+  "GitHub is still working out whether this pull request can be merged. Try again in a few seconds.";
+
+function stillChecking(err: unknown): boolean {
+  return err instanceof ApiError && err.reason === "not_mergeable" && err.unmet.length > 0
+    && err.unmet.every((rule) => rule === "mergeable_unknown");
 }
 
 function MergeButton({ pr, onMerged }: { pr: number; onMerged: () => void }) {
@@ -98,7 +120,7 @@ function MergeButton({ pr, onMerged }: { pr: number; onMerged: () => void }) {
       ) : (
         <button type="button" className="btn btn-primary" onClick={() => setAsking(true)}>Merge pull request</button>
       )}
-      {error ? <ErrorState error={error} /> : null}
+      {error ? <ErrorState error={error} message={stillChecking(error) ? STILL_CHECKING : undefined} /> : null}
     </div>
   );
 }
@@ -133,7 +155,9 @@ export function ReleasePath({ pr, dept, skill, isReviewer }: {
         {releaseSteps(s).map((step, i) => (
           <li key={step.label} className={`release-step release-step-${step.tone}`}>
             <span className="release-step-title">{i + 1}. {step.label}</span>
-            <span className="release-step-state">{step.text}</span>
+            <span className="release-step-state">
+              {step.text}{step.command ? <> <code>{step.command}</code></> : null}
+            </span>
             {step.link && (step.link.internal
               ? <Link to={step.link.to}>{step.link.text}</Link>
               : <a href={step.link.to} target="_blank" rel="noreferrer">{step.link.text}</a>)}
