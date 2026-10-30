@@ -19,8 +19,10 @@ permissions:
   contents: read
 
 # Shared with skills-publish.yml and the prod deploy in platform.yml: one at a time. An unapproved release blocks
-# this run. A pending member of the group can be replaced by another one. A replaced release is picked up on the
-# next skills push through the skillhub/released tag; a replaced deploy is redone on the next main push.
+# this run. A pending member of the group can be replaced by another one, and then shows as cancelled. A replaced
+# release is picked up on the next skills push through the skillhub/released tag, or by a skills-publish.yml
+# dispatch from main; a replaced deploy is redone on the next main push, or by a platform.yml dispatch from main
+# with deploy=prod. Start a replaced switch again.
 concurrency:
   group: skillhub-release
   cancel-in-progress: false

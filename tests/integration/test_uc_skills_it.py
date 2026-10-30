@@ -27,7 +27,7 @@ def test_create_upload_finalize_read_tag_delete(scratch_schema):
         assert uc.finalize(fqn).description == "it"
         before = uc.get(fqn).etag
         uc.upload_file(fqn, "references/a.md", b"x")
-        print("etag before and after a file upload (D1 open question):", before, uc.get(fqn).etag)
+        print("etag before and after a file upload:", before, uc.get(fqn).etag)
         assert set(uc.read_files(fqn)) == {"SKILL.md", "references/a.md"}
         uc.set_tag(fqn, "version", "1")
         assert uc.get_tags(fqn)["version"] == "1"

@@ -244,6 +244,26 @@ def test_job_switch_publish_without_provenance_fails(reg, make_bundle, monkeypat
     assert reg.journal.latest_version(DEPT, SKILL) == 0
 
 
+def test_job_switch_publish_refuses_a_quarantined_department(reg, live, make_bundle, monkeypatch, tmp_path):
+    """Behind the release plan, which leaves quarantined departments out: an evaluated skill there is still never
+    published. Retiring one stays allowed, for a skill that was live before its department was quarantined."""
+    monkeypatch.setenv("SKILLHUB_SKILLS", str(tmp_path / "skills"))
+    monkeypatch.setattr(cli, "_services", lambda c: (None, reg.uc, reg.sql, reg.journal))
+    assert reg.cfg.departments["external"].quarantine
+    evaluated(reg, make_bundle("external", "vendor", body="one"))
+    base = ["--config", str(CONFIG), "job-switch", "--dept", "external", "--actor", "ci"]
+    publish_args = ["--action", "publish", "--git-sha", SHA, "--eval-run-id", "r", *INPUT_ARGS]
+    r = CliRunner().invoke(cli.app, [*base, "--skill", "vendor", *publish_args])
+    assert r.exit_code == 1, r.output
+    assert "refusing to publish external/vendor: department external is quarantined" in r.output
+    assert reg.journal.history("external", "vendor") == []
+    assert reg.uc.list("skill_hub.external_versions") == []
+    live(make_bundle("external", "legacy"))
+    r = CliRunner().invoke(cli.app, [*base, "--skill", "legacy", "--action", "retire"])
+    assert r.exit_code == 0, r.output
+    assert reg.journal.live_state("external", "legacy").action == "retired"
+
+
 def test_job_switch_switch_needs_a_version(reg, monkeypatch):
     r = _cli(reg, monkeypatch, "--action", "switch", "--version", "")
     assert r.exit_code == 2
@@ -851,7 +871,7 @@ def test_job_run_creator_reads_creator_user_name():
 def test_job_switch_publish_refuses_eval_inputs_swapped_during_the_eval(
     reg, make_bundle, monkeypatch, tmp_path, rubric, dataset, message
 ):
-    """N2: an evals.json, rubric or fixture replaced in the candidate folder during the eval gives rows with
+    """An evals.json, rubric or fixture replaced in the candidate folder during the eval gives rows with
     other digests than the merge plan's, so publish refuses although the content hash matches."""
     monkeypatch.setenv("SKILLHUB_SKILLS", str(tmp_path / "skills"))
     evaluated(reg, make_bundle(DEPT, SKILL))

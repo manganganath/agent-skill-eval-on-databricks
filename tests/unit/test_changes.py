@@ -103,6 +103,7 @@ def test_as_dict_is_the_cli_shape(repo):
         "needs_cases": False,
         "needs_rubric": False,
         "moved_from_quarantine": False,
+        "quarantined": False,
         "needs_generation": False,
     }
 
@@ -122,6 +123,7 @@ def test_cli_prints_json_rows(repo, monkeypatch):
             "needs_cases": True,
             "needs_rubric": True,
             "moved_from_quarantine": False,
+            "quarantined": False,
             "needs_generation": True,
         }
     ]
@@ -353,6 +355,64 @@ def test_string_quarantine_values_count(qrepo):
     git(path, "mv", "skills/external/vendor", "skills/common/vendor")
     head = commit_all(path, "move")
     assert _moved(changed_skills(base, head, repo=path))["common/vendor"] is True
+
+
+# --- Skills in a quarantined department: evaluated in pull requests, never released ---
+
+
+def _quarantined_rows(result) -> dict[str, bool]:
+    return {f"{c.dept}/{c.skill}": c.quarantined for c in result}
+
+
+def test_added_edited_and_deleted_skills_in_quarantine_are_marked(qrepo):
+    path, base = qrepo
+    write(path, "skills/external/vendor/SKILL.md", "edited")
+    write(path, "skills/external/newcomer/SKILL.md", "new")
+    write(path, "skills/common/alpha/SKILL.md", "alpha edited")
+    head = commit_all(path, "edit and add")
+    assert _quarantined_rows(changed_skills(base, head, repo=path)) == {
+        "common/alpha": False,
+        "external/newcomer": True,
+        "external/vendor": True,
+    }
+    git(path, "rm", "-r", "-q", "skills/external/vendor")
+    rows = changed_skills(head, commit_all(path, "delete vendor"), repo=path)
+    assert [(c.dept, c.skill, c.status, c.quarantined) for c in rows] == [
+        ("external", "vendor", "deleted", True)
+    ]
+
+
+def test_a_move_into_quarantine_marks_only_the_new_side(qrepo):
+    path, base = qrepo
+    git(path, "mv", "skills/common/alpha", "skills/external/alpha")
+    head = commit_all(path, "quarantine alpha")
+    assert _quarantined_rows(changed_skills(base, head, repo=path)) == {
+        "common/alpha": False,  # deleted from common: the release retires it there
+        "external/alpha": True,
+    }
+
+
+def test_a_flag_set_at_either_ref_counts(qrepo):
+    path, _ = qrepo
+    write(path, "config/hub.yaml", HUB % "false")
+    base = commit_all(path, "unquarantine")
+    write(path, "skills/external/vendor/SKILL.md", "edited")
+    assert _quarantined_rows(changed_skills(base, commit_all(path, "edit"), repo=path)) == {
+        "external/vendor": False
+    }
+    write(path, "config/hub.yaml", HUB % "true")  # quarantined again in the same change
+    write(path, "skills/external/vendor/SKILL.md", "edited again")
+    head = commit_all(path, "quarantine and edit")
+    assert _quarantined_rows(changed_skills(base, head, repo=path)) == {"external/vendor": True}
+
+
+def test_a_move_out_of_quarantine_is_not_itself_quarantined(qrepo):
+    """The hard failure on moved_from_quarantine covers it; the flag must not hide the new side from that check."""
+    path, base = qrepo
+    git(path, "mv", "skills/external/vendor", "skills/common/vendor")
+    rows = {f"{c.dept}/{c.skill}": c for c in changed_skills(base, commit_all(path, "promote"), repo=path)}
+    assert (rows["common/vendor"].moved_from_quarantine, rows["common/vendor"].quarantined) == (True, False)
+    assert rows["external/vendor"].quarantined is True
 
 
 def test_unparseable_config_is_an_error(qrepo):

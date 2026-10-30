@@ -81,7 +81,7 @@ SELECT COUNT(*) AS n FROM latest
 WHERE rn = 1 AND verdict = 'inconclusive' AND started_at >= current_timestamp() - INTERVAL 1 DAY
 """.strip()
     # A switch that failed or was refused for drift in the last day, or one still not finished after an hour.
-    # "Not finished" reads only the rows that start or end a switch, as reconcile does (N3): a later published,
+    # "Not finished" reads only the rows that start or end a switch, as reconcile does: a later published,
     # publish_refused or drift row must not hide a stuck switch_started.
     switch_failed = f"""
 WITH last AS (
@@ -124,7 +124,7 @@ def _refresh(
     """Bring an existing alert's query and subscription up to date. Other settings stay as they are.
 
     Only the owner may change an alert. When the caller is not its owner (the ci Job, before bootstrap handed
-    the alerts to ci), or the update is refused, the alert is left as it is with a WARNING (N6): the Job never
+    the alerts to ci), or the update is refused, the alert is left as it is with a WARNING: the Job never
     fails on it."""
     current = w.alerts_v2.get_alert(alert_id)
     subs = _subscriptions(current)
@@ -190,7 +190,7 @@ def ensure_alerts(cfg: HubConfig, w: WorkspaceClient) -> list[str]:
 
     Existing alerts are matched by display name (which includes the catalog). Their query is updated to the
     current text, and the destination from SKILLHUB_ALERT_DESTINATION_ID is added when it is missing; a
-    subscription is never removed. An alert the caller does not own is left as it is, with a WARNING (N6).
+    subscription is never removed. An alert the caller does not own is left as it is, with a WARNING.
     Without a destination the alerts have no subscribers, with a WARNING.
     """
     existing = {a.display_name: a.id for a in w.alerts_v2.list_alerts()}

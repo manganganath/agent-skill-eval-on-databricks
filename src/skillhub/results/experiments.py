@@ -189,7 +189,7 @@ def trusted_run_authors(w=None) -> frozenset[str]:
 
     The ci_eval principal (the skill-eval Job, also for evals the Skill Hub requests) and the bundle deployer
     come from the environment. The caller's own identity is added too: in a Job that is the run identity, and on
-    a laptop it is the deployer who ran the eval. The caller could write the eval tables directly, so trusting
+    a local machine it is the deployer who ran the eval. The caller could write the eval tables directly, so trusting
     its own runs adds nothing. The app principal is not trusted: it never creates eval runs, only Try
     traces. Runs by anyone else are not trusted.
     """
@@ -440,7 +440,7 @@ def check_root_acl(cfg: HubConfig, w) -> list[Drift]:
 
 def fails_check(d: Drift) -> bool:
     """Whether a drift fails the nightly check-permissions task. `users` inheriting access from above the
-    workspace root is reported but does not fail it (re-review N5): only moving workspace_root out of
+    workspace root is reported but does not fail it: only moving workspace_root out of
     /Workspace/Shared, or an admin, can change it, and a Job that fails every night hides real failures."""
     return not (d.kind == "inherited_access" and d.principal == USERS_GROUP)
 

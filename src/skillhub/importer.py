@@ -115,7 +115,7 @@ class ImportReport:
 
 
 def _license_id(text: str) -> str | None:
-    """The SPDX id of a well-known licence text, else None: the notice never names a licence it did not see (M7)."""
+    """The SPDX id of a well-known licence text, else None: the notice never names a licence it did not see."""
     head = " ".join(text.split())[:2000]
     if "Apache License" in head and "Version 2.0" in head:
         return "Apache-2.0"

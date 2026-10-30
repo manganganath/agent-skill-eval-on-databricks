@@ -17,7 +17,7 @@ from skillhub.config import HubConfig, load_config
 app = typer.Typer(
     no_args_is_help=True,
     add_completion=False,
-    pretty_exceptions_show_locals=False,  # a traceback must never print locals such as tokens (M8)
+    pretty_exceptions_show_locals=False,  # a traceback must never print locals such as tokens
     help="Skill Hub: registry, versions, switch, reconcile, eval and bootstrap.",
 )
 
@@ -60,7 +60,7 @@ def config_show(ctx: typer.Context) -> None:
 @app.command("check-permissions")
 def check_permissions_cmd(ctx: typer.Context) -> None:
     """Report experiment ACL drift against UC grants. Exit 1 on drift, except `users` inheriting
-    access from above the workspace root, which is reported only (re-review N5)."""
+    access from above the workspace root, which is reported only."""
     from skillhub.auth import workspace_client
     from skillhub.results.experiments import check_permissions, fails_check
 
@@ -359,6 +359,16 @@ def _local_cells(cfg, bundle) -> tuple[str, ...] | None:
     return tuple(planned_cells(ef, default_models=cfg.defaults.models))
 
 
+def _refuse_quarantined(cfg, dept: str, skill: str) -> None:
+    """A quarantined department is evaluated in pull requests but never released. Publish refuses it before it
+    reads or writes anything; retire stays allowed. Moving a skill out of quarantine is an operator task."""
+    if cfg.departments[dept].quarantine:
+        raise SkillHubError(
+            f"refusing to publish {dept}/{skill}: department {dept} is quarantined and is never released. "
+            "To release the skill, an operator moves it out of quarantine (see docs/operations.md)."
+        )
+
+
 def _ensure_skill_experiment(cfg, dept: str, skill: str) -> None:
     """The published skill's own experiment and its registered judge, as bootstrap makes them. Idempotent.
 
@@ -387,7 +397,7 @@ def publish_cmd(
 
     Run this only through the skill-switch Job, which serialises publish, switch and retire. Exit 2 when the
     eval for the run key did not evaluate this content with the eval inputs of this checkout (its evals/ and
-    $SKILLHUB_FIXTURES), or blocks it.
+    $SKILLHUB_FIXTURES), or blocks it. Exit 1 for a quarantined department.
     """
     import json
     from dataclasses import asdict
@@ -398,6 +408,7 @@ def publish_cmd(
     cfg = _cfg(ctx)
     _check_skill_ref(cfg, dept, skill)
     with _guard():
+        _refuse_quarantined(cfg, dept, skill)
         w, uc, sql, journal = _services(cfg)
         bundle = _bundle(dept, skill)
         check_provenance(git_sha, eval_run_id)
@@ -569,8 +580,9 @@ def job_switch_cmd(
 
     Publish exits 2 unless the ci principal started this Job run and the eval for the run key evaluated
     exactly this content and did not block it. That eval is the merge eval, or the pull request gate when the
-    release reuses it (--trigger-source pr); no other eval's rows count. Switch and retire are also started by the
-    Skill Hub app. Jobs pass "" for an unset parameter, so every optional value accepts "".
+    release reuses it (--trigger-source pr); no other eval's rows count. Publish exits 1 for a quarantined
+    department; retire there is allowed. Switch and retire are also started by the Skill Hub app. Jobs pass "" for
+    an unset parameter, so every optional value accepts "".
     """
     root = _opt(skills_root_opt)
     expected = _opt(expect_hash)
@@ -678,6 +690,7 @@ def _job_switch(
     with _guard():
         w, uc, sql, journal = _services(cfg)
         if action == "publish":
+            _refuse_quarantined(cfg, dept, skill)  # before the bundle, the gate or any UC write
             bundle = _bundle(dept, skill)
             actual = content_hash(bundle.files)
             if expected and actual != expected:  # before any UC write
@@ -1130,7 +1143,8 @@ def changed_skills_cmd(
         False, "--empty-base", help="Diff from nothing (no release yet): every skill at --head is added."
     ),
 ) -> None:
-    """Print changed skills as JSON: [{dept, skill, status, needs_cases, needs_rubric, needs_generation}]."""
+    """Print changed skills as JSON: [{dept, skill, status, needs_cases, needs_rubric, moved_from_quarantine,
+    quarantined, needs_generation}]."""
     import json
 
     from skillhub.ci.changes import changed_skills

@@ -1,4 +1,4 @@
-"""AI/BI Genie space over the eval views: ask questions of eval results in plain English (C20).
+"""AI/BI Genie space over the eval views: ask questions of eval results in plain English.
 
 The space reads eval.runs_all and eval.cases_all, which are reviewer-only. Share the space with
 the reviewers group only.

@@ -94,6 +94,7 @@ class Reason(StrEnum):
     EVALS_MISSING = "evals_missing"
     PULL_NOT_FOUND = "pull_not_found"
     NOT_MERGEABLE = "not_mergeable"
+    CROSS_SITE_REQUEST = "cross_site_request"
 
 
 class Forbidden(Exception):

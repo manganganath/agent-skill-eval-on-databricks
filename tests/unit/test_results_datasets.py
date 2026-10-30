@@ -22,7 +22,7 @@ class FakeDataset:
         self.digest = "d0"
 
     def merge_records(self, records):
-        stale = copy.copy(self)  # like the real API: the returned handle predates the merge (D6)
+        stale = copy.copy(self)  # like the real API: the returned handle predates the merge
         self.records += records
         self.digest = f"d{len(self.records)}"
         return stale

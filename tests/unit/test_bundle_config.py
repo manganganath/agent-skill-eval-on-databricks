@@ -217,7 +217,7 @@ def test_nightly_schedule_is_daily_0200_utc():
     job = jobs_by_name()["skillhub-nightly"]
     assert job["schedule"]["quartz_cron_expression"] == "0 0 2 * * ?"
     assert job["schedule"]["timezone_id"] == "UTC"
-    # Unset means UNPAUSED in prod; development mode pauses it in dev (D1).
+    # Unset means UNPAUSED in prod; development mode pauses it in dev.
     assert job["schedule"].get("pause_status", "UNPAUSED") == "UNPAUSED"
     assert load_bundle()["targets"]["dev"]["mode"] == "development"
     names = [t["task_key"] for t in job["tasks"]]

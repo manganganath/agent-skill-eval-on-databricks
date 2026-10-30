@@ -184,10 +184,16 @@ def test_check_states_keep_the_newest_run_of_each_name():
             {"id": 2, "name": "skills-pr", "status": "completed", "conclusion": "success"},
             {"id": 3, "name": "platform", "status": "in_progress", "conclusion": None},
             {"id": 4, "name": "docs", "status": "completed", "conclusion": "skipped"},
+            {"id": 5, "name": "lint", "status": "completed", "conclusion": "cancelled"},
         ]
     }
     client = github.GitHubClient(REPO, TOKEN, opener=recording_opener(answer))
-    assert client.check_states("c7ecd3e") == {"skills-pr": "passed", "platform": "pending", "docs": "failed"}
+    assert client.check_states("c7ecd3e") == {
+        "skills-pr": "passed",
+        "platform": "pending",
+        "docs": "failed",
+        "lint": "cancelled",  # a newer push replaced it: not a failure of the skill
+    }
 
 
 def test_publish_run_reports_a_job_waiting_for_approval():

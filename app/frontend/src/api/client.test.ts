@@ -16,6 +16,16 @@ describe("api client", () => {
     expect(err.reason).toBe("skill_not_readable");
   });
 
+  it("keeps the unmet merge rules of a refused merge, and nothing that is not a string", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({ detail: { reason: "not_mergeable", unmet: ["mergeable_unknown", 7] } }), { status: 409 }),
+    );
+    const err = await api.mergePull(5).catch((e) => e);
+    expect(err.reason).toBe("not_mergeable");
+    expect(err.unmet).toEqual(["mergeable_unknown"]);
+    expect(err.errors).toEqual([]);
+  });
+
   it("falls back to http_<status> when the body is not JSON", async () => {
     vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response("oops", { status: 502 }));
     const err = await api.me().catch((e) => e);

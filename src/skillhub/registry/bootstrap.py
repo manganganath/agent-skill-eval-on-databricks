@@ -849,7 +849,7 @@ def grant_genie_access(cfg: HubConfig, w, space_id: str) -> str:
 
 
 class _Log(list):
-    """Log lines, each also passed to `emit` as it happens, so a later failure cannot hide it (M6)."""
+    """Log lines, each also passed to `emit` as it happens, so a later failure cannot hide it."""
 
     def __init__(self, emit: Callable[[str], None] | None) -> None:
         super().__init__()
