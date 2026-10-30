@@ -20,7 +20,7 @@ Skill Hub manages agent skills (`SKILL.md` bundles) as Unity Catalog objects. It
 
 There are two flows.
 
-**Pull request.** CI runs `lint`, then `generate` for skills that lack test files (a bot commits them). CI uploads the checked-out `skills/` and `fixtures/` folders to a candidate folder scoped to the run (`<workspace_root>/<catalog>/candidates/<run key>`), then starts the `skill-eval` Job with a run key such as `pr12_ab12cd3_a1` (`pr<N>_<sha7>_a<attempt>`). The run stages its own `run_<key>_<schema_base>` schemas, which hold the candidate skills and the live skills in scope. Configuration always comes from the deployed bundle, never from the pull request. The Job evaluates, then runs `sync`. CI then posts a sticky pull request comment with the run key and the verdict table. The comment has no hosts or IDs unless the repository variable `SKILLHUB_PR_LINKS` is `true`. The gate (`check-verdict --expect-file`, fed by `skillhub eval-digests` on the checkout) passes only if every planned gating cell (each model times `trigger` and `with_skill`) has a trusted row, and every gating row evaluated exactly the content, the rubric, and the cases with their fixtures of the checkout.
+**Pull request.** CI runs `lint`, then `generate` for skills that lack test files (a bot commits them). CI uploads the checked-out `skills/` and `fixtures/` folders to a candidate folder scoped to the run (`<workspace_root>/<catalog>/candidates/<run key>`), then starts the `skill-eval` Job with a run key such as `pr12_ab12cd3_a1` (`pr<N>_<sha7>_a<attempt>`). The run stages one `run_<key>_<schema_base>` schema per department, which holds that department's candidate skills, pinned versions and live copies. A department scope reads its own schema and common's. Configuration always comes from the deployed bundle, never from the pull request. The Job evaluates, then runs `sync`. CI then posts a sticky pull request comment with the run key and the verdict table. The comment has no hosts or IDs unless the repository variable `SKILLHUB_PR_LINKS` is `true`. The gate (`check-verdict --expect-file`, fed by `skillhub eval-digests` on the checkout) passes only if every planned gating cell (each model times `trigger` and `with_skill`) has a trusted row, and every gating row evaluated exactly the content, the rubric, and the cases with their fixtures of the checkout.
 
 ```mermaid
 sequenceDiagram
@@ -116,7 +116,7 @@ flowchart TB
 | `<d>_versions` | Every published version, as `<skill>-v<N>`. | Authors and reviewers |
 | `<d>_evals` | OTel trace tables, `eval_runs`, `eval_cases`, `skill_versions`, evaluation datasets `ds_<skill>` (they mirror `evals.json` for lineage and the Skill Hub; scoring never reads labels from them), `rubrics` (insert-only, one row per rubric per run) and the `eval_matrix` view. | `SELECT` for readers, reviewers and both CI principals. Table-level `MODIFY`: `skillhub-ci` on `skill_versions`; `skillhub-ci-eval` on `eval_runs`, `eval_cases`, `rubrics` and the trace tables, plus `CREATE TABLE` for the `ds_<skill>` tables |
 | `eval` | The `matrix_all`, `runs_all`, `cases_all` and `versions_all` views across departments. | Reviewers |
-| `run_<key>_<schema_base>` | Temporary schema for one eval run. | `skillhub-ci-eval` only. Dropped when the run ends; a cleanup Job drops any older than 24 hours. |
+| `run_<key>_<schema_base>` | Temporary schema for one department's skills in one eval run. | `skillhub-ci-eval` only. Dropped when the run ends; a cleanup Job drops any older than 24 hours. |
 
 Bootstrap creates all schemas. `ensure_tables` and `ensure_views` create none. After the first bootstrap, `skillhub-ci` owns the schemas, tables and views.
 
@@ -211,6 +211,7 @@ MLflow is the source of truth. Delta is synced from it.
 
 - **UC Skills (Beta).** Skills are stored and served as Unity Catalog objects. There is no native versioning, so this product keeps the versions.
 - **Skills MCP server in Unity Gateway (Beta).** Agents use it to discover and load skills. The client is isolated in one module of the package, so a change to the service touches one file.
+- **Skills MCP connection cap (Beta).** A connection offers at most 20 per-skill tools and leaves out the rest without an error. This product opens one connection per schema: the eval runner and Try each connect to a scope's schemas, the department's first. `skillhub lint` reports a department folder with more than 20 skills. Keep each schema at 20 skills or fewer.
 - **Unified trace table (Beta).** Optional.
 - **Production monitoring (Beta).** Not used in this release. The nightly Job provides re-evaluation.
 - **Compliance Security Profile.** Workspaces with this profile block skill writes, so skill publishing is not supported there.

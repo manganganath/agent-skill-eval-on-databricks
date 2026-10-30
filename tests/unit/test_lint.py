@@ -4,6 +4,7 @@ from pathlib import Path
 import pytest
 from typer.testing import CliRunner
 
+from skillhub.gateway.skills_mcp import MAX_SKILL_TOOLS
 from skillhub.lint import MAX_BUNDLE_BYTES, LintRefused, assert_clean, lint_repo
 
 
@@ -39,6 +40,15 @@ def test_names_must_be_unique_across_departments(make_bundle, tmp_path):
     make_bundle("operations", "dup-skill")
     msgs = _messages(lint_repo(tmp_path / "skills"))
     assert sum("also used in another department" in m for m in msgs) == 2
+
+
+def test_a_department_folder_holds_at_most_the_gateway_connection_cap(make_bundle, tmp_path):
+    for i in range(MAX_SKILL_TOOLS):
+        make_bundle("equity_research", f"skill-{i:02d}")
+    assert lint_repo(tmp_path / "skills") == []
+    make_bundle("equity_research", "skill-extra")
+    msgs = _messages(lint_repo(tmp_path / "skills"))
+    assert any("holds 21 skills" in m and "the limit is 20" in m for m in msgs), msgs
 
 
 def test_bundle_size_limit(make_bundle, tmp_path):

@@ -89,6 +89,8 @@ For a custom UI that does not call the REST API:
 
 The skills MCP endpoint that agents use is in Unity Gateway (Beta). This product's client for it is in one module of the package, and its address is not part of this document. Use that module as a reference implementation rather than building against an undocumented address.
 
+Each connection offers at most 20 per-skill tools and leaves out the rest without an error. An agent outside the Skill Hub therefore adds one MCP server per schema, not one for several schemas, and keeps each schema at 20 skills or fewer. The generic tools (`load_skill`, `get_skill_files`, `list_skills`) are offered on each connection.
+
 **Example.** List a skill's matrix rows through the SQL Statement Execution API:
 
 ```python
