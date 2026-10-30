@@ -11,6 +11,9 @@ from mcp.client.streamable_http import create_mcp_http_client, streamable_http_c
 from skillhub.gateway.request_auth import HeaderAuth
 
 AUTHORING_TOOLS = frozenset({"create_skill", "update_skill", "delete_skill"})
+# The gateway offers at most this many per-skill tools (skill_<catalog>.<schema>.<name>) per connection, counting
+# the connection's schemas in URL order, and leaves out the rest without an error. Keep each schema at or below it.
+MAX_SKILL_TOOLS = 20
 
 
 class SkillToolError(RuntimeError):

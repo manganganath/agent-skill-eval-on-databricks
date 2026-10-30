@@ -9,6 +9,7 @@ from skillhub import SkillHubError
 from skillhub.bundle import BundleError, SkillBundle, load_bundle
 from skillhub.bundle import skills_root as default_skills_root
 from skillhub.evalspec import EFFECTIVENESS_FIRST_ID, load_evals, load_rubric, loosening_thresholds
+from skillhub.gateway.skills_mcp import MAX_SKILL_TOOLS
 
 NAME_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 MAX_BUNDLE_BYTES = 1024 * 1024
@@ -184,7 +185,16 @@ def lint_repo(
                     )
                 )
                 continue
-            for skill_dir in sorted(p for p in dept_dir.iterdir() if p.is_dir()):
+            skill_dirs = sorted(p for p in dept_dir.iterdir() if p.is_dir())
+            if len(skill_dirs) > MAX_SKILL_TOOLS:  # a department's run schema is one skills server connection
+                issues.append(
+                    LintIssue(
+                        dept_dir.as_posix(),
+                        f"department folder {dept_dir.name!r} holds {len(skill_dirs)} skills; the limit is "
+                        f"{MAX_SKILL_TOOLS}, the most the skills server offers per connection",
+                    )
+                )
+            for skill_dir in skill_dirs:
                 try:
                     bundles.append(load_bundle(skill_dir, dept_dir.name))
                 except BundleError as e:
