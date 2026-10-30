@@ -41,6 +41,11 @@ resources:
           # The eval service principal's application ID. The Dashboard counts its requests as evaluation tokens.
           - name: SKILLHUB_CI_EVAL_PRINCIPAL
             value: ${var.ci_eval_principal}
+          # The pull request flow: the repository, and the Databricks secret (scope/key) that holds the GitHub token.
+          - name: SKILLHUB_GITHUB_REPO
+            value: ${var.github_repo}
+          - name: SKILLHUB_GITHUB_TOKEN_SECRET
+            value: ${var.github_token_secret}
           - name: OTEL_TRACES_SAMPLER
             value: always_on
       # No serving endpoints are bound: the app calls models with the signed-in user's token, and binding an

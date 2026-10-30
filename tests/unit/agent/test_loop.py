@@ -7,7 +7,7 @@ import pytest
 from mlflow.entities import SpanType
 
 from skillhub.agent.fixtures import FixtureStore
-from skillhub.agent.loop import SkillsBridge, run_agent
+from skillhub.agent.loop import MultiSkillsBridge, SkillsBridge, run_agent
 from skillhub.evalspec import EvalCase
 from skillhub.gateway.models import ChatResult, ToolCall
 from skillhub.gateway.skills_mcp import McpTool, SkillToolError
@@ -476,3 +476,122 @@ def test_bridge_open_timeout_lets_the_client_clean_up_before_the_loop_stops():
         SkillsBridge(Slow(), timeout=0.2)
     assert log == ["cleaned up"]
     assert not any(t.name == "skills-bridge" and t.is_alive() for t in threading.enumerate())
+
+
+# --- one connection per schema -------------------------------------------------------------------------------
+
+A_SKILL, B_SKILL = "skill_cat.a.one", "skill_cat.b.two"
+
+
+class Connection(FakeSkillsMcp):
+    """A fake connection that records when it is closed, and can fail to close."""
+
+    def __init__(self, tools, log, name, fail_close=False):
+        super().__init__(tools)
+        self.log, self.name, self.fail_close = log, name, fail_close
+
+    async def __aexit__(self, *exc):
+        self.log.append(self.name)
+        if self.fail_close:
+            raise RuntimeError(f"{self.name} did not close")
+
+
+def two_connections(log, *, fail_close_b=False):
+    """Schema cat.a lists skill one and load_skill; cat.b lists skill two and load_skill too."""
+    conns = {
+        "cat.a": Connection({A_SKILL: ("a", "one text"), "load_skill": ("load", "A load")}, log, "cat.a"),
+        "cat.b": Connection(
+            {B_SKILL: ("b", "two text"), "load_skill": ("load", "B load")},
+            log,
+            "cat.b",
+            fail_close=fail_close_b,
+        ),
+    }
+    return conns
+
+
+def test_multi_bridge_lists_the_union_and_offers_each_generic_tool_once():
+    log = []
+    conns = two_connections(log)
+    with MultiSkillsBridge(["cat.a", "cat.b"], lambda s: conns[s]) as bridge:
+        names = sorted(t.name for t in bridge.list_tools())
+    assert names == ["load_skill", A_SKILL, B_SKILL]
+    assert sorted(log) == ["cat.a", "cat.b"]  # every connection closed
+
+
+def test_multi_bridge_routes_a_skill_call_to_the_connection_that_listed_it():
+    log = []
+    conns = two_connections(log)
+    with MultiSkillsBridge(["cat.a", "cat.b"], lambda s: conns[s]) as bridge:
+        bridge.list_tools()
+        assert bridge.call_tool(B_SKILL, {}) == "two text"
+    assert conns["cat.b"].calls == [(B_SKILL, {})]
+    assert conns["cat.a"].calls == []
+
+
+def test_multi_bridge_routes_a_generic_call_by_the_schema_its_arguments_name():
+    log = []
+    conns = two_connections(log)
+    with MultiSkillsBridge(["cat.a", "cat.b"], lambda s: conns[s]) as bridge:
+        bridge.list_tools()
+        assert bridge.call_tool("load_skill", {"full_name": "cat.b.two"}) == "B load"
+        assert bridge.call_tool("load_skill", {"full_name": "CAT.A.one"}) == "A load"  # case-insensitive
+        assert bridge.call_tool("load_skill", {"full_name": "cat.z.none"}) == "A load"  # else the first
+    assert [c[1]["full_name"] for c in conns["cat.b"].calls] == ["cat.b.two"]
+    assert [c[1]["full_name"] for c in conns["cat.a"].calls] == ["CAT.A.one", "cat.z.none"]
+
+
+def test_multi_bridge_hides_a_staged_skill_from_the_tools_and_refuses_its_calls():
+    log = []
+    conns = two_connections(log)
+    with MultiSkillsBridge(["cat.a", "cat.b"], lambda s: conns[s], hidden=["cat.b.two"]) as bridge:
+        assert B_SKILL not in {t.name for t in bridge.list_tools()}
+        with pytest.raises(SkillToolError, match="not available"):
+            bridge.call_tool(B_SKILL, {})
+        with pytest.raises(SkillToolError, match="not available"):
+            bridge.call_tool("load_skill", {"full_name": "cat.b.two"})
+    assert conns["cat.b"].calls == []
+
+
+def test_multi_bridge_fails_as_a_whole_and_closes_the_connections_that_opened():
+    log = []
+    conns = two_connections(log)
+
+    def connect(schema):
+        if schema == "cat.b":
+            raise ConnectionError("gateway down")
+        return conns[schema]
+
+    with pytest.raises(ConnectionError, match="gateway down"):
+        MultiSkillsBridge(["cat.a", "cat.b"], connect)
+    assert log == ["cat.a"]
+
+
+def test_multi_bridge_closes_every_connection_even_when_one_fails_to_close():
+    log = []
+    conns = two_connections(log, fail_close_b=True)
+    bridge = MultiSkillsBridge(["cat.a", "cat.b"], lambda s: conns[s])
+    with pytest.raises(RuntimeError, match="cat.b did not close"):
+        bridge.close()
+    assert sorted(log) == ["cat.a", "cat.b"]
+
+
+def test_run_agent_calls_a_skill_on_the_second_connection_through_the_merged_tools():
+    log = []
+    conns = two_connections(log)
+    names = ToolNameMap()
+    names.set_fqn_rewrite({"cat.b.two": "cat.b.two"})
+    model = FakeModelClient([chat(tool_calls=[ToolCall("c1", "skill_cat__b__two", {})]), chat(text="done")])
+    with MultiSkillsBridge(["cat.a", "cat.b"], lambda s: conns[s]) as skills:
+        res = run_agent(
+            case(),
+            model=model,
+            skills=skills,
+            names=names,
+            fixtures=FixtureStore("fixtures"),
+            trigger=False,
+            system_prompt=SYSTEM,
+        )
+    assert res.final_text == "done"
+    assert res.invoked_skills == ["cat.b.two"]
+    assert conns["cat.b"].calls == [(B_SKILL, {})]

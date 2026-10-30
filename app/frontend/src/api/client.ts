@@ -1,7 +1,7 @@
 import type {
   AppConfig, CandidateDetail, CandidateSummary, CaseRow, DraftIn, DraftOut, EvalRunIn, EvalRunOut, EvalRunStatus,
-  Dashboard, DashboardOut, JournalRow, MatrixRow, Me, ReadableDepartments, SkillDetail, SkillSummary, SwitchOut,
-  TryCandidateIn, TryIn, TryModelResult,
+  Dashboard, DashboardOut, JournalRow, MatrixRow, Me, MergeOut, ReadableDepartments, ReleaseStatus, SkillDetail,
+  SkillSummary, SubmitOut, SwitchOut, TryCandidateIn, TryIn, TryModelResult,
 } from "./types";
 
 // `errors` carries the plain-language problems of a refused draft upload (reason draft_invalid).
@@ -115,6 +115,10 @@ export const api = {
   uploadDraft: (body: DraftIn) => request<DraftOut>("/drafts", { method: "POST", body: JSON.stringify(body) }),
   discardDraft: (runKey: string) =>
     request<{ discarded: string }>(`/drafts/${encodeURIComponent(runKey)}`, { method: "DELETE" }),
+  submitDraft: (runKey: string) => request<SubmitOut>(`/drafts/${enc(runKey)}/submit`, { method: "POST" }),
+  releaseStatus: (pr: number, dept: string, skill: string) =>
+    request<ReleaseStatus>(`/release-status${qs({ pr: String(pr), dept, skill })}`),
+  mergePull: (number: number) => request<MergeOut>(`/pulls/${number}/merge`, { method: "POST" }),
   matrix: (params: { skill?: string; dept?: string; fqn?: string }) => requestList<MatrixRow>(`/results/matrix${qs(params)}`),
   cases: (runId: string) => requestList<CaseRow>(`/results/cases${qs({ run_id: runId })}`),
   dashboard: () => requestDashboard(),

@@ -4,7 +4,7 @@ import logging
 import re
 import time
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Literal
 
 from databricks.sdk.errors import NotFound, PermissionDenied
@@ -41,8 +41,11 @@ class StagedSkill:
 @dataclass
 class RunScope:
     dept: str
-    schema_fqn: str
-    skills: list[StagedSkill]
+    schemas: list[str]  # the run schemas the scope reads: the department's first, then common's
+    skills: list[StagedSkill]  # the copies the scope offers, one per name
+    hidden: list[StagedSkill] = field(
+        default_factory=list
+    )  # staged copies the scope leaves out: a shadowed name
 
 
 def _stage_one(
@@ -109,6 +112,44 @@ def _pin(cfg: HubConfig, ref: str | tuple[str, str]) -> tuple[str, str]:
     return dept, name
 
 
+def visible_depts(dept: str) -> list[str]:
+    """The departments whose skills a scope reads, the scope's own first: common reads only itself."""
+    return ["common"] if dept == "common" else [dept, "common"]
+
+
+_RANK = {"candidate": 0, "version": 1, "live": 2}  # the precedence between kinds of copy of one name
+
+
+def _stage_home(
+    cfg: HubConfig,
+    uc: UCSkills,
+    journal: Journal,
+    run_key: str,
+    home: str,
+    candidates: list[SkillBundle],
+    pins: dict[tuple[str, str], int],
+) -> dict[str, StagedSkill]:
+    """Stage one department's own skills into its run schema: its candidates, then its pinned versions, then its
+    live copies, one copy per name."""
+    schema = run_schema(cfg, run_key, home)
+    uc.ensure_schema(schema)
+    out: dict[str, StagedSkill] = {}
+    for b in sorted((b for b in candidates if b.dept == home), key=lambda b: b.name):
+        out[b.name] = _stage_one(cfg, uc, schema, b.name, b.dept, b.files, "candidate")
+    for (d, name), n in sorted(pins.items()):
+        if d == home and name not in out:
+            out[name] = _stage_version(cfg, uc, journal, schema, name, home, n)
+    for name in journal.skills(home):
+        state = journal.live_state(home, name)
+        if name in out or state is None or state.action != "switched":
+            continue
+        files = uc.read_files(state.versioned_fqn)  # copied from the registered version
+        if content_hash(files) != state.content_hash:
+            raise StageError(f"{state.versioned_fqn} no longer matches its publish record")
+        out[name] = _stage_one(cfg, uc, schema, name, home, files, "live")
+    return out
+
+
 def stage(
     cfg: HubConfig,
     uc: UCSkills,
@@ -119,11 +160,12 @@ def stage(
     scope_depts: list[str] | None = None,
     versions: Mapping[str | tuple[str, str], int] | None = None,
 ) -> list[RunScope]:
-    """Create one run schema per department scope with the skills under test.
+    """Stage each department's skills into its own run schema, and return one scope per department scope.
 
-    `versions` pins `dept/name` (or `(dept, name)`) to a published version of that department only.
-    Precedence for a skill name: candidate, then registered version, then live copy; within a scope the
-    department's own copy comes before common's.
+    A scope reads its department's schema and common's, so no run schema holds more skills than one department
+    does. `versions` pins `dept/name` (or `(dept, name)`) to a published version of that department only.
+    Precedence for a skill name in a scope: candidate, then registered version, then live copy; a tie goes to
+    the department's own copy. A copy that loses is hidden from the scope, not staged again.
     """
     unknown = sorted(set(scope_depts or []) - set(cfg.departments))
     unknown += sorted({b.dept for b in candidates} - set(cfg.departments))
@@ -141,34 +183,40 @@ def stage(
             raise StageError(f"{dept}/{name} version {n} is not a published version of {dept}")
         pins[(dept, name)] = n
     depts = sorted({b.dept for b in candidates} | set(scope_depts or []) | {d for d, _ in pins})
+    if not depts:
+        return []
+    # A name that is a candidate in two departments a scope reads is refused before anything is written.
+    for dept in depts:
+        visible = visible_depts(dept)
+        names = [b.name for b in candidates if b.dept in visible]
+        if len(set(names)) != len(names):
+            dup = sorted({n for n in names if names.count(n) > 1})[0]
+            raise StageError(f"skill {dup!r} is a candidate in more than one visible department")
+    homes = {
+        home: _stage_home(cfg, uc, journal, run_key, home, candidates, pins)
+        for home in sorted({*depts, "common"})
+    }
     scopes: list[RunScope] = []
     for dept in depts:
-        visible = ["common"] if dept == "common" else [dept, "common"]
-        schema = run_schema(cfg, run_key, dept)
-        uc.ensure_schema(schema)
-        skills: list[StagedSkill] = []
-        seen: set[str] = set()
-        for b in sorted((b for b in candidates if b.dept in visible), key=lambda b: (b.dept, b.name)):
-            if b.name in seen:
-                raise StageError(f"skill {b.name!r} is a candidate in more than one visible department")
-            seen.add(b.name)
-            skills.append(_stage_one(cfg, uc, schema, b.name, b.dept, b.files, "candidate"))
-        for d in visible:  # the department's own pin before common's
-            for (home, name), n in sorted(pins.items()):
-                if home == d and name not in seen:
-                    seen.add(name)
-                    skills.append(_stage_version(cfg, uc, journal, schema, name, home, n))
-        for d in visible:
-            for name in journal.skills(d):
-                state = journal.live_state(d, name)
-                if name in seen or state is None or state.action != "switched":
-                    continue
-                files = uc.read_files(state.versioned_fqn)  # copied from the registered version
-                if content_hash(files) != state.content_hash:
-                    raise StageError(f"{state.versioned_fqn} no longer matches its publish record")
-                seen.add(name)
-                skills.append(_stage_one(cfg, uc, schema, name, d, files, "live"))
-        scopes.append(RunScope(dept=dept, schema_fqn=schema, skills=skills))
+        visible = visible_depts(dept)
+        copies = [(_RANK[sk.origin], i, sk) for i, home in enumerate(visible) for sk in homes[home].values()]
+        best: dict[str, tuple[int, int, StagedSkill]] = {}
+        for rank, i, sk in copies:
+            if sk.name not in best or (rank, i) < best[sk.name][:2]:
+                best[sk.name] = (rank, i, sk)
+        chosen = sorted(best.values(), key=lambda c: (c[0], c[1], c[2].name))
+        hidden = sorted(
+            (sk for _, _, sk in copies if best[sk.name][2].staged_fqn != sk.staged_fqn),
+            key=lambda sk: sk.staged_fqn,
+        )
+        scopes.append(
+            RunScope(
+                dept=dept,
+                schemas=[run_schema(cfg, run_key, home) for home in visible],
+                skills=[sk for _, _, sk in chosen],
+                hidden=hidden,
+            )
+        )
     return scopes
 
 

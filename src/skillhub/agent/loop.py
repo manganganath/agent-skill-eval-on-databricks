@@ -4,6 +4,7 @@ import asyncio
 import concurrent.futures
 import json
 import threading
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from typing import Any
 
@@ -109,6 +110,90 @@ class SkillsBridge:
         self.close()
 
 
+def _schema_of(arguments: dict) -> str:
+    """The `<catalog>.<schema>` that a generic tool's arguments name: from `full_name`, else from `schema`."""
+    full = str(arguments.get("full_name") or "")
+    return (full.rpartition(".")[0] if full else str(arguments.get("schema") or "")).casefold()
+
+
+class MultiSkillsBridge:
+    """One SkillsBridge per skills MCP connection, used as one: the agent loop sees the union of their tools.
+
+    The gateway offers at most MAX_SKILL_TOOLS per-skill tools per connection, so a run opens one connection per
+    schema. A per-skill tool is called on the connection that listed it. A generic tool (load_skill,
+    get_skill_files, list_skills) is listed by every connection: it is offered once, and called on the connection
+    of the schema its arguments name, else on the first.
+
+    `hidden` holds staged FQNs that the run leaves out: their tools are not listed, and a call to one is refused
+    as a tool error. Every connection is opened or none is: a failure closes the ones that opened.
+    """
+
+    def __init__(
+        self,
+        schemas: list[str],
+        connect: Callable[[str], Any],
+        *,
+        timeout: float | None = None,
+        hidden: Iterable[str] = (),
+    ):
+        if not schemas:
+            raise ValueError("MultiSkillsBridge needs at least one schema")
+        self._schemas = list(schemas)
+        self._hidden = frozenset(f.casefold() for f in hidden)
+        self._hidden_tools = frozenset(f"skill_{f}" for f in self._hidden)
+        self._bridges: list[SkillsBridge] = []
+        self._owners: dict[str, list[int]] = {}  # tool name -> indexes of the connections that listed it
+        try:
+            for schema in self._schemas:
+                self._bridges.append(SkillsBridge(connect(schema), timeout=timeout))
+        except BaseException:
+            self.close()
+            raise
+
+    def list_tools(self):
+        tools: dict[str, Any] = {}
+        self._owners = {}
+        for i, bridge in enumerate(self._bridges):
+            for t in bridge.list_tools():
+                if t.name.casefold() in self._hidden_tools:
+                    continue
+                self._owners.setdefault(t.name, []).append(i)
+                tools.setdefault(t.name, t)  # the first connection's copy of a generic tool
+        return list(tools.values())
+
+    def call_tool(self, name: str, arguments: dict) -> str:
+        full_name = str(arguments.get("full_name") or "").casefold()
+        if name.casefold() in self._hidden_tools or (name == "load_skill" and full_name in self._hidden):
+            raise SkillToolError("this skill is not available in this run")
+        return self._route(name, arguments).call_tool(name, arguments)
+
+    def _route(self, name: str, arguments: dict) -> SkillsBridge:
+        owners = self._owners.get(name) or [0]
+        if len(owners) > 1:  # a generic tool: the connection of the schema it names
+            want = _schema_of(arguments)
+            for i in owners:
+                if self._schemas[i].casefold() == want:
+                    return self._bridges[i]
+        return self._bridges[owners[0]]
+
+    def close(self) -> None:
+        """Close every connection that opened, even when one fails; the first failure is raised afterwards."""
+        first: BaseException | None = None
+        for bridge in self._bridges:
+            try:
+                bridge.close()
+            except BaseException as e:
+                first = first or e
+        if first is not None:
+            raise first
+
+    def __enter__(self) -> MultiSkillsBridge:
+        return self
+
+    def __exit__(self, *exc) -> None:
+        self.close()
+
+
 def _is_skill_tool(prod: str) -> bool:
     return prod.startswith(SKILL_PREFIX) or prod == "load_skill"
 
@@ -147,7 +232,7 @@ def run_agent(
     case: EvalCase,
     *,
     model: ModelClient,
-    skills: SkillsBridge | None,
+    skills: SkillsBridge | MultiSkillsBridge | None,
     names: ToolNameMap,
     fixtures: FixtureStore,
     trigger: bool,

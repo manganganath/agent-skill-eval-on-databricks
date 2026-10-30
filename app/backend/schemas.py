@@ -70,7 +70,8 @@ class CandidateSummary(BaseModel):
     (`kind` draft). Mirrors CandidateSummary in app/frontend/src/api/types.ts.
 
     `verdicts` is the newest result of each model across modes, from the candidate's own run keys only. A draft has
-    no pull request or commit; `uploaded_by` and `has_rubric` are known for drafts only."""
+    no pull request or commit; `uploaded_by` and `has_rubric` are known for drafts only, and `submitted_pr` is set for
+    a draft that was submitted for review."""
 
     kind: Literal["pr", "draft"]
     run_key: str
@@ -79,6 +80,7 @@ class CandidateSummary(BaseModel):
     uploaded_at: datetime | None
     uploaded_by: str | None = None
     has_rubric: bool | None = None
+    submitted_pr: int | None = None
     dept: str
     name: str
     description: str | None
@@ -94,6 +96,8 @@ class CandidateBlock(BaseModel):
     git_sha: str | None
     uploaded_at: datetime | None
     uploaded_by: str | None = None
+    submitted_pr: int | None = None
+    submitted_url: str | None = None
 
 
 class CandidateResult(BaseModel):
@@ -224,3 +228,66 @@ class DashboardOut(BaseModel):
     pass_rate_trend: list[DashboardPassRateTrend]
     health: list[DashboardHealth]
     tokens: list[DashboardTokens] | None
+
+
+class SubmitOut(BaseModel):
+    """POST /api/drafts/{run_key}/submit. `notes` says what the pull request left out, one plain sentence each."""
+
+    pr_number: int
+    url: str
+    branch: str
+    notes: list[str]
+
+
+class ReleaseOpened(BaseModel):
+    state: Literal["open", "closed"]
+    url: str
+
+
+class ReleaseGate(BaseModel):
+    """The eval gate: the skills-pr check of the pull request's head commit. `none` when no check has run."""
+
+    state: Literal["pending", "passed", "failed", "none"]
+    url: str
+
+
+class ReleaseMerged(BaseModel):
+    merged: bool
+    sha: str | None
+    at: datetime | None
+
+
+class ReleaseRelease(BaseModel):
+    """The skills-publish run of the merge commit. `url` links to the run, which is where a waiting release is approved."""
+
+    state: Literal["not_started", "running", "waiting_approval", "succeeded", "failed"]
+    url: str | None
+
+
+class ReleaseLive(BaseModel):
+    """The skill's live version from the journal, and whether a switch to it came after the merge. `fqn` is the skill's
+    name in Unity Catalog, for its page."""
+
+    fqn: str
+    version: int | None
+    switched_after_merge: bool
+    eval_access: EvalAccess
+
+
+class ReleaseStatusOut(BaseModel):
+    """GET /api/release-status: the steps of one pull request's path to a live version, for one skill."""
+
+    pr_number: int
+    dept: str
+    skill: str
+    opened: ReleaseOpened
+    gate: ReleaseGate
+    merged: ReleaseMerged
+    release: ReleaseRelease
+    live: ReleaseLive
+
+
+class MergeOut(BaseModel):
+    pr_number: int
+    merged: bool
+    sha: str

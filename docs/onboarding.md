@@ -22,8 +22,10 @@ The Skill Hub shows the same table on its Access page, with your own roles marke
 | See skills under review | No | Own departments | All departments |
 | Upload a draft | No | Yes | Yes |
 | Discard a draft | No | Their own | Any draft |
+| Submit a draft for review | No | Their own | Any draft |
 | Try a skill under review | No | Own departments | All departments |
 | Run an eval on a candidate or draft | No | Yes | Yes |
+| Merge a pull request from the Hub | No | No | Yes, when its gate passed |
 | Switch the live version | No | No | Yes |
 | Add or edit a skill | No | Through a pull request | Through a pull request |
 | Approve a release | In GitHub: the required reviewers of the `production` environment, not a Skill Hub role | | |
@@ -68,7 +70,17 @@ Who sees a candidate: reviewers see every department. An author sees a candidate
 2. The Skill Hub checks the skill as `uv run skillhub lint` does. If something is wrong, the form lists every problem; fix them and upload again.
 3. The draft's page opens, with a **Draft** badge and the banner **Not released. Draft uploaded by ...**. Select **Run eval** to evaluate it.
 
-A draft is never released. To release the skill, add it to `skills/` in a pull request, as in [Add a skill](#add-a-skill).
+A draft is never released. To release the skill, submit the draft for review from its page, or add it to `skills/` in a pull request, as in [Add a skill](#add-a-skill).
+
+**Submit a draft for review.** On the draft's page, select **Submit for review**, then confirm. The Skill Hub opens a pull request that puts the draft's files under `skills/<department>/<name>/`, replacing what is there. The page then shows **Submitted as PR #N** and the release path, with five steps:
+
+1. **Pull request opened.** The link opens it on GitHub.
+2. **Eval gate.** The `skills-pr` check runs on the pull request by itself. A failed trigger eval blocks the merge.
+3. **Merged.** Once the gate has passed, a reviewer selects **Merge pull request** on the release path and confirms. The merge is a merge commit.
+4. **Release approved in GitHub.** The `production` environment's required reviewers approve the release in GitHub. The step links to the waiting run.
+5. **Live.** When the switch has run, the step shows the live version and links to the skill.
+
+If the draft has no `evals/rubric.json`, CI generates it in the eval gate, and the pull request says so. The release path refreshes by itself while a step is pending. If GitHub is not set up for the Skill Hub yet, the page says so, and an administrator sets it up as described in [GitHub token](operations.md#github-token-for-the-skill-hub).
 
 ## Retire a skill
 

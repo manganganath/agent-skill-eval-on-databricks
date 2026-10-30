@@ -41,7 +41,7 @@ export interface SkillDetail {
 export type CandidateKind = "pr" | "draft";
 export interface CandidateSummary {
   kind: CandidateKind; run_key: string; pr_number: number | null; git_sha: string | null; uploaded_at: string | null;
-  uploaded_by: string | null; has_rubric: boolean | null;
+  uploaded_by: string | null; has_rubric: boolean | null; submitted_pr?: number | null;
   dept: string; name: string; description: string | null; content_hash: string | null;
   verdicts: Record<string, Verdict>; eval_access: EvalAccess;
 }
@@ -60,7 +60,7 @@ export interface CandidateDetail {
   eval_access: EvalAccess; results: CandidateResult[];
   candidate: {
     kind: CandidateKind; pr_number: number | null; run_key: string; git_sha: string | null;
-    uploaded_at: string | null; uploaded_by: string | null;
+    uploaded_at: string | null; uploaded_by: string | null; submitted_pr?: number | null; submitted_url?: string | null;
   };
 }
 
@@ -69,6 +69,21 @@ export type DraftIn =
   | { dept: string; archive: string }
   | { dept: string; files: { path: string; content: string }[] };
 export interface DraftOut { run_key: string; dept: string; name: string; has_rubric: boolean }
+
+// A draft opened as a pull request (POST /api/drafts/{run_key}/submit), and the steps of its release (GET
+// /api/release-status). Mirrors SubmitOut, ReleaseStatusOut and MergeOut in app/backend/schemas.py.
+export interface SubmitOut { pr_number: number; url: string; branch: string; notes: string[] }
+export type GateState = "pending" | "passed" | "failed" | "none";
+export type ReleaseState = "not_started" | "running" | "waiting_approval" | "succeeded" | "failed";
+export interface ReleaseStatus {
+  pr_number: number; dept: string; skill: string;
+  opened: { state: "open" | "closed"; url: string };
+  gate: { state: GateState; url: string };
+  merged: { merged: boolean; sha: string | null; at: string | null };
+  release: { state: ReleaseState; url: string | null };
+  live: { fqn: string; version: number | null; switched_after_merge: boolean; eval_access: EvalAccess };
+}
+export interface MergeOut { pr_number: number; merged: boolean; sha: string }
 
 export interface JournalRow {
   dept: string; skill: string; action: string; version: number | null; from_version: number | null;
