@@ -87,6 +87,12 @@ class Reason(StrEnum):
     DEPARTMENT_NOT_ALLOWED = "department_not_allowed"
     RUBRIC_REQUIRED = "rubric_required"
     NOT_DRAFT_OWNER = "not_draft_owner"
+    GITHUB_NOT_CONFIGURED = "github_not_configured"
+    GITHUB_FAILED = "github_failed"
+    ALREADY_SUBMITTED = "already_submitted"
+    EVALS_MISSING = "evals_missing"
+    PULL_NOT_FOUND = "pull_not_found"
+    NOT_MERGEABLE = "not_mergeable"
 
 
 class Forbidden(Exception):

@@ -42,7 +42,15 @@ const MESSAGES: Record<string, string> = {
   draft_store_failed: "Skill Hub could not save the draft. Try again later, or ask an administrator to check the drafts folder.",
   department_not_allowed: "You can upload drafts only to departments whose live skills you can read.",
   rubric_required: "This skill has no rubric, so it can run in trigger mode only. Clear effectiveness and try again.",
-  not_draft_owner: "Only the person who uploaded this draft, or a reviewer, can discard it.",
+  not_draft_owner: "Only the person who uploaded this draft, or a reviewer, can discard it or submit it for review.",
+  github_not_configured:
+    "Pull requests are not set up for the Skill Hub yet. An administrator sets the GitHub repository and token secret. See the operations guide.",
+  github_failed: "Skill Hub could not reach GitHub, or GitHub refused the request. Try again later.",
+  already_submitted: "This draft was already submitted for review. Its pull request is listed on this page.",
+  evals_missing: "This draft has no test cases (evals/evals.json), so it cannot be submitted. Upload it again with its evals.",
+  pull_not_found: "That pull request was not found in the repository.",
+  not_mergeable:
+    "This pull request cannot be merged from the Skill Hub yet. Its gate must pass, it must be open, change only skills, and be mergeable.",
   mixed_sources:
     "Evaluate live skills and candidates in separate runs, with candidates from one upload only. A candidate run cannot pin versions.",
 };

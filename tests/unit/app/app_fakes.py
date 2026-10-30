@@ -1,6 +1,9 @@
+import hashlib
 import io
+from dataclasses import replace
 from types import SimpleNamespace
 
+from backend import github
 from databricks.sdk.errors import NotFound, ResourceAlreadyExists
 from databricks.sdk.service.workspace import ObjectType
 
@@ -225,3 +228,154 @@ def run_obj(params: dict, life="TERMINATED", result="SUCCESS", job_id=11):
             result_state=SimpleNamespace(value=result) if result else None,
         ),
     )
+
+
+class FakeGitHub:
+    """Stands in for backend.github.GitHubClient: one repository in memory, with the methods the Hub calls.
+
+    A tree is a snapshot `S<n>` of every file (path -> bytes); a folder's tree sha is `S<n>:<folder>`. A commit names
+    its snapshot, a branch names its commit. `pulls` holds the pull requests, `checks` the check states of a commit,
+    `runs` the publish run of a commit. `paths` overrides the files a pull request changes, which otherwise come from
+    the diff of its branch. `fail` maps a method name to the exception it raises. `calls` records each method called."""
+
+    def __init__(self, main: dict[str, bytes] | None = None):
+        self.snapshots: dict[str, dict[str, bytes]] = {"S0": dict(main or {})}
+        self.commits: dict[str, tuple[str, str, str]] = {"C0": ("initial", "S0", "")}  # message, tree, parent
+        self.refs: dict[str, str] = {"main": "C0"}
+        self.blobs: dict[str, bytes] = {}
+        self.pulls: dict[int, github.Pull] = {}
+        self.titles: dict[int, str] = {}
+        self.bodies: dict[int, str] = {}
+        self.bases: dict[int, str] = {}
+        self.paths: dict[int, list[str]] = {}
+        self.checks: dict[str, dict[str, str]] = {}
+        self.runs: dict[str, github.Run] = {}
+        self.merges: list[tuple[int, str]] = []
+        self.merge_refuse = False
+        self.fail: dict[str, Exception] = {}
+        self.calls: list[str] = []
+
+    def _touch(self, name: str) -> None:
+        self.calls.append(name)
+        if name in self.fail:
+            raise self.fail[name]
+
+    def ref_sha(self, branch):
+        self._touch("ref_sha")
+        if branch not in self.refs:
+            raise github.GitHubNotFound(404)
+        return self.refs[branch]
+
+    def commit_tree(self, commit):
+        self._touch("commit_tree")
+        return self.commits[commit][1]
+
+    def tree(self, sha, *, recursive=False):
+        self._touch("tree")
+        snap, _, folder = sha.partition(":")
+        base = f"{folder}/" if folder else ""
+        under = sorted(p[len(base) :] for p in self.snapshots[snap] if p.startswith(base))
+        if recursive:
+            return [{"path": rel, "type": "blob", "sha": None} for rel in under]
+        out: dict[str, dict] = {}
+        for rel in under:
+            head, _, rest = rel.partition("/")
+            if rest:
+                out.setdefault(head, {"path": head, "type": "tree", "sha": f"{snap}:{base}{head}"})
+            else:
+                out[head] = {"path": head, "type": "blob", "sha": "blob"}
+        return list(out.values())
+
+    def create_blob(self, data):
+        self._touch("create_blob")
+        sha = hashlib.sha1(data).hexdigest()
+        self.blobs[sha] = bytes(data)
+        return sha
+
+    def create_tree(self, base_tree, entries):
+        self._touch("create_tree")
+        files = dict(self.snapshots[base_tree.partition(":")[0]])
+        for e in entries:
+            if e["sha"] is None:
+                files.pop(e["path"], None)
+            else:
+                files[e["path"]] = self.blobs[e["sha"]]
+        snap = f"S{len(self.snapshots)}"
+        self.snapshots[snap] = files
+        return snap
+
+    def create_commit(self, message, tree, parent):
+        self._touch("create_commit")
+        sha = f"C{len(self.commits)}"
+        self.commits[sha] = (message, tree, parent)
+        return sha
+
+    def create_ref(self, branch, sha):
+        self._touch("create_ref")
+        if branch in self.refs:
+            raise github.GitHubRejected(422)
+        self.refs[branch] = sha
+
+    def update_ref(self, branch, sha):
+        self._touch("update_ref")
+        self.refs[branch] = sha
+
+    def create_pull(self, title, head, base, body):
+        self._touch("create_pull")
+        number = max(self.pulls, default=4) + 1
+        self.titles[number], self.bodies[number] = title, body
+        self.bases[number] = self.commits[self.refs[base]][1]
+        self.pulls[number] = github.Pull(
+            number=number,
+            url=f"https://github.test/acme/skills/pull/{number}",
+            state="open",
+            merged=False,
+            merged_at=None,
+            merge_sha=None,
+            head_sha=self.refs[head],
+            head_branch=head,
+            body=body,
+            mergeable_state="clean",
+        )
+        return self.pulls[number]
+
+    def pulls_for_branch(self, branch):
+        self._touch("pulls_for_branch")
+        return [p for p in self.pulls.values() if p.head_branch == branch]
+
+    def pull(self, number):
+        self._touch("pull")
+        if number not in self.pulls:
+            raise github.GitHubNotFound(404)
+        return self.pulls[number]
+
+    def pull_paths(self, number):
+        self._touch("pull_paths")
+        if number in self.paths:
+            return list(self.paths[number])
+        head = self.snapshots[self.commits[self.pulls[number].head_sha][1]]
+        base = self.snapshots[self.bases[number]]
+        return sorted(p for p in set(head) | set(base) if head.get(p) != base.get(p))
+
+    def check_states(self, sha):
+        self._touch("check_states")
+        return dict(self.checks.get(sha, {}))
+
+    def publish_run(self, sha, workflow):
+        self._touch("publish_run")
+        return self.runs.get(sha)
+
+    def merge(self, number, head_sha):
+        self._touch("merge")
+        pull = self.pulls[number]
+        if self.merge_refuse or head_sha != pull.head_sha:
+            raise github.GitHubRejected(405)
+        merge_sha = f"M{number}"
+        self.pulls[number] = replace(
+            pull, state="closed", merged=True, merged_at=MERGED_AT, merge_sha=merge_sha
+        )
+        self.merges.append((number, head_sha))
+        return merge_sha
+
+
+MERGED_AT = "2026-10-29T12:00:00Z"
