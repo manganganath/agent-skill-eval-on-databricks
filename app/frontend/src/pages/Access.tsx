@@ -15,6 +15,7 @@ const ROWS: Row[] = [
   { action: "Run an eval on live skills", everyone: "Yes", authors: "Yes", reviewers: "Yes" },
   { action: "See skills under review", everyone: "No", authors: "Own departments", reviewers: "All departments" },
   { action: "Upload a draft", everyone: "No", authors: "Yes", reviewers: "Yes" },
+  { action: "Discard a draft", everyone: "No", authors: "Their own", reviewers: "Any draft" },
   { action: "Try a skill under review", everyone: "No", authors: "Own departments", reviewers: "All departments" },
   { action: "Run an eval on a candidate or draft", everyone: "No", authors: "Yes", reviewers: "Yes" },
   { action: "Switch the live version", everyone: "No", authors: "No", reviewers: "Yes" },

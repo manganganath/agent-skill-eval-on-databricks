@@ -7,7 +7,10 @@ import type { CandidateDetail as CandidateDetailT } from "../api/types";
 
 vi.mock("../api/client", async (orig) => {
   const real = await orig<typeof import("../api/client")>();
-  return { ...real, api: { ...real.api, candidate: vi.fn(), me: vi.fn(), config: vi.fn(), tryCandidate: vi.fn() } };
+  return {
+    ...real,
+    api: { ...real.api, candidate: vi.fn(), me: vi.fn(), config: vi.fn(), tryCandidate: vi.fn(), discardDraft: vi.fn() },
+  };
 });
 
 const KEY = "pr5_c7ecd3e_a1";
@@ -154,5 +157,53 @@ describe("CandidateDetail try panel", () => {
     });
     renderAt("/candidates/draft_6720a1b2c3d4e5f6a7b8c9d0/common/new-skill");
     expect(await screen.findByRole("heading", { name: "Try this skill" })).toBeTruthy();
+  });
+});
+
+
+describe("CandidateDetail discard", () => {
+  const DRAFT = "draft_6720a1b2c3d4e5f6a7b8c9d0";
+  const draft: CandidateDetailT = {
+    ...detail,
+    candidate: { kind: "draft", pr_number: null, run_key: DRAFT, git_sha: null, uploaded_at: "2026-10-29T08:00:00Z",
+      uploaded_by: "ana@example.com" },
+  };
+
+  function renderWithCatalog() {
+    return render(
+      <MemoryRouter initialEntries={[`/candidates/${DRAFT}/common/new-skill`]}>
+        <Routes>
+          <Route path="/candidates/:runKey/:dept/:skill" element={<CandidateDetail />} />
+          <Route path="/" element={<p>catalog page</p>} />
+        </Routes>
+      </MemoryRouter>,
+    );
+  }
+
+  it("lets the uploader discard after a confirmation, then goes to the catalog", async () => {
+    vi.mocked(api.candidate).mockResolvedValue(draft);
+    vi.mocked(api.discardDraft).mockResolvedValue({ discarded: DRAFT });
+    renderWithCatalog();
+    fireEvent.click(await screen.findByRole("button", { name: "Discard draft" }));
+    expect(api.discardDraft).not.toHaveBeenCalled(); // the first click only asks
+    const confirm = screen.getByRole("group", { name: /discard this draft/i });
+    expect(confirm).toHaveTextContent("Its eval results stay in the Eval matrix.");
+    fireEvent.click(within(confirm).getByRole("button", { name: "Discard" }));
+    expect(await screen.findByText("catalog page")).toBeTruthy();
+    expect(api.discardDraft).toHaveBeenCalledWith(DRAFT);
+  });
+
+  it("offers no discard to another author, nor on a pull request candidate", async () => {
+    vi.mocked(api.me).mockResolvedValue({ user: "bo@example.com", groups: [], is_reviewer: false, is_author: true });
+    vi.mocked(api.candidate).mockResolvedValue(draft);
+    const { unmount } = renderWithCatalog();
+    await screen.findByRole("note", { name: /release status/i });
+    expect(screen.queryByRole("button", { name: "Discard draft" })).toBeNull();
+    unmount();
+    vi.mocked(api.me).mockResolvedValue({ user: "rita@example.com", groups: [], is_reviewer: true, is_author: false });
+    vi.mocked(api.candidate).mockResolvedValue(detail);
+    renderAt();
+    await screen.findByRole("note", { name: /release status/i });
+    expect(screen.queryByRole("button", { name: "Discard draft" })).toBeNull();
   });
 });

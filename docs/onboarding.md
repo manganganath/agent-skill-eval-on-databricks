@@ -21,6 +21,7 @@ The Skill Hub shows the same table on its Access page, with your own roles marke
 | Run an eval on live skills | Yes | Yes | Yes |
 | See skills under review | No | Own departments | All departments |
 | Upload a draft | No | Yes | Yes |
+| Discard a draft | No | Their own | Any draft |
 | Try a skill under review | No | Own departments | All departments |
 | Run an eval on a candidate or draft | No | Yes | Yes |
 | Switch the live version | No | No | Yes |

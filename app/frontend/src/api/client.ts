@@ -113,6 +113,8 @@ export const api = {
   candidate: (runKey: string, dept: string, name: string) =>
     request<CandidateDetail>(`/candidates/${enc(runKey)}/${enc(dept)}/${enc(name)}`),
   uploadDraft: (body: DraftIn) => request<DraftOut>("/drafts", { method: "POST", body: JSON.stringify(body) }),
+  discardDraft: (runKey: string) =>
+    request<{ discarded: string }>(`/drafts/${encodeURIComponent(runKey)}`, { method: "DELETE" }),
   matrix: (params: { skill?: string; dept?: string; fqn?: string }) => requestList<MatrixRow>(`/results/matrix${qs(params)}`),
   cases: (runId: string) => requestList<CaseRow>(`/results/cases${qs({ run_id: runId })}`),
   dashboard: () => requestDashboard(),

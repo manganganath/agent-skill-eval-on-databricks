@@ -535,3 +535,13 @@ a.badge:hover { background: var(--accent); color: var(--canvas); }
 .rubric-help { max-width: 75ch; }
 .switch-none { margin: 0.5rem 0 0; }
 .upload-missing { margin: 0.4rem 0 0; }
+
+/* Discard a draft */
+.discard { display: grid; gap: 0.5rem; justify-items: start; }
+.discard-confirm { border: 1px solid var(--fail-tint); background: var(--fail-wash); border-radius: var(--radius-card); padding: 0.6rem 0.75rem; max-width: 26rem; }
+.discard-confirm p { margin: 0 0 0.5rem; }
+.discard-buttons { display: flex; gap: 0.5rem; }
+.btn-danger { background: var(--fail); border-color: var(--fail); color: var(--canvas); }
+.btn-danger:hover:not(:disabled) { filter: brightness(0.92); }
+.btn-danger-outline { color: var(--fail); border-color: var(--fail-tint); background: var(--canvas); }
+.btn-danger-outline:hover { background: var(--fail-wash); }

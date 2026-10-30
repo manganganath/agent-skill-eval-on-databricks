@@ -440,3 +440,45 @@ def test_another_author_who_cannot_read_the_department_cannot_run_the_draft(make
     c = make_client(user_w=author("bo@example.com"), app_w=a, cfg=make_cfg(), sql=RowsSql())
     r = c.post("/api/eval-runs", json=run_body(key))
     assert r.status_code == 404 and a.jobs.started == []
+
+
+def _draft_paths(tree, key):
+    return [f for f in tree.files if f"/drafts/{key}/" in f]
+
+
+def test_the_uploader_discards_their_draft_and_its_files_go(make_client):
+    tree, key = stored_draft(make_client)
+    assert _draft_paths(tree, key)
+    c = make_client(user_w=author(), app_w=app(tree), cfg=make_cfg(), sql=RowsSql())
+    r = c.delete(f"/api/drafts/{key}")
+    assert r.status_code == 200 and r.json() == {"discarded": key}
+    assert _draft_paths(tree, key) == []
+    assert c.get(f"/api/candidates/{key}/common/new-skill").status_code == 404
+
+
+def test_a_reviewer_discards_someone_elses_draft(make_client):
+    tree, key = stored_draft(make_client)
+    c = make_client(
+        user_w=reviewer(), app_w=app(tree, principal="rita@example.com"), cfg=make_cfg(), sql=RowsSql()
+    )
+    assert c.delete(f"/api/drafts/{key}").status_code == 200
+    assert _draft_paths(tree, key) == []
+
+
+def test_another_author_cannot_discard_a_draft(make_client):
+    tree, key = stored_draft(make_client)
+    other = author("bo@example.com")
+    c = make_client(user_w=other, app_w=app(tree, principal="bo@example.com"), cfg=make_cfg(), sql=RowsSql())
+    r = c.delete(f"/api/drafts/{key}")
+    assert r.status_code == 403 and r.json() == {"detail": {"reason": "not_draft_owner"}}
+    assert _draft_paths(tree, key)  # nothing removed
+
+
+@pytest.mark.parametrize("bad", ["pr5_c7ecd3e_a1", "draft_0000000000000000000000ff", "not-a-key"])
+def test_only_an_existing_draft_can_be_discarded(make_client, bad):
+    tree, _ = stored_draft(make_client)
+    c = make_client(
+        user_w=reviewer(), app_w=app(tree, principal="rita@example.com"), cfg=make_cfg(), sql=RowsSql()
+    )
+    r = c.delete(f"/api/drafts/{bad}")
+    assert r.status_code == 404 and r.json() == {"detail": {"reason": "candidate_not_found"}}
