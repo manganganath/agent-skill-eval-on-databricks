@@ -44,12 +44,21 @@ sequenceDiagram
   GH-->>A: Sticky comment with the verdict table
 ```
 
-**Merge to `main`.** CI re-evaluates every changed skill that still exists on every merge. Changed means changed since the `skillhub/released` tag, which a release moves when it finishes, so the next merge picks up a release that failed or was rejected. Before the first release there is no tag, and every skill counts as changed. A change that moves a skill out of a quarantined department stops here: an operator must handle it. A `fail` or `inconclusive` verdict stops the run. `warn`, `advisory` and `pass` go on to approval in the `production` environment. After approval, CI starts the `skill-switch` Job (`publish`, then `switch`), which registers `<skill>-v<N+1>` in the versions schema and makes it live, and writes the journal. CI never registers a version itself; publishes run only in the `skill-switch` Job.
+**Merge to `main`.** CI re-evaluates every changed skill that still exists on every merge. Changed means changed since the `skillhub/released` tag, which a release moves when it finishes, so the next merge picks up a release that failed or was rejected. Before the first release there is no tag, and every skill counts as changed. A change that moves a skill out of a quarantined department stops here: an operator must handle it.
 
-**Publish gate.** Published content equals evaluated content, and the eval read the merged cases. The publish step takes the run key of the merge eval and the plan's eval digests and cells. It refuses, exits with code 2 and journals `publish_refused` unless all of these hold:
+CI reuses the pull request gate's eval instead, and asks for approval a few minutes after the merge, only when all of these hold:
+
+- The pushed commit is a merge with two parents, and its tree is the tree of the pull request head (the second parent). So the merge brought nothing else.
+- The pull request changed only files under `skills/`. So the gate ran the same code that is now on `main`.
+- `defaults.gating_modes` is `[trigger]`. Trigger verdicts use no judge; effectiveness verdicts in a pull request use one judge, and in a merge the panel.
+- A trusted pull request gate run for that head (`trigger_source` `pr`) passes the same check as the merge gate, against the merge plan: a row for every planned cell, every row on the merged content, rubric, cases and fixtures, and no blocking verdict. The newest such run is used.
+
+In every other case, and when the check itself fails, CI evaluates the merged content again. A `fail` or `inconclusive` verdict stops the run. `warn`, `advisory` and `pass` go on to approval in the `production` environment. After approval, CI starts the `skill-switch` Job (`publish`, then `switch`), which registers `<skill>-v<N+1>` in the versions schema and makes it live, and writes the journal. CI never registers a version itself; publishes run only in the `skill-switch` Job.
+
+**Publish gate.** Published content equals evaluated content, and the eval read the merged cases. The publish step takes the run key and trigger source of the eval the release cites (the merge eval, or the reused pull request gate run) and the plan's eval digests and cells. It refuses, exits with code 2 and journals `publish_refused` unless all of these hold:
 
 - `skillhub-ci` started the `skill-switch` Job run. The app may switch and retire, never publish.
-- Every planned cell has a trusted row.
+- Every planned cell has a trusted row from that eval. Only rows with its trigger source count: `merge`, or `pr` for a reused pull request gate.
 - The rows were computed on exactly the bundle being published, with the merge's rubric (`rubric_hash`) and cases and fixtures (`dataset_digest`).
 - None of the latest trigger or with-skill verdicts blocks it.
 
@@ -61,14 +70,18 @@ sequenceDiagram
   actor R as Reviewer
   participant S as skill-switch Job (skillhub-ci)
   participant UC as Unity Catalog
-  GH->>J: Re-evaluate changed skills with the merge run key
-  J-->>GH: Verdicts
+  alt merge of the evaluated pull request head, only skills changed, trigger gate only
+    GH->>GH: Reuse the pull request gate's run if it passes the merge gate's check
+  else any other merge, or no passing gate run
+    GH->>J: Re-evaluate changed skills with the merge run key
+    J-->>GH: Verdicts
+  end
   alt fail or inconclusive
     GH->>GH: Stop
   else pass, warn or advisory
     GH->>R: Wait for production approval
     R-->>GH: Approve
-    GH->>S: publish, then switch (run key, digests, planned cells)
+    GH->>S: publish, then switch (run key, trigger source, digests, planned cells)
     S->>S: Publish gate: started by skillhub-ci, every cell trusted, hashes match, no blocking verdict
     S->>UC: Register skill-vN+1, copy it into live, write the journal
   end
@@ -137,7 +150,7 @@ Naming rules:
 | Try a skill | The agent loop runs with the user's token, so only the user's own skills are offered. The app service principal writes the traces to the skill's experiment. Each trace has a `hub_try` root span and the tags `trigger_source=hub-try`, `mode` and `requested_by`. A Try request that runs longer than 180 seconds answers 504 `try_timeout`, and the next Try can start at once. A skill under review is staged into a private run schema that only the requester can read, and that schema is dropped when the run ends. |
 | Run an eval | The app checks that the user can read every requested skill, then starts `skill-eval` as the app's service principal and records who requested it |
 | See or evaluate a candidate | The user must be in the authors or reviewers group. Reviewers see every department; an author sees a department only when the effective-permissions API shows `USE CATALOG`, `USE SCHEMA` and `READ VOLUME` on its live schema for the user. The uploader of a draft always sees it. Only then does the app read the candidate or draft folder as its service principal. Eval rows are read with the user's token |
-| Upload a draft | The user must be an author or reviewer, and an author may upload only to a department they can read. The app checks the upload as `skillhub lint` does and stores it in `<workspace_root>/<catalog>/drafts` as its service principal. A draft is never published: publish accepts only rows of the merge eval (`trigger_source` `merge`) |
+| Upload a draft | The user must be an author or reviewer, and an author may upload only to a department they can read. The app checks the upload as `skillhub lint` does and stores it in `<workspace_root>/<catalog>/drafts` as its service principal. A draft is never published: publish accepts only rows of the merge eval or of a pull request gate run that the release reuses (`trigger_source` `merge` or `pr`) |
 | Switch a version | The app checks that the user is in the reviewers group, then starts `skill-switch` as the app's service principal |
 
 - Only `skillhub-ci-eval` and the app service principal may run `skill-eval`. Only `skillhub-ci` and the app service principal may run `skill-switch`, and a publish runs only in a `skill-switch` run that `skillhub-ci` started. Users cannot start these Jobs directly.

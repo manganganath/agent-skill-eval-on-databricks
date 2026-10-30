@@ -332,10 +332,12 @@ def test_publish_and_switch_use_the_evaluated_folder_and_expected_hash():
     assert "expect_rubric_hash: $r.rubric_hash" in publish["run"]
     assert "expect_dataset_digest: $r.dataset_digest" in publish["run"]
     assert 'expect_cells: ($r.cells | join(","))' in publish["run"]
-    assert (
-        "run_key: $eval" in publish["run"]
-        and publish["env"]["EVAL_RUN_ID"] == "${{ needs.plan.outputs.run_key }}"
-    )
+    # The eval the release cites comes from eval-merge: the merge eval's key, or the reused gate run's.
+    for s in (publish, switch):
+        assert s["env"]["EVAL_RUN_ID"] == "${{ needs.eval-merge.outputs.eval_run_key }}"
+    assert "run_key: $eval" in publish["run"] and "trigger_source: $source" in publish["run"]
+    assert publish["env"]["EVAL_TRIGGER_SOURCE"] == "${{ needs.eval-merge.outputs.eval_trigger_source }}"
+    assert '--arg source "$EVAL_TRIGGER_SOURCE"' in publish["run"]
     assert 'action: "switch"' in switch["run"] and 'version: "latest"' in switch["run"]
     assert "expect_hash: $r.hash" in switch["run"]
     assert 'action: "retire"' in retire["run"] and "skills_root" not in retire["run"]
@@ -573,6 +575,9 @@ def test_skill_switch_job_passes_skills_root_and_expect_hash():
         assert {"name": name, "default": ""} in job["parameters"]
         flag = "--" + name.replace("_", "-")
         assert params[params.index(flag) + 1] == "{{job.parameters." + name + "}}"
+    # Unset, publish counts only the merge eval's rows; the release passes pr when it reuses the gate.
+    assert {"name": "trigger_source", "default": "merge"} in job["parameters"]
+    assert params[params.index("--trigger-source") + 1] == "{{job.parameters.trigger_source}}"
 
 
 HASH = "sha256:" + "a" * 64
@@ -1201,6 +1206,114 @@ def test_merge_check_verdict_binds_plan_digests(tmp_path):
     assert proc.returncode == 1 and "::error::" in proc.stdout and not Path(env["OUT"]).exists()
 
 
+# --- A release reuses the pull request gate's eval when only skills changed ---
+
+REUSE_IF = "${{ steps.reuse.outputs.reuse != 'true' }}"
+
+
+def test_eval_merge_reuse_step_runs_the_rule_before_the_eval_and_never_fails_the_release():
+    evalj = load_workflow("skills-publish.yml")["jobs"]["eval-merge"]
+    steps = evalj["steps"]
+    reuse = next(s for s in steps if s.get("id") == "reuse")
+    upload = next(s for s in steps if s.get("id") == "upload")
+    run_eval = next(s for s in steps if s.get("name", "").startswith("Start skill-eval Job and wait"))
+    gate = next(s for s in steps if s.get("name") == "check-verdict")
+    # The merged folder is still uploaded (publish reads it); the rule runs before the eval would start.
+    assert steps.index(upload) < steps.index(reuse) < steps.index(run_eval) < steps.index(gate)
+    assert reuse["continue-on-error"] is True and "if" not in reuse
+    assert 'uv run skillhub reuse-pr-gate --merge-sha "$HEAD_SHA" --skills "$SKILLS"' in reuse["run"]
+    assert '--expect-file "$RUNNER_TEMP/expect.json"' in reuse["run"]
+    assert reuse["env"]["HEAD_SHA"] == "${{ github.sha }}"
+    assert reuse["env"]["SKILLS"] == "${{ needs.plan.outputs.reeval }}"
+    assert reuse["env"]["EXPECT"] == "${{ needs.plan.outputs.publish }}"
+    # The trusted authors and the tables that check-verdict reads.
+    for name in ("SKILLHUB_CI_EVAL_PRINCIPAL", "SKILLHUB_CATALOG", "SQL_WAREHOUSE_ID"):
+        assert reuse["env"][name] == gate["env"][name], name
+    # The eval and the merge check run unless the rule chose reuse; the reuse step ran the same check.
+    assert run_eval["if"] == REUSE_IF and gate["if"] == REUSE_IF
+    assert evalj["outputs"]["eval_run_key"] == (
+        "${{ steps.reuse.outputs.reuse == 'true' && steps.reuse.outputs.run_key || needs.plan.outputs.run_key }}"
+    )
+    source = "${{ steps.reuse.outputs.reuse == 'true' && 'pr' || 'merge' }}"
+    assert evalj["outputs"]["eval_trigger_source"] == source
+
+
+def _reuse_step(tmp_path: Path, stdout: str, rc: int = 0):
+    """Run the reuse step with a `uv` that prints `stdout` and exits `rc`. Returns the process, the step outputs
+    and the argv uv got."""
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir(exist_ok=True)
+    (tmp_path / "out.json").write_text(stdout)
+    uv = bin_dir / "uv"
+    uv.write_text(
+        f'#!/bin/bash\nprintf "%s\\n" "$@" > "{tmp_path}/argv"\ncat "{tmp_path}/out.json"\nexit {rc}'
+    )
+    uv.chmod(0o755)
+    output = tmp_path / "github_output"
+    output.write_text("")
+    env = {"PATH": f"{bin_dir}:/usr/bin:/bin:/opt/homebrew/bin:/usr/local/bin", "RUNNER_TEMP": str(tmp_path)}
+    env |= {"GITHUB_OUTPUT": str(output), "HEAD_SHA": "f" * 40, "SKILLS": "common/a", "EXPECT": "[PLAN]"}
+    run = step_named(load_workflow("skills-publish.yml"), "Reuse the pull request gate")["run"]
+    # GitHub runs a step with bash -e; pipefail as well is stricter.
+    proc = subprocess.run(["bash", "-eo", "pipefail", "-c", run], env=env, capture_output=True, text=True)
+    outputs = dict(line.split("=", 1) for line in output.read_text().splitlines())
+    return proc, outputs, (tmp_path / "argv").read_text().splitlines()
+
+
+def test_reuse_step_outputs_the_reused_run_key(tmp_path):
+    out = json.dumps({"reuse": True, "run_key": "pr12_ab12cd3_a2", "reason": ""})
+    proc, outputs, argv = _reuse_step(tmp_path, out)
+    assert proc.returncode == 0, proc.stderr
+    assert outputs == {"reuse": "true", "run_key": "pr12_ab12cd3_a2"}
+    assert "::notice::Reusing the pull request gate's eval pr12_ab12cd3_a2" in proc.stdout
+    assert argv == [
+        "run", "skillhub", "reuse-pr-gate", "--merge-sha", "f" * 40, "--skills", "common/a",
+        "--expect-file", f"{tmp_path}/expect.json",
+    ]  # fmt: skip
+    assert (tmp_path / "expect.json").read_text() == "[PLAN]"
+
+
+@pytest.mark.parametrize(
+    ("stdout", "rc", "notice"),
+    [
+        (json.dumps({"reuse": False, "run_key": "", "reason": "the pull request changed no files"}), 0,
+         "Re-evaluating the merged content: the pull request changed no files."),
+        ("", 1, "the reuse check failed"),
+        (json.dumps({"reuse": True, "run_key": "pr12_ab12cd3_a2"}), 1, "the reuse check failed"),
+        ("not json", 0, "the reuse check gave no decision"),
+        (json.dumps({"reuse": True, "run_key": "merge_ab12cd3_a1"}), 0, "the reuse check gave no decision"),
+        (json.dumps({"reuse": True, "run_key": "pr12_ab12cd3_a1\n::x"}), 0, "the reuse check gave no decision"),
+        (json.dumps({"reuse": "true", "run_key": "pr12_ab12cd3_a1"}), 0, "the reuse check gave no decision"),
+    ],
+)  # fmt: skip
+def test_reuse_step_falls_back_to_the_merge_eval_on_anything_else(tmp_path, stdout, rc, notice):
+    proc, outputs, _ = _reuse_step(tmp_path, stdout, rc)
+    assert proc.returncode == 0, proc.stderr  # never fails the release
+    assert outputs == {"reuse": "false", "run_key": ""}
+    assert "::notice::" in proc.stdout and notice in proc.stdout
+
+
+def test_reuse_step_keeps_the_reason_in_one_notice(tmp_path):
+    reason = "changed 'a\n::error::forged' 100%"
+    proc, outputs, _ = _reuse_step(tmp_path, json.dumps({"reuse": False, "run_key": "", "reason": reason}))
+    assert outputs["reuse"] == "false"
+    [line] = [ln for ln in proc.stdout.splitlines() if "::" in ln]
+    assert line.startswith("::notice::") and "%0A::error::forged" in line and "100%25" in line
+
+
+@pytest.mark.parametrize(("key", "source"), [("k", "nightly"), ("k", ""), ("k", "pr merge"), ("", "merge")])
+def test_publish_refuses_an_eval_it_cannot_cite_before_any_job_starts(tmp_path, key, source):
+    rows = f'[{{"dept":"common","skill":"a-b","hash":"{HASH}",{INPUTS}}}]'
+    stub = 'databricks() { echo called > "$RUNNER_TEMP/called"; }\nexport -f databricks\n'
+    env = {"PATH": "/usr/bin:/bin:/usr/local/bin:/opt/homebrew/bin", "RUNNER_TEMP": str(tmp_path)}
+    env |= {"ROWS": rows, "JOB_ID": "42", "SKILLS_ROOT": "/Workspace/x/skills", "MERGE_SHA": "f" * 40}
+    env |= {"ACTOR": "a", "EVAL_RUN_ID": key, "EVAL_TRIGGER_SOURCE": source}
+    run = release_step("Publish")["run"]
+    proc = subprocess.run(["bash", "-c", stub + run], cwd=ROOT, env=env, capture_output=True, text=True)
+    assert proc.returncode == 1 and "::error::" in proc.stdout
+    assert not (tmp_path / "called").exists()
+
+
 def test_pr_comment_links_are_opt_in():
     """The comment gets host-bearing links only through the SKILLHUB_PR_LINKS variable."""
     comment = next(s for s in all_steps(load_workflow("skills-pr.yml")) if s.get("id") == "pr-comment")
@@ -1438,11 +1551,13 @@ def test_publish_passes_the_planned_cells_as_one_comma_separated_job_parameter(t
     }
     env |= {"JOB_ID": "42", "SKILLS_ROOT": "/Workspace/x/skills", "MERGE_SHA": "f" * 40, "EVAL_RUN_ID": "k"}
     env |= {"ACTOR": "a", "DATABRICKS_HOST": "https://ws.example", "SAVED": str(saved)}
+    env["EVAL_TRIGGER_SOURCE"] = "merge"
     proc = subprocess.run(["bash", "-c", stub + run], cwd=ROOT, env=env, capture_output=True, text=True)
     assert proc.returncode == 0, proc.stdout + proc.stderr
     params = json.loads(saved.read_text())["job_parameters"]
     assert params["expect_cells"] == "gpt/trigger,claude-sonnet/with_skill"
     assert params["expect_rubric_hash"] == HASH and params["expect_dataset_digest"] == HASH
+    assert params["trigger_source"] == "merge" and params["run_key"] == params["eval_run_id"] == "k"
 
 
 def _switch_task_argv(params: dict[str, str], job_run_id: str) -> list[str]:
@@ -1458,10 +1573,14 @@ def _switch_task_argv(params: dict[str, str], job_run_id: str) -> list[str]:
     return argv
 
 
-def test_release_steps_publish_and_switch_what_the_merge_eval_recorded(reg, cfg, monkeypatch, tmp_path):
-    """The whole hand-off, which no unit test of one piece covers: the plan's eval digests, the merge eval's rows
-    under the plan's run key, the release steps' run-now bodies, the Job's task argv from jobs.yml, and job-switch
-    with its publish gate. Then the live skill is the evaluated content."""
+@pytest.mark.parametrize(("source", "label"), [("merge", "merge-abc1234-a1"), ("pr", "pr12-abc1234-a1")])
+def test_release_steps_publish_and_switch_what_the_merge_eval_recorded(
+    reg, cfg, monkeypatch, tmp_path, source, label
+):
+    """The whole hand-off, which no unit test of one piece covers: the plan's eval digests, the cited eval's rows
+    (the merge eval under the plan's run key, or a reused pull request gate run), the release steps' run-now
+    bodies, the Job's task argv from jobs.yml, and job-switch with its publish gate. Then the live skill is the
+    evaluated content."""
     import sys
 
     from typer.testing import CliRunner
@@ -1482,11 +1601,11 @@ def test_release_steps_publish_and_switch_what_the_merge_eval_recorded(reg, cfg,
     )
     assert digests.exit_code == 0, digests.output
     [row] = json.loads(digests.stdout)
-    key = make_run_key("merge-abc1234-a1")  # the plan's run_key; the eval got the label
-    for cell in row["cells"]:  # what the merge eval records: one trusted, passing row per planned cell
+    key = make_run_key(label)  # eval-merge's eval_run_key; the eval got the label
+    for cell in row["cells"]:  # what the cited eval records: one trusted, passing row per planned cell
         model, mode = cell.split("/")
         add_rows(reg.sql, cfg, "common", "alpha", key, row["hash"], ((mode, "pass"),), model=model,
-                 rubric=row["rubric_hash"], dataset=row["dataset_digest"])  # fmt: skip
+                 rubric=row["rubric_hash"], dataset=row["dataset_digest"], trigger_source=source)  # fmt: skip
     trust_ci_eval(monkeypatch)
     monkeypatch.setenv("SKILLHUB_CI_PRINCIPAL", "ci-app")
     monkeypatch.setenv("SKILLHUB_CONFIG", str(ROOT / "config" / "hub.yaml"))
@@ -1501,7 +1620,7 @@ def test_release_steps_publish_and_switch_what_the_merge_eval_recorded(reg, cfg,
     env = {"PATH": "/usr/bin:/bin:/usr/local/bin:/opt/homebrew/bin", "RUNNER_TEMP": str(tmp_path)}
     env |= {"ROWS": digests.stdout.strip(), "JOB_ID": "42", "SKILLS_ROOT": str(skill.parents[1])}
     env |= {"MERGE_SHA": "f" * 40, "EVAL_RUN_ID": key, "ACTOR": "a", "SAVED": str(saved)}
-    env["DATABRICKS_HOST"] = "https://ws.example"
+    env |= {"DATABRICKS_HOST": "https://ws.example", "EVAL_TRIGGER_SOURCE": source}
     for prefix in ("Publish", "Switch"):
         saved.unlink(missing_ok=True)
         proc = subprocess.run(

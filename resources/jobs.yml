@@ -128,13 +128,16 @@ resources:
         - {name: actor, default: ""}
         - {name: skills_root, default: ""}
         - {name: expect_hash, default: ""}
-        # The merge eval's run key. publish refuses unless that run's trusted rows evaluated this content.
+        # The run key of the eval that gates publish: the merge eval's, or the pull request gate's when the release
+        # reuses it. publish refuses unless that run's trusted rows evaluated this content.
         - {name: run_key, default: ""}
         # The merge plan's eval-input digests. publish refuses unless the rows evaluated exactly these.
         - {name: expect_rubric_hash, default: ""}
         - {name: expect_dataset_digest, default: ""}
         # The merge plan's gating cells (model/mode,...). publish refuses unless each has a trusted row.
         - {name: expect_cells, default: ""}
+        # The trigger source of that eval: merge, or pr for a reused pull request gate. Only its rows count.
+        - {name: trigger_source, default: merge}
       # ci publishes and switches in CI; the app principal switches from the Skill Hub.
       permissions:
         - service_principal_name: ${var.ci_principal}
@@ -178,6 +181,8 @@ resources:
               - "{{job.parameters.expect_dataset_digest}}"
               - --expect-cells
               - "{{job.parameters.expect_cells}}"
+              - --trigger-source
+              - "{{job.parameters.trigger_source}}"
               - --job-run-id
               - "{{job.run_id}}"
 

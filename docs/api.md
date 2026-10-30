@@ -65,7 +65,7 @@ curl -X POST "<app-url>/api/eval-runs" \
 
 ### Drafts
 
-A draft is a skill uploaded in the Skill Hub, to evaluate it before any pull request. It is never published: publish accepts only rows of the merge eval (`trigger_source` `merge`). Authors and reviewers may upload; an author only to a department whose live skills they can read (else 403 `department_not_allowed`).
+A draft is a skill uploaded in the Skill Hub, to evaluate it before any pull request. It is never published: publish accepts only rows of the merge eval or of a pull request gate run that the release reuses (`trigger_source` `merge` or `pr`). Authors and reviewers may upload; an author only to a department whose live skills they can read (else 403 `department_not_allowed`).
 
 - The upload needs `SKILL.md` with `name` and `description` in its frontmatter, and `evals/evals.json` with at least one case. `evals/rubric.json` is optional. A top-level `fixtures/` folder is stored beside the skill and replaces the default fixtures for the draft's evals. `SKILL.md` may be at the top of the upload or inside one folder, whose name must equal the frontmatter `name`.
 - The skill is checked as `skillhub lint` checks a bundle, including thresholds that would loosen the gate. Every problem found is listed in a 422 answer: `{"detail": {"reason": "draft_invalid", "errors": ["..."]}}`.
