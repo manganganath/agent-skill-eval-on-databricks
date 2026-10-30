@@ -194,3 +194,20 @@ describe("Switch", () => {
     }
   });
 });
+
+describe("Switch with one published version", () => {
+  it("says there is no other version and how one is published", async () => {
+    vi.mocked(api.me).mockResolvedValue({ user: "rita@example.com", groups: ["skillhub-reviewers"], is_reviewer: true, is_author: false });
+    vi.mocked(api.versions).mockResolvedValue([
+      { dept: "common", skill: "audit-xls", action: "published", version: 1, from_version: null, to_version: null,
+        versioned_fqn: null, content_hash: null, git_sha: null, eval_run_id: null, actor: "ci", job_run_id: null, ts: "t1" },
+      { dept: "common", skill: "audit-xls", action: "switched", version: 1, from_version: null, to_version: 1,
+        versioned_fqn: null, content_hash: null, git_sha: null, eval_run_id: null, actor: "ci", job_run_id: null, ts: "t2" },
+    ]);
+    renderSwitch();
+    const select = await screen.findByRole("combobox", { name: /target version/i });
+    expect(select).toBeDisabled();
+    expect(screen.getByText(/v1 is the only published version/i)).toBeTruthy();
+    expect(screen.getByText(/pull request that changes this skill merges/i)).toBeTruthy();
+  });
+});

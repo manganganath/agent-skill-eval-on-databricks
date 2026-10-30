@@ -524,3 +524,14 @@ a.badge:hover { background: var(--accent); color: var(--canvas); }
   .hbar-row .hbar-value { text-align: left; }
   .dash-filters select { min-width: 0; width: 100%; }
 }
+
+/* Verdict legend (Eval matrix) */
+.verdict-legend { margin-top: 1.5rem; }
+.legend-list { display: grid; gap: 0.6rem; margin: 0.75rem 0 0; }
+.legend-row { display: grid; grid-template-columns: 9.5rem minmax(0, 1fr); gap: 0.75rem; align-items: baseline; }
+.legend-row dt { margin: 0; }
+.legend-row dd { margin: 0; color: var(--ink); max-width: 75ch; }
+@media (max-width: 720px) { .legend-row { grid-template-columns: 1fr; gap: 0.25rem; } }
+.rubric-help { max-width: 75ch; }
+.switch-none { margin: 0.5rem 0 0; }
+.upload-missing { margin: 0.4rem 0 0; }

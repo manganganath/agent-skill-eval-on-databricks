@@ -14,7 +14,7 @@ The customer's administrator grants group membership.
 
 The Skill Hub shows the same table on its Access page, with your own roles marked. Each role adds to the one before it.
 
-| Action | Everyone signed in | Authors | Reviewers |
+| Action | Reader | Author | Reviewer |
 |---|---|---|---|
 | Browse live skills | Own departments | Own departments | All departments |
 | Try a live skill | Yes | Yes | Yes |

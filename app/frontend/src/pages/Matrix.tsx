@@ -7,6 +7,7 @@ import { EmptyState } from "../components/EmptyState";
 import { ErrorState } from "../components/ErrorState";
 import { Loading } from "../components/Loading";
 import { VerdictChip } from "../components/VerdictChip";
+import { VerdictLegend } from "../components/VerdictLegend";
 import { mlflowRunUrl, traceUrl } from "../links";
 
 const pct = (v: number | null) => (v == null ? "-" : `${Math.round(v * 100)}%`);
@@ -160,6 +161,7 @@ export default function Matrix() {
           )}
         </section>
       )}
+      <VerdictLegend rules={config.data?.verdict_rules} />
     </>
   );
 }

@@ -16,7 +16,16 @@ def test_config_lists_profiles_and_no_secrets(make_client, monkeypatch):
             "equity_research": {"readers": ["dept-equity-research"], "quarantine": False},
             "external": {"readers": ["skillhub-reviewers"], "quarantine": True},
         },
+        "verdict_rules": {
+            "fail_rate": 0.5,
+            "warn_rate": 0.8,
+            "max_error_rate": 0.1,
+            "min_reviewed_cases": 5,
+            "pass_score": 0.7,
+            "gating_modes": body["verdict_rules"]["gating_modes"],
+        },
     }
+    assert set(body["verdict_rules"]["gating_modes"]) <= {"trigger", "effectiveness"}
     assert "token" not in str(body).lower()
 
 

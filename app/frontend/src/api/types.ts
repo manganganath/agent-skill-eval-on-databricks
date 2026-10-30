@@ -153,6 +153,12 @@ export interface AppConfig {
   // Always sent by the API; optional here so older mocks and callers stay valid.
   roles?: { authors: string; reviewers: string };
   department_access?: Record<string, { readers: string[]; quarantine: boolean }>;
+  verdict_rules?: VerdictRules;
+}
+// config defaults: rates are 0..1; gating_modes are request modes ("trigger", "effectiveness").
+export interface VerdictRules {
+  fail_rate: number; warn_rate: number; max_error_rate: number; min_reviewed_cases: number; pass_score: number;
+  gating_modes: string[];
 }
 export interface ReadableDepartments { departments: string[] }
 

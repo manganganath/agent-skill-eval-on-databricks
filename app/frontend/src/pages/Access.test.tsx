@@ -45,7 +45,7 @@ describe("Access", () => {
     open();
     const table = await screen.findByRole("table", { name: "Who can do what" });
     const heads = within(table).getAllByRole("columnheader").map((h) => h.textContent);
-    expect(heads).toEqual(["Action", "Everyone signed in You", "Authors You", "Reviewers"]);
+    expect(heads).toEqual(["Action", "Reader You", "Author You", "Reviewer"]);
     expect(within(table).getByRole("row", { name: /upload a draft/i }).textContent).toContain("Yes");
   });
 
