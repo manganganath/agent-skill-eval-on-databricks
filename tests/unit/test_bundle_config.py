@@ -107,6 +107,7 @@ SWITCH_PARAMS = [
     "expect_rubric_hash",
     "expect_dataset_digest",
     "expect_cells",
+    "trigger_source",
 ]
 
 

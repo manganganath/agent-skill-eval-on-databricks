@@ -271,9 +271,10 @@ def _require_evaluated(
     rubric_hash: str | None,
     dataset_digest: str | None,
     cells: tuple[str, ...] | None,
+    trigger_source: str = "merge",
 ) -> None:
     """Exit 2, with a `publish_refused` journal row, unless the eval for the run key passed this content with
-    these eval inputs in every planned cell."""
+    these eval inputs in every planned cell. Only rows with `trigger_source` (merge or pr) count."""
     from skillhub.lint import assert_clean
     from skillhub.registry.versions import PublishRefused, require_evaluated
     from skillhub.results.experiments import trusted_run_authors
@@ -292,6 +293,7 @@ def _require_evaluated(
             rubric_hash=rubric_hash,
             dataset_digest=dataset_digest,
             cells=cells,
+            trigger_source=trigger_source,
         )
     except PublishRefused as e:
         _refuse_publish(
@@ -542,12 +544,19 @@ def job_switch_cmd(
     expect_cells: str = typer.Option(
         "", "--expect-cells", help="For publish: the merge plan's gating cells, model/mode,...."
     ),
+    trigger_source: str = typer.Option(
+        "merge",
+        "--trigger-source",
+        help="For publish: the trigger source of the eval for the run key, merge or pr (a reused pull request "
+        'gate). "" means merge.',
+    ),
 ) -> None:
     """Single entry point of the skill-switch Job. Exit 1 if a switch is refused or fails.
 
     Publish exits 2 unless the ci principal started this Job run and the eval for the run key evaluated
-    exactly this content and did not block it. Switch and retire are also started by the Skill Hub app.
-    Jobs pass "" for an unset parameter, so every optional value accepts "".
+    exactly this content and did not block it. That eval is the merge eval, or the pull request gate when the
+    release reuses it (--trigger-source pr); no other eval's rows count. Switch and retire are also started by the
+    Skill Hub app. Jobs pass "" for an unset parameter, so every optional value accepts "".
     """
     root = _opt(skills_root_opt)
     expected = _opt(expect_hash)
@@ -568,6 +577,11 @@ def job_switch_cmd(
         raise typer.BadParameter("--expect-rubric-hash must be sha256:<64 lowercase hex digits> or none")
     if inputs[1] is not None and not _HASH.fullmatch(inputs[1]):
         raise typer.BadParameter("--expect-dataset-digest must look like sha256:<64 lowercase hex digits>")
+    from skillhub.registry.versions import PUBLISH_TRIGGER_SOURCES
+
+    source = _opt(trigger_source) or "merge"
+    if source not in PUBLISH_TRIGGER_SOURCES:
+        raise typer.BadParameter("use merge or pr", param_hint="--trigger-source")
     args = (
         ctx,
         action,
@@ -581,6 +595,7 @@ def job_switch_cmd(
         expected,
         run_key,
         inputs,
+        source,
     )
     if root is None:
         _job_switch(*args)
@@ -630,6 +645,7 @@ def _job_switch(
     expect_hash,
     run_key="",
     inputs=(None, None, None),
+    trigger_source="merge",
     explicit_root=False,
 ) -> None:
     import json
@@ -669,6 +685,7 @@ def _job_switch(
                 cfg, w, sql, journal, bundle, actual,
                 run_key=run_key, git_sha=git_sha, eval_run_id=eval_run_id, actor=actor, job_run_id=run_id,
                 rubric_hash=inputs[0], dataset_digest=inputs[1], cells=inputs[2],
+                trigger_source=trigger_source,
             )  # fmt: skip
             res = publish(
                 cfg,
@@ -1195,12 +1212,9 @@ def check_verdict_cmd(
     from skillhub.auth import workspace_client
     from skillhub.ci.pr_comment import (
         Expected,
-        binding_mismatches,
         blocking_verdicts,
-        exit_code,
+        gate_failures,
         load_matrix_rows,
-        missing_cells,
-        missing_skills,
         parse_expect_hashes,
         parse_expectations,
     )
@@ -1232,20 +1246,71 @@ def check_verdict_cmd(
             raise SkillHubError(str(e)) from None
     verdicts = blocking_verdicts(rows, cfg.defaults.gating_modes)
     typer.echo(f"verdicts: {sorted(set(verdicts)) or 'none'}")
-    missing = missing_skills(rows, [*_csv(skills), *expected])
-    if missing:
-        typer.echo(f"no result for: {', '.join(missing)}", err=True)
-        raise typer.Exit(1)
-    absent = missing_cells(rows, expected)
-    if absent:
-        typer.echo(f"no result for planned cells: {', '.join(absent)}", err=True)
-        raise typer.Exit(1)
-    mismatched = binding_mismatches(rows, expected)
-    for line in mismatched:
-        typer.echo(f"wrong content: {line}", err=True)
-    if mismatched:
-        raise typer.Exit(1)
-    raise typer.Exit(exit_code(verdicts))
+    failures = gate_failures(rows, expected, _csv(skills), cfg.defaults.gating_modes)
+    for line in failures:
+        typer.echo(line, err=True)
+    raise typer.Exit(1 if failures else 0)
+
+
+@app.command("reuse-pr-gate")
+def reuse_pr_gate_cmd(
+    ctx: typer.Context,
+    merge_sha: str = typer.Option(..., "--merge-sha", help="The commit pushed to main."),
+    skills: str = typer.Option(..., "--skills", help="The merge plan's dept/skill list to evaluate."),
+    expect_file: str = typer.Option(
+        ..., "--expect-file", help="The merge plan's `eval-digests` JSON, one entry per listed skill."
+    ),
+) -> None:
+    """Decide whether a release reuses the pull request gate's eval instead of evaluating the merged content again.
+    Prints JSON: {reuse, run_key, reason}.
+
+    Reuse needs all of: the commit is a two-parent merge whose tree is its second parent's (the pull request head);
+    every path the pull request changed is under skills/; defaults.gating_modes holds trigger only; and a trusted
+    pull request gate run for that head (trigger source pr) passes check-verdict's check against the merge plan.
+    The newest such run is reused. Otherwise `reason` names the first rule that failed. Exit 0 with a decision;
+    any error exits non-zero, and CI then evaluates the merged content."""
+    from skillhub.auth import workspace_client
+    from skillhub.ci import reuse
+    from skillhub.ci.pr_comment import gate_failures, load_matrix_rows, parse_expectations
+    from skillhub.results.experiments import trusted_run_authors
+    from skillhub.sql import SqlClient
+
+    try:
+        expected = parse_expectations(Path(expect_file).read_text(encoding="utf-8"))
+    except (OSError, ValueError) as e:
+        raise typer.BadParameter(str(e), param_hint="--expect-file") from None
+    listed = _csv(skills)
+    if not listed or set(listed) != set(expected) or not all(e.cells for e in expected.values()):
+        raise typer.BadParameter(
+            "the plan must list each skill once, with its planned cells", param_hint="--expect-file"
+        )
+    cfg = _cfg(ctx)
+    db: dict = {}
+
+    def connect():  # only once the git and config rules pass
+        if not db:
+            w = workspace_client()
+            db["fetch"] = SqlClient(w, cfg.workspace.sql_warehouse_id).execute
+            db["trusted"] = trusted_run_authors(w)
+        return db["fetch"], db["trusted"]
+
+    def run_keys(head: str) -> list[str]:
+        fetch, trusted = connect()
+        return reuse.gate_run_keys(fetch, cfg, head, trusted=trusted)
+
+    def failures(key: str) -> list[str]:
+        fetch, trusted = connect()
+        rows = load_matrix_rows(fetch, cfg, key, trusted=trusted, trigger_source=reuse.PR_TRIGGER_SOURCE)
+        return gate_failures(rows, expected, listed, cfg.defaults.gating_modes)
+
+    with _guard():
+        facts = reuse.merge_facts(merge_sha)
+    try:
+        decision = reuse.decide(facts, cfg.defaults.gating_modes, run_keys, failures)
+    except Exception as e:  # noqa: BLE001 - SQL or auth failure: no decision, so CI re-evaluates
+        typer.echo(f"error: cannot check the pull request gate ({type(e).__name__})", err=True)
+        raise typer.Exit(1) from None
+    typer.echo(json.dumps(asdict(decision)))
 
 
 @app.command("eval-digests")

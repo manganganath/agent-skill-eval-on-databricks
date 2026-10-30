@@ -21,9 +21,14 @@ class PublishRefused(SkillHubError):
     """The content to publish has no eval result that allows it to go live."""
 
 
-# The trigger_source of the merge eval (.github/workflows/skills-publish.yml). Only its rows can let content be
-# published: a pull request eval, a Skill Hub run (hub, manual) or a nightly run never does, whatever its key.
+# The trigger_source of the merge eval (.github/workflows/skills-publish.yml), which publish accepts by default.
 MERGE_TRIGGER_SOURCE = "merge"
+# The trigger_source of the pull request gate (skills-pr.yml). A release passes it only when it reuses the gate's
+# eval: the merge is exactly the evaluated pull request head and only skills changed (skillhub.ci.reuse).
+PR_TRIGGER_SOURCE = "pr"
+# Only rows of these evals can let content be published. A Skill Hub run (hub, hub-try, manual) or a nightly run
+# never does, whatever its key.
+PUBLISH_TRIGGER_SOURCES = frozenset({MERGE_TRIGGER_SOURCE, PR_TRIGGER_SOURCE})
 # Verdicts that let content be published. fail, inconclusive, NULL and anything unknown block it.
 NON_BLOCKING = frozenset({"pass", "warn", "advisory"})
 
@@ -46,18 +51,21 @@ def require_evaluated(
     rubric_hash: str | None = None,
     dataset_digest: str | None = None,
     cells: Iterable[str] | None = None,
+    trigger_source: str = MERGE_TRIGGER_SOURCE,
 ) -> None:
     """Refuse unless the eval for `run_key` evaluated exactly this content with the expected eval inputs and
-        did not block it.
+    did not block it.
 
-        Uses the merge gate's reader (`ci.pr_comment`): the latest gating row of each (version, model, harness,
-        mode) cell, from runs of the merge eval (`MERGE_TRIGGER_SOURCE`) by `trusted` authors only, so neither a run
-        logged by anyone else nor a pull request, Skill Hub or nightly eval under the same key can let content through
-    . Every gating row of this skill must carry `content_hash`, `rubric_hash` and `dataset_digest` (the
-        rubric, and evals.json with the fixtures its cases use, from the merge plan), and none may have a blocking
-        verdict. Content or eval inputs swapped between the eval and the publish therefore never go live. Every
-        planned gating cell (`cells`, model/mode) needs a row: a failing child run deleted before sync cannot
-        leave only passing rows. Without the expected eval inputs or cells the publish is refused (fail closed).
+    Uses the merge gate's reader (`ci.pr_comment`): the latest gating row of each (version, model, harness, mode)
+    cell, from runs with this `trigger_source` by `trusted` authors only. `trigger_source` is `merge` (the merge
+    eval, the default) or `pr` (the pull request gate, when the release reuses it); anything else is refused. So
+    neither a run logged by anyone else nor a Skill Hub (hub, hub-try, manual) or nightly eval under the same key
+    can let content through, and a release that cites the merge eval never counts pull request rows. Every gating
+    row of this skill must carry `content_hash`, `rubric_hash` and `dataset_digest` (the rubric, and evals.json
+    with the fixtures its cases use, from the merge plan), and none may have a blocking verdict. Content or eval
+    inputs swapped between the eval and the publish therefore never go live. Every planned gating cell (`cells`,
+    model/mode) needs a row: a failing child run deleted before sync cannot leave only passing rows. Without the
+    expected eval inputs or cells the publish is refused (fail closed).
     """
     from skillhub.ci.pr_comment import (
         Expected,
@@ -68,6 +76,10 @@ def require_evaluated(
     )
 
     where = f"{dept}/{skill} for run key {run_key}"
+    if trigger_source not in PUBLISH_TRIGGER_SOURCES:
+        raise PublishRefused(
+            f"trigger source {trigger_source!r} of {where} cannot authorize a publish; use merge or pr"
+        )
     if not rubric_hash or not dataset_digest:
         raise PublishRefused(
             f"the expected rubric_hash and dataset_digest of {where} are missing; publish binds the eval inputs "
@@ -80,9 +92,7 @@ def require_evaluated(
             "model and mode (pass them from `skillhub eval-digests`)"
         )
     try:
-        rows = load_matrix_rows(
-            sql.execute, cfg, run_key, trusted=trusted, trigger_source=MERGE_TRIGGER_SOURCE
-        )
+        rows = load_matrix_rows(sql.execute, cfg, run_key, trusted=trusted, trigger_source=trigger_source)
     except ValueError as e:  # no trusted authors: fail closed
         raise PublishRefused(f"cannot check the eval for {where}: {e}") from None
     rows = [r for r in rows if r.get("dept") == dept and r.get("skill") == skill]

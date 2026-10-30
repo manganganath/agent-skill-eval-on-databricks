@@ -100,7 +100,8 @@ def test_skills_pr_eval_step_contract():
     wf = load_workflow("skills-pr.yml")
     run = step_named(wf, "Start skill-eval Job and wait")["run"]
     # Skills run in parallel workers, but a large PR still takes hours: the full gate, not a 30 min cut-off.
-    assert "--timeout 300m" in run and "databricks jobs run-now" in run
+    # The start is never retried; the shared script polls the run, so a network drop does not fail the step.
+    assert "databricks jobs run-now --no-wait" in run and 'wait_job_run.sh "$run_id" 300' in run
     assert step_named(wf, "Start skill-eval Job and wait")["name"].endswith("(5 h)")
     assert wf["jobs"]["skills-pr"]["timeout-minutes"] == 330  # the wait plus the steps around it
     assert "-t prod" not in run and "SKILLHUB_JOB_ID_EVAL" in run
@@ -286,6 +287,18 @@ def test_publish_triggers_on_main_skills_pushes():
     assert wf["permissions"] == {"contents": "read"}
 
 
+def test_a_release_can_be_started_again_by_hand_from_main_only():
+    wf = load_workflow("skills-publish.yml")
+    assert "workflow_dispatch" in wf["on"] and not (wf["on"]["workflow_dispatch"] or {}).get("inputs")
+    assert wf["jobs"]["plan"]["if"] == "github.ref == 'refs/heads/main'"
+    env = step_named(wf, "Plan re-evaluation")["env"]
+    # A dispatch on a commit that a push run already evaluated gets its own run keys.
+    assert (
+        env["RUN_TAG"]
+        == "${{ github.event_name == 'workflow_dispatch' && format('r{0}-', github.run_number) || '' }}"
+    )
+
+
 def test_release_workflows_share_one_serialised_concurrency_group():
     groups = set()
     for name in RELEASE_WORKFLOWS:
@@ -331,16 +344,19 @@ def test_publish_and_switch_use_the_evaluated_folder_and_expected_hash():
     assert "expect_rubric_hash: $r.rubric_hash" in publish["run"]
     assert "expect_dataset_digest: $r.dataset_digest" in publish["run"]
     assert 'expect_cells: ($r.cells | join(","))' in publish["run"]
-    assert (
-        "run_key: $eval" in publish["run"]
-        and publish["env"]["EVAL_RUN_ID"] == "${{ needs.plan.outputs.run_key }}"
-    )
+    # The eval the release cites comes from eval-merge: the merge eval's key, or the reused gate run's.
+    for s in (publish, switch):
+        assert s["env"]["EVAL_RUN_ID"] == "${{ needs.eval-merge.outputs.eval_run_key }}"
+    assert "run_key: $eval" in publish["run"] and "trigger_source: $source" in publish["run"]
+    assert publish["env"]["EVAL_TRIGGER_SOURCE"] == "${{ needs.eval-merge.outputs.eval_trigger_source }}"
+    assert '--arg source "$EVAL_TRIGGER_SOURCE"' in publish["run"]
     assert 'action: "switch"' in switch["run"] and 'version: "latest"' in switch["run"]
     assert "expect_hash: $r.hash" in switch["run"]
     assert 'action: "retire"' in retire["run"] and "skills_root" not in retire["run"]
     assert publish["env"]["MERGE_SHA"] == "${{ github.sha }}"
     for s in (publish, switch, retire):
-        assert "SUCCESS" in s["run"] and "run_page_url" in s["run"] and "--timeout 30m" in s["run"]
+        assert "SUCCESS" in s["run"] and "run_page_url" in s["run"]
+        assert "databricks jobs run-now --no-wait" in s["run"] and 'wait_job_run.sh "$run_id" 30 ' in s["run"]
         assert "::error::run-now failed" in s["run"]
 
 
@@ -353,7 +369,7 @@ def test_plan_computes_the_eval_digests_from_the_merge_checkout():
     )
     assert "content_hash(load_bundle(" not in run
     assert '"\\(.dept)/\\(.skill)"' in run
-    assert "merge-${HEAD_SHA:0:7}-a${RUN_ATTEMPT}" in run
+    assert "merge-${HEAD_SHA:0:7}-${RUN_TAG}a${RUN_ATTEMPT}" in run
 
 
 def test_eval_merge_uploads_once_and_exposes_one_candidate_path():
@@ -373,7 +389,7 @@ def test_eval_merge_uploads_once_and_exposes_one_candidate_path():
     step = step_named(load_workflow("skills-publish.yml"), "Start skill-eval Job and wait")
     run = step["run"]
     assert 'trigger_source: "merge"' in run and "skills_root: $skills_root" in run
-    assert "-t prod" not in run and "--timeout 300m" in run and "run_page_url" in run
+    assert "-t prod" not in run and ('wait_job_run.sh "$run_id" 300' in run and "run_page_url" in run)
     assert step["name"].endswith("(5 h)") and evalj["timeout-minutes"] == 330
 
 
@@ -571,6 +587,9 @@ def test_skill_switch_job_passes_skills_root_and_expect_hash():
         assert {"name": name, "default": ""} in job["parameters"]
         flag = "--" + name.replace("_", "-")
         assert params[params.index(flag) + 1] == "{{job.parameters." + name + "}}"
+    # Unset, publish counts only the merge eval's rows; the release passes pr when it reuses the gate.
+    assert {"name": "trigger_source", "default": "merge"} in job["parameters"]
+    assert params[params.index("--trigger-source") + 1] == "{{job.parameters.trigger_source}}"
 
 
 HASH = "sha256:" + "a" * 64
@@ -615,15 +634,20 @@ def test_failed_run_now_prints_a_non_empty_url(tmp_path, workflow, prefix, body)
 
 
 # Behaves like `databricks jobs run-now` in CLI v1.20: a positional JOB_ID next to --json is an error.
-# Saves the request body to $SAVED.
+# Saves the request body to $SAVED. A get-run poll answers TERMINATED/SUCCESS.
 _RUN_NOW_CLI = r"""
 databricks() {
+  if [ "$1 $2" = "jobs get-run" ]; then
+    echo '{"run_page_url": "https://ws.example/jobs/42/runs/7", "state": {"life_cycle_state": "TERMINATED", "result_state": "SUCCESS"}}'
+    return 0
+  fi
   [ "$1 $2" = "jobs run-now" ] || return 0
   shift 2
-  local body="" pos=""
+  local body="" pos="" no_wait=""
   while [ $# -gt 0 ]; do
     case "$1" in
-      --json | --timeout | -o) [ "$1" = --json ] && body=$2; shift 2 ;;
+      --json | -o) [ "$1" = --json ] && body=$2; shift 2 ;;
+      --no-wait) no_wait=1; shift ;;
       -*) shift ;;
       *) pos=$1; shift ;;
     esac
@@ -632,9 +656,11 @@ databricks() {
     echo "Error: when --json flag is specified, no positional arguments are allowed." >&2
     return 1
   fi
+  [ -n "$no_wait" ] || { echo "Error: the start must not wait inside the CLI." >&2; return 1; }
   printf '%s' "$body" > "$SAVED"
-  echo '{"state": {"result_state": "SUCCESS"}}'
+  echo '{"run_id": 7}'
 }
+export -f databricks  # the wait script runs in a child bash
 uv() { echo pr12_ab12cd3; }
 """
 
@@ -655,13 +681,14 @@ def test_run_job_sends_the_job_id_in_the_request_body(tmp_path, workflow, prefix
     saved = tmp_path / "body.json"
     env = {"PATH": "/usr/bin:/bin:/usr/local/bin:/opt/homebrew/bin", "RUNNER_TEMP": str(tmp_path)}
     env |= {"DATABRICKS_HOST": "https://ws.example", "JOB_ID": "42", "SAVED": str(saved)}
-    proc = subprocess.run(["bash", "-e", "-c", script], env=env, capture_output=True, text=True)
+    proc = subprocess.run(["bash", "-e", "-c", script], cwd=ROOT, env=env, capture_output=True, text=True)
     assert proc.returncode == 0, proc.stdout + proc.stderr
     assert json.loads(saved.read_text()) == {"job_id": 42, "job_parameters": {"k": "v"}}
 
 
 def test_pr_eval_sends_the_job_id_in_the_request_body(tmp_path):
     (tmp_path / "skills").mkdir()
+    (tmp_path / "scripts").symlink_to(ROOT / "scripts")  # the step runs scripts/wait_job_run.sh
     saved = tmp_path / "body.json"
     env = {"PATH": "/usr/bin:/bin:/usr/local/bin:/opt/homebrew/bin", "RUNNER_TEMP": str(tmp_path)}
     env |= {"SAVED": str(saved), "GITHUB_OUTPUT": str(tmp_path / "out")}
@@ -1063,6 +1090,23 @@ def test_every_run_now_result_is_checked_for_success_and_uses_a_validated_job_id
     assert found >= 5  # skills-pr eval, eval-merge, publish, switch, retire (+ skills-switch)
 
 
+def test_every_run_now_step_waits_with_the_shared_script_after_a_checkout():
+    """The polling lives in scripts/wait_job_run.sh, so the job must have checked the repository out."""
+    found = 0
+    for name, job_name, job in all_jobs():
+        steps = job.get("steps", [])
+        for i, step in enumerate(steps):
+            run = step.get("run", "")
+            if "jobs run-now" not in run:
+                continue
+            found += 1
+            where = (name, job_name, step.get("name"))
+            assert "--no-wait" in run and "--timeout" not in run, where  # the CLI's own wait is not retried
+            assert "bash scripts/wait_job_run.sh" in run, where
+            assert any(str(p.get("uses", "")).startswith("actions/checkout@") for p in steps[:i]), where
+    assert found >= 5
+
+
 def test_run_now_is_started_only_from_the_expected_jobs():
     """Eval Jobs start from ci-eval jobs; switch Jobs only from production jobs."""
     seen = {"EVAL": 0, "SWITCH": 0}
@@ -1180,6 +1224,114 @@ def test_merge_check_verdict_binds_plan_digests(tmp_path):
     Path(env["OUT"]).unlink()
     proc = subprocess.run(["bash", "-c", gate["run"]], env=env, capture_output=True, text=True)
     assert proc.returncode == 1 and "::error::" in proc.stdout and not Path(env["OUT"]).exists()
+
+
+# --- A release reuses the pull request gate's eval when only skills changed ---
+
+REUSE_IF = "${{ steps.reuse.outputs.reuse != 'true' }}"
+
+
+def test_eval_merge_reuse_step_runs_the_rule_before_the_eval_and_never_fails_the_release():
+    evalj = load_workflow("skills-publish.yml")["jobs"]["eval-merge"]
+    steps = evalj["steps"]
+    reuse = next(s for s in steps if s.get("id") == "reuse")
+    upload = next(s for s in steps if s.get("id") == "upload")
+    run_eval = next(s for s in steps if s.get("name", "").startswith("Start skill-eval Job and wait"))
+    gate = next(s for s in steps if s.get("name") == "check-verdict")
+    # The merged folder is still uploaded (publish reads it); the rule runs before the eval would start.
+    assert steps.index(upload) < steps.index(reuse) < steps.index(run_eval) < steps.index(gate)
+    assert reuse["continue-on-error"] is True and "if" not in reuse
+    assert 'uv run skillhub reuse-pr-gate --merge-sha "$HEAD_SHA" --skills "$SKILLS"' in reuse["run"]
+    assert '--expect-file "$RUNNER_TEMP/expect.json"' in reuse["run"]
+    assert reuse["env"]["HEAD_SHA"] == "${{ github.sha }}"
+    assert reuse["env"]["SKILLS"] == "${{ needs.plan.outputs.reeval }}"
+    assert reuse["env"]["EXPECT"] == "${{ needs.plan.outputs.publish }}"
+    # The trusted authors and the tables that check-verdict reads.
+    for name in ("SKILLHUB_CI_EVAL_PRINCIPAL", "SKILLHUB_CATALOG", "SQL_WAREHOUSE_ID"):
+        assert reuse["env"][name] == gate["env"][name], name
+    # The eval and the merge check run unless the rule chose reuse; the reuse step ran the same check.
+    assert run_eval["if"] == REUSE_IF and gate["if"] == REUSE_IF
+    assert evalj["outputs"]["eval_run_key"] == (
+        "${{ steps.reuse.outputs.reuse == 'true' && steps.reuse.outputs.run_key || needs.plan.outputs.run_key }}"
+    )
+    source = "${{ steps.reuse.outputs.reuse == 'true' && 'pr' || 'merge' }}"
+    assert evalj["outputs"]["eval_trigger_source"] == source
+
+
+def _reuse_step(tmp_path: Path, stdout: str, rc: int = 0):
+    """Run the reuse step with a `uv` that prints `stdout` and exits `rc`. Returns the process, the step outputs
+    and the argv uv got."""
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir(exist_ok=True)
+    (tmp_path / "out.json").write_text(stdout)
+    uv = bin_dir / "uv"
+    uv.write_text(
+        f'#!/bin/bash\nprintf "%s\\n" "$@" > "{tmp_path}/argv"\ncat "{tmp_path}/out.json"\nexit {rc}'
+    )
+    uv.chmod(0o755)
+    output = tmp_path / "github_output"
+    output.write_text("")
+    env = {"PATH": f"{bin_dir}:/usr/bin:/bin:/opt/homebrew/bin:/usr/local/bin", "RUNNER_TEMP": str(tmp_path)}
+    env |= {"GITHUB_OUTPUT": str(output), "HEAD_SHA": "f" * 40, "SKILLS": "common/a", "EXPECT": "[PLAN]"}
+    run = step_named(load_workflow("skills-publish.yml"), "Reuse the pull request gate")["run"]
+    # GitHub runs a step with bash -e; pipefail as well is stricter.
+    proc = subprocess.run(["bash", "-eo", "pipefail", "-c", run], env=env, capture_output=True, text=True)
+    outputs = dict(line.split("=", 1) for line in output.read_text().splitlines())
+    return proc, outputs, (tmp_path / "argv").read_text().splitlines()
+
+
+def test_reuse_step_outputs_the_reused_run_key(tmp_path):
+    out = json.dumps({"reuse": True, "run_key": "pr12_ab12cd3_a2", "reason": ""})
+    proc, outputs, argv = _reuse_step(tmp_path, out)
+    assert proc.returncode == 0, proc.stderr
+    assert outputs == {"reuse": "true", "run_key": "pr12_ab12cd3_a2"}
+    assert "::notice::Reusing the pull request gate's eval pr12_ab12cd3_a2" in proc.stdout
+    assert argv == [
+        "run", "skillhub", "reuse-pr-gate", "--merge-sha", "f" * 40, "--skills", "common/a",
+        "--expect-file", f"{tmp_path}/expect.json",
+    ]  # fmt: skip
+    assert (tmp_path / "expect.json").read_text() == "[PLAN]"
+
+
+@pytest.mark.parametrize(
+    ("stdout", "rc", "notice"),
+    [
+        (json.dumps({"reuse": False, "run_key": "", "reason": "the pull request changed no files"}), 0,
+         "Re-evaluating the merged content: the pull request changed no files."),
+        ("", 1, "the reuse check failed"),
+        (json.dumps({"reuse": True, "run_key": "pr12_ab12cd3_a2"}), 1, "the reuse check failed"),
+        ("not json", 0, "the reuse check gave no decision"),
+        (json.dumps({"reuse": True, "run_key": "merge_ab12cd3_a1"}), 0, "the reuse check gave no decision"),
+        (json.dumps({"reuse": True, "run_key": "pr12_ab12cd3_a1\n::x"}), 0, "the reuse check gave no decision"),
+        (json.dumps({"reuse": "true", "run_key": "pr12_ab12cd3_a1"}), 0, "the reuse check gave no decision"),
+    ],
+)  # fmt: skip
+def test_reuse_step_falls_back_to_the_merge_eval_on_anything_else(tmp_path, stdout, rc, notice):
+    proc, outputs, _ = _reuse_step(tmp_path, stdout, rc)
+    assert proc.returncode == 0, proc.stderr  # never fails the release
+    assert outputs == {"reuse": "false", "run_key": ""}
+    assert "::notice::" in proc.stdout and notice in proc.stdout
+
+
+def test_reuse_step_keeps_the_reason_in_one_notice(tmp_path):
+    reason = "changed 'a\n::error::forged' 100%"
+    proc, outputs, _ = _reuse_step(tmp_path, json.dumps({"reuse": False, "run_key": "", "reason": reason}))
+    assert outputs["reuse"] == "false"
+    [line] = [ln for ln in proc.stdout.splitlines() if "::" in ln]
+    assert line.startswith("::notice::") and "%0A::error::forged" in line and "100%25" in line
+
+
+@pytest.mark.parametrize(("key", "source"), [("k", "nightly"), ("k", ""), ("k", "pr merge"), ("", "merge")])
+def test_publish_refuses_an_eval_it_cannot_cite_before_any_job_starts(tmp_path, key, source):
+    rows = f'[{{"dept":"common","skill":"a-b","hash":"{HASH}",{INPUTS}}}]'
+    stub = 'databricks() { echo called > "$RUNNER_TEMP/called"; }\nexport -f databricks\n'
+    env = {"PATH": "/usr/bin:/bin:/usr/local/bin:/opt/homebrew/bin", "RUNNER_TEMP": str(tmp_path)}
+    env |= {"ROWS": rows, "JOB_ID": "42", "SKILLS_ROOT": "/Workspace/x/skills", "MERGE_SHA": "f" * 40}
+    env |= {"ACTOR": "a", "EVAL_RUN_ID": key, "EVAL_TRIGGER_SOURCE": source}
+    run = release_step("Publish")["run"]
+    proc = subprocess.run(["bash", "-c", stub + run], cwd=ROOT, env=env, capture_output=True, text=True)
+    assert proc.returncode == 1 and "::error::" in proc.stdout
+    assert not (tmp_path / "called").exists()
 
 
 def test_pr_comment_links_are_opt_in():
@@ -1304,8 +1456,10 @@ databricks() {
       shift
     done
   fi
-  if [ "$1" = jobs ]; then echo '{"state": {"result_state": "SUCCESS"}}'; fi
+  # One answer serves the run-now start and the get-run polls.
+  if [ "$1" = jobs ]; then echo '{"run_id": 7, "state": {"life_cycle_state": "TERMINATED", "result_state": "SUCCESS"}}'; fi
 }
+export -f databricks  # the wait script runs in a child bash
 uv() { echo pr12_ab12cd3; }
 """
 
@@ -1326,6 +1480,7 @@ def test_candidate_uploads_write_the_marker_that_cleanup_reads(tmp_path, workflo
 
     work = tmp_path / "work"
     (work / "skills").mkdir(parents=True)
+    (work / "scripts").symlink_to(ROOT / "scripts")  # the step runs scripts/wait_job_run.sh
     if with_fixtures:
         (work / "fixtures").mkdir()
     log = tmp_path / "log"
@@ -1381,6 +1536,7 @@ def test_candidate_uploads_go_to_the_workspace_root_or_stop(
     """The upload folder is $SKILLHUB_WORKSPACE_ROOT/$SKILLHUB_CATALOG/candidates/<key>; a missing or
     malformed root or catalog stops the step before anything is uploaded."""
     (tmp_path / "skills").mkdir()
+    (tmp_path / "scripts").symlink_to(ROOT / "scripts")  # the step runs scripts/wait_job_run.sh
     log = tmp_path / "log"
     log.write_text("")
     env = {"PATH": "/usr/bin:/bin:/usr/local/bin:/opt/homebrew/bin", "RUNNER_TEMP": str(tmp_path)}
@@ -1405,7 +1561,8 @@ def test_publish_passes_the_planned_cells_as_one_comma_separated_job_parameter(t
     saved = tmp_path / "params.json"
     stub = (
         'databricks() { while [ $# -gt 0 ]; do if [ "$1" = --json ]; then printf "%s" "$2" > "$SAVED"; fi; '
-        """shift; done; echo '{"state": {"result_state": "SUCCESS"}}'; }\n"""
+        """shift; done; echo '{"run_id": 7, "state": {"life_cycle_state": "TERMINATED", "result_state": "SUCCESS"}}'; }\n"""
+        "export -f databricks\n"
     )
     env = {
         "PATH": "/usr/bin:/bin:/usr/local/bin:/opt/homebrew/bin",
@@ -1414,11 +1571,13 @@ def test_publish_passes_the_planned_cells_as_one_comma_separated_job_parameter(t
     }
     env |= {"JOB_ID": "42", "SKILLS_ROOT": "/Workspace/x/skills", "MERGE_SHA": "f" * 40, "EVAL_RUN_ID": "k"}
     env |= {"ACTOR": "a", "DATABRICKS_HOST": "https://ws.example", "SAVED": str(saved)}
-    proc = subprocess.run(["bash", "-c", stub + run], env=env, capture_output=True, text=True)
+    env["EVAL_TRIGGER_SOURCE"] = "merge"
+    proc = subprocess.run(["bash", "-c", stub + run], cwd=ROOT, env=env, capture_output=True, text=True)
     assert proc.returncode == 0, proc.stdout + proc.stderr
     params = json.loads(saved.read_text())["job_parameters"]
     assert params["expect_cells"] == "gpt/trigger,claude-sonnet/with_skill"
     assert params["expect_rubric_hash"] == HASH and params["expect_dataset_digest"] == HASH
+    assert params["trigger_source"] == "merge" and params["run_key"] == params["eval_run_id"] == "k"
 
 
 def _switch_task_argv(params: dict[str, str], job_run_id: str) -> list[str]:
@@ -1434,10 +1593,14 @@ def _switch_task_argv(params: dict[str, str], job_run_id: str) -> list[str]:
     return argv
 
 
-def test_release_steps_publish_and_switch_what_the_merge_eval_recorded(reg, cfg, monkeypatch, tmp_path):
-    """The whole hand-off, which no unit test of one piece covers: the plan's eval digests, the merge eval's rows
-    under the plan's run key, the release steps' run-now bodies, the Job's task argv from jobs.yml, and job-switch
-    with its publish gate. Then the live skill is the evaluated content."""
+@pytest.mark.parametrize(("source", "label"), [("merge", "merge-abc1234-a1"), ("pr", "pr12-abc1234-a1")])
+def test_release_steps_publish_and_switch_what_the_merge_eval_recorded(
+    reg, cfg, monkeypatch, tmp_path, source, label
+):
+    """The whole hand-off, which no unit test of one piece covers: the plan's eval digests, the cited eval's rows
+    (the merge eval under the plan's run key, or a reused pull request gate run), the release steps' run-now
+    bodies, the Job's task argv from jobs.yml, and job-switch with its publish gate. Then the live skill is the
+    evaluated content."""
     import sys
 
     from typer.testing import CliRunner
@@ -1458,11 +1621,11 @@ def test_release_steps_publish_and_switch_what_the_merge_eval_recorded(reg, cfg,
     )
     assert digests.exit_code == 0, digests.output
     [row] = json.loads(digests.stdout)
-    key = make_run_key("merge-abc1234-a1")  # the plan's run_key; the eval got the label
-    for cell in row["cells"]:  # what the merge eval records: one trusted, passing row per planned cell
+    key = make_run_key(label)  # eval-merge's eval_run_key; the eval got the label
+    for cell in row["cells"]:  # what the cited eval records: one trusted, passing row per planned cell
         model, mode = cell.split("/")
         add_rows(reg.sql, cfg, "common", "alpha", key, row["hash"], ((mode, "pass"),), model=model,
-                 rubric=row["rubric_hash"], dataset=row["dataset_digest"])  # fmt: skip
+                 rubric=row["rubric_hash"], dataset=row["dataset_digest"], trigger_source=source)  # fmt: skip
     trust_ci_eval(monkeypatch)
     monkeypatch.setenv("SKILLHUB_CI_PRINCIPAL", "ci-app")
     monkeypatch.setenv("SKILLHUB_CONFIG", str(ROOT / "config" / "hub.yaml"))
@@ -1471,15 +1634,18 @@ def test_release_steps_publish_and_switch_what_the_merge_eval_recorded(reg, cfg,
     saved = tmp_path / "bodies"
     stub = (
         'databricks() { while [ $# -gt 0 ]; do if [ "$1" = --json ]; then printf "%s\\n" "$2" >> "$SAVED"; fi; '
-        """shift; done; echo '{"state": {"result_state": "SUCCESS"}}'; }\n"""
+        """shift; done; echo '{"run_id": 7, "state": {"life_cycle_state": "TERMINATED", "result_state": "SUCCESS"}}'; }\n"""
+        "export -f databricks\n"
     )
     env = {"PATH": "/usr/bin:/bin:/usr/local/bin:/opt/homebrew/bin", "RUNNER_TEMP": str(tmp_path)}
     env |= {"ROWS": digests.stdout.strip(), "JOB_ID": "42", "SKILLS_ROOT": str(skill.parents[1])}
     env |= {"MERGE_SHA": "f" * 40, "EVAL_RUN_ID": key, "ACTOR": "a", "SAVED": str(saved)}
-    env["DATABRICKS_HOST"] = "https://ws.example"
+    env |= {"DATABRICKS_HOST": "https://ws.example", "EVAL_TRIGGER_SOURCE": source}
     for prefix in ("Publish", "Switch"):
         saved.unlink(missing_ok=True)
-        proc = subprocess.run(["bash", "-e", "-c", stub + release_step(prefix)["run"]], env=env, text=True)
+        proc = subprocess.run(
+            ["bash", "-e", "-c", stub + release_step(prefix)["run"]], cwd=ROOT, env=env, text=True
+        )
         assert proc.returncode == 0
         [body] = saved.read_text().splitlines()
         argv = _switch_task_argv(json.loads(body)["job_parameters"], job_run_id="77")
