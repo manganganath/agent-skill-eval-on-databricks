@@ -17,10 +17,12 @@ permissions:
   contents: read
 
 # One publish, switch or prod deploy (platform.yml) at a time. Runs wait for the group.
-# GitHub replaces a *pending* member when another one joins the group, so `plan` diffs from the
-# skillhub/released tag and the newer run picks up the changes. An unapproved release blocks a manual switch.
-# A pending publish run replaced by a manual skills-switch.yml dispatch publishes its changes on the next push
-# to skills/**. A replaced prod deploy is redone on the next main push.
+# GitHub replaces a *pending* member when another one joins the group, and the replaced run shows as cancelled.
+# `plan` diffs from the skillhub/released tag, so a newer publish run picks up the changes. An unapproved release
+# blocks a manual switch. A pending publish run replaced by a prod deploy or a manual skills-switch.yml dispatch
+# publishes its changes on the next push to skills/**, or at once with
+# `gh workflow run skills-publish.yml --ref main`. A replaced prod deploy is redone on the next main push, or at
+# once with `gh workflow run platform.yml --ref main -f deploy=prod`.
 concurrency:
   group: skillhub-release
   cancel-in-progress: false

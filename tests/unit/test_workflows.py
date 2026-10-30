@@ -806,11 +806,22 @@ def test_hash_format_matches_content_hash():
 
 
 def test_concurrency_comment_mentions_replaced_pending_run():
-    text = (WORKFLOWS / "skills-publish.yml").read_text()
+    text = (WORKFLOWS / "skills-publish.yml").read_text().replace("\n# ", " ")
     assert (
-        "replaced by a manual skills-switch.yml dispatch publishes its changes on the next push"
-        in text.replace("\n# ", " ")
+        "replaced by a prod deploy or a manual skills-switch.yml dispatch publishes its changes on the next"
+        in text
     )
+    assert "shows as cancelled" in text
+    # Each replaced member names how to start it again at once.
+    assert "`gh workflow run skills-publish.yml --ref main`" in text
+    assert "`gh workflow run platform.yml --ref main -f deploy=prod`" in text
+
+
+def test_the_deploy_prod_comment_says_how_to_redo_a_replaced_deploy():
+    text = (WORKFLOWS / PLATFORM).read_text()
+    comment = text[: text.index("  deploy-prod:")].rsplit("\n\n", 1)[1].replace("\n  # ", " ")
+    assert "shows as cancelled" in comment
+    assert "`gh workflow run platform.yml --ref main -f deploy=prod`" in comment
 
 
 # --- platform.yml (Task 8) and the ci-eval environment ---

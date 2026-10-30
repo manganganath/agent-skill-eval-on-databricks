@@ -104,8 +104,8 @@ The Skill Hub's **Access** page shows the full table with your own roles marked;
 | 3. **Run eval** | The draft's page → Run eval | The Databricks Job `skill-eval` runs every test case × model × 3 repeats and writes the results to `<dept>_evals`. They appear on the draft's page. |
 | 4. **Submit for review** | The draft's page | The app opens a pull request with the skill under `skills/<dept>/<skill>/`. The skill is now a *candidate*. |
 | 5. **Eval gate** | GitHub, automatic | `skills-pr` evaluates the candidate on the default models and posts a "Skill evaluation" comment. A failed trigger eval blocks the merge. |
-| 6. **Merge** | Skill Hub (reviewers) or GitHub | `skills-publish` checks the merged content's results. It reuses the gate's when only the skill changed and the content is identical, else it evaluates again. Then it waits for approval. |
-| 7. **Approve** | GitHub → the run → Review deployments → `production` | The Job `skill-switch` creates the next version, switches it live and records who did it. |
+| 6. **Merge** | Skill Hub (reviewers) or GitHub | `skills-publish` checks the merged content's results. It reuses the gate's when only the skill changed and the content is identical, else it evaluates again. Then it waits for approval. A merge to `main` also starts the `platform` deploy, which asks for its own `production` approval. |
+| 7. **Approve** | GitHub → the run → Review deployments → `production` | The Job `skill-switch` creates the next version, switches it live and records who did it. Approve the `platform` run the same way, so the merged code is deployed. |
 | 8. **Live** | Everywhere | Agents with read access load it through Unity Gateway. The Skill Hub's **Release path** panel shows each step as it happens. |
 
 Rollback is a **Switch version** on the skill's page (reviewers): pick the version, compare the two in the matrix, confirm. It runs the same `skill-switch` Job.
@@ -213,7 +213,7 @@ Everything customer-specific is in `config/hub.yaml`. `${VAR}` values come from 
 - **Nightly:** the Job `skillhub-nightly` (02:00 UTC) re-evaluates every live skill. It also checks for drift between the journal and the live skills and for permission drift, and cleans up old drafts and run schemas.
 - **Alerts:** four SQL alerts: a verdict regression, the error rate, inconclusive runs, and a failed switch. Set their destination with `scripts/configure_github.sh --alert-destination-id`.
 - **Switch and rollback:** from the Skill Hub (reviewers), or with the `skills-switch` workflow. Every switch is journaled with who did it.
-- **A release that failed outside the eval** (for example, the runner lost the workspace): start it again with `gh workflow run skills-publish.yml --ref main`. It picks up every unreleased change and still waits for approval.
+- **A release that failed outside the eval** (for example, the runner lost the workspace), **or a release or deploy that shows as Cancelled:** releases, prod deploys and switches wait in one queue. A newer run replaces an older one that is still waiting, and GitHub shows the older one as Cancelled. Nothing is lost, but nothing starts it again by itself. Start a release again with `gh workflow run skills-publish.yml --ref main`. It picks up every unreleased change and still waits for approval. Start a prod deploy again with `gh workflow run platform.yml --ref main -f deploy=prod`. See [Replaced runs](docs/operations.md#replaced-runs).
 - **Results:** query the views in `<catalog>.<dept>_evals`, or ask the Genie space.
 
 [docs/operations.md](docs/operations.md) covers each of these, plus retiring skills, quarantine and break-glass commands.

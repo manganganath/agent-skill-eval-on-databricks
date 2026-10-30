@@ -183,6 +183,28 @@ databricks bundle deploy -t dev
 
 The `dev` target uses a development catalog (`<catalog>_dev`). Every deploy step needs the `SKILLHUB_CATALOG` and `SKILLHUB_WORKSPACE_ROOT` variables and passes them to the bundle (`catalog`, `workspace_root`). The bundle variable `workspace_root` defaults to `/Users/${var.ci_principal}/skill-hub`, and the Jobs and the app get it as `SKILLHUB_WORKSPACE_ROOT`. Production deploys from `main` through `platform.yml` into the `prod` target (catalog `<catalog>`). PR and nightly evals run on the prod bundle's Jobs, because the live skills are in prod. The `dev` target is for platform tests. Unity Catalog skills are not bundle resources, so the CLI manages them.
 
+A push to `main` runs `platform.yml`: the checks, then the prod deploy after the `production` approval. To run it by hand, start it from `main` and name the deploy:
+
+```bash
+gh workflow run platform.yml --ref main -f deploy=prod   # the prod deploy, from main only
+gh workflow run platform.yml --ref main -f deploy=dev    # the dev deploy, the default
+gh workflow run platform.yml --ref main -f deploy=none   # the checks only
+```
+
+Both deploys run in the `production` environment, so each one asks for the approval. GitHub starts no `pull_request` run for a commit that a workflow pushes. So when the `skills-pr` bot commits generated evals to a pull request, it starts the `skills-pr` and `platform` checks on that commit itself, with `deploy=none`.
+
+### Replaced runs
+
+The prod deploy, `skills-publish.yml` and `skills-switch.yml` share one concurrency group, `skillhub-release`. Only one of them runs at a time, so the Jobs never change during a publish or a switch. A run that waits for the group is pending. GitHub keeps at most one pending run in the group. When a newer run joins, GitHub cancels the older pending run and shows it as Cancelled, although nothing failed.
+
+For example, a merge that changes `skills/` starts a release at once, and the prod deploy about 7 minutes later, after the checks. While the release runs, the deploy is pending. If the next merge starts a release before the first one ends, that release replaces the pending deploy.
+
+Nothing is lost, but a replaced run does not start again by itself:
+
+- **A replaced release.** The next push that changes `skills/` releases its changes too, because the plan diffs from the `skillhub/released` tag. To release now, run `gh workflow run skills-publish.yml --ref main`.
+- **A replaced prod deploy.** The next push to `main` deploys the code. To deploy now, run `gh workflow run platform.yml --ref main -f deploy=prod`.
+- **A replaced switch.** Start `skills-switch.yml` again.
+
 ## Run evals
 
 A pull request runs the PR pipeline automatically. To run by hand, open the Run eval page in the Skill Hub. Only the two CI principals and the app service principal may start the `skill-eval` Job, so in practice only workspace admins can start it directly. The Job takes these parameters:
@@ -233,7 +255,7 @@ A worker's log lines appear in the Job output, prefixed with `[dept/skill]`. A w
 - The gates bind what the eval read, not only the skill content. `uv run skillhub eval-digests --skills <dept/skill,...>` prints, for each skill of the checkout: the content `hash`, the `rubric_hash` (`none` without `rubric.json`), the `dataset_digest` of `evals.json` and the bytes of every fixture its cases use, and the planned `cells`. The cells are every gating model and mode the eval must produce: each model from the request, else from `evals.json` `models`, else from `defaults.models`, times `trigger` and `with_skill` where the skill has those cases. `without_skill` never gates. The runner computes the same digests from what it loads, and the agent reads only a private copy of those fixtures.
 - The PR and merge gates pass that output to `check-verdict --expect-file`. They fail if a planned cell has no trusted row ("no result for planned cells"), or if a gating row evaluated other content, another rubric, or other cases or fixtures ("wrong content"). So an `evals.json` or fixture swapped in the candidate folder, or a failing child run deleted before sync, fails the gate.
 - A release cites the pull request gate's run instead of a merge eval only under the rule in [Data flow](architecture.md#data-flow). `skillhub reuse-pr-gate` applies it in the `eval-merge` job of `skills-publish.yml`. When a rule fails, or the check cannot run, the job shows the reason as a notice and evaluates the merged content as before.
-- To start a release again after a run failed outside the eval (for example the runner lost the workspace), run `gh workflow run skills-publish.yml --ref main`. It plans from the `skillhub/released` tag like a push run, so it releases every unreleased change, and it still waits for the production approval. A dispatch from another branch plans nothing.
+- To start a release again after a run failed outside the eval (for example the runner lost the workspace), run `gh workflow run skills-publish.yml --ref main`. It plans from the `skillhub/released` tag like a push run, so it releases every unreleased change, and it still waits for the production approval. A dispatch from another branch plans nothing. Do the same for a release that shows as Cancelled: a newer run replaced it while it was pending (see [Replaced runs](#replaced-runs)).
 - Publishing is bound the same way. `skillhub job-switch --action publish` takes `--run-key`, `--trigger-source` and the plan's `--expect-rubric-hash`, `--expect-dataset-digest` and `--expect-cells`. It exits 2 and writes a `publish_refused` journal row unless all of these hold:
   - The `skill-switch` Job run was started by `skillhub-ci` (`SKILLHUB_CI_PRINCIPAL`). The Skill Hub may switch and retire through the Job, but never publish.
   - Every planned cell has a trusted row for that run key, from the eval the release cites: only rows with its `trigger_source` count. That is `merge` for the merge eval (the default), or `pr` when the release reuses the pull request gate's run. A Skill Hub run (`hub`, `hub-try` or `manual`, which covers candidates and drafts) or a nightly run never satisfies publish, even under the same run key.

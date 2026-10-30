@@ -136,9 +136,11 @@ jobs:
           # A bundle deploy creates the app but neither starts it nor deploys its source; this does both.
           databricks bundle run skill_hub -t dev
 
-  # Pushes to main deploy prod after a reviewer approves the `production` environment (ci credentials).
-  # Shares the release group so a deploy never changes Jobs while a publish or switch is running. A pending
-  # member of the group can be replaced by a newer one; the next main push redoes a replaced deploy.
+  # Pushes to main, and a dispatch from main with deploy=prod, deploy prod after a reviewer approves the
+  # `production` environment (ci credentials). Shares the release group so a deploy never changes Jobs while a
+  # publish or switch is running. GitHub keeps one pending member of the group: a newer one (a skills-publish run,
+  # for example) cancels a pending deploy, which then shows as cancelled. The next main push redoes it, or
+  # `gh workflow run platform.yml --ref main -f deploy=prod` does at once.
   deploy-prod:
     name: deploy (prod)
     needs: [platform]
