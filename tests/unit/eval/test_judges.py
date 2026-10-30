@@ -5,6 +5,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from skillhub import SkillHubError
 from skillhub.config import ConfigError, ModelProfile
 from skillhub.eval import judges
 from skillhub.evalspec import Criterion, Rubric
@@ -156,16 +157,24 @@ def test_audit_xls_adds_planted_bugs_scorer(tmp_path):
     assert "planted_bugs_found" in names
 
 
-def _recording_make_judge(monkeypatch) -> list:
+def _fake_judge(name: str, instructions: str = "", mlflow_version: str = "3.17.2", register=None):
+    dump = {"name": name, "mlflow_version": mlflow_version, "instructions_judge_pydantic_data": instructions}
+    return SimpleNamespace(name=name, model_dump=lambda: dict(dump), register=register)
+
+
+def _recording_make_judge(monkeypatch, already=()) -> list:
+    """Records each judge registered. `already` is what the experiment holds before."""
     registered = []
 
     def fake_make_judge(**kwargs):
-        return SimpleNamespace(
-            name=kwargs["name"],
+        return _fake_judge(
+            kwargs["name"],
+            kwargs["instructions"],
             register=lambda experiment_id: registered.append((kwargs["name"], experiment_id)),
         )
 
     monkeypatch.setattr(judges, "make_judge", fake_make_judge)
+    monkeypatch.setattr(judges, "list_scorers", lambda experiment_id: list(already))
     return registered
 
 
@@ -182,6 +191,68 @@ def test_register_judges_registers_only_judges_0_with_the_real_three_profile_con
     registered = _recording_make_judge(monkeypatch)
     assert judges.register_judges(cfg, experiment_id="7") == [f"skill_use__{cfg.judges[0]}"]
     assert registered == [(f"skill_use__{cfg.judges[0]}", "7")]
+
+
+def test_register_judges_leaves_an_unchanged_judge_alone(monkeypatch):
+    """Registering again rewrites the experiment's monitoring Job, which the workspace may refuse when
+    another identity owns it, so a judge that is already there as built is not registered again."""
+    same = judges.load_packaged("judge_skill_use")
+    current = _fake_judge("skill_use__gpt", same, mlflow_version="3.1.0")
+    registered = _recording_make_judge(monkeypatch, already=[current])
+    assert judges.register_judges(CFG, experiment_id="7") == ["skill_use__gpt"]
+    assert registered == []
+
+
+def test_register_judges_registers_a_changed_judge_again(monkeypatch):
+    registered = _recording_make_judge(
+        monkeypatch, already=[_fake_judge("skill_use__gpt", "older instructions")]
+    )
+    judges.register_judges(CFG, experiment_id="7")
+    assert registered == [("skill_use__gpt", "7")]
+
+
+def test_register_judges_ignores_other_scorers_in_the_experiment(monkeypatch):
+    same = judges.load_packaged("judge_skill_use")
+    registered = _recording_make_judge(monkeypatch, already=[_fake_judge("skill_use__claude-opus", same)])
+    judges.register_judges(CFG, experiment_id="7")
+    assert registered == [("skill_use__gpt", "7")]
+
+
+def test_register_judges_explains_a_refusal_from_the_monitoring_job(monkeypatch):
+    from mlflow.exceptions import RestException
+
+    denied = RestException(
+        {
+            "error_code": "PERMISSION_DENIED",
+            "message": "User ci does not have View or Admin permissions on job 469",
+        }
+    )
+
+    def refuse(experiment_id):
+        raise denied
+
+    monkeypatch.setattr(
+        judges, "make_judge", lambda **kw: _fake_judge(kw["name"], kw["instructions"], register=refuse)
+    )
+    monkeypatch.setattr(judges, "list_scorers", lambda experiment_id: [])
+    with pytest.raises(
+        SkillHubError, match=r"(?s)experiment 7.*job 469.*Trace Metrics Computation Job.*CAN_MANAGE"
+    ):
+        judges.register_judges(CFG, experiment_id="7")
+
+
+def test_register_judges_passes_other_errors_on(monkeypatch):
+    from mlflow.exceptions import RestException
+
+    def fail(experiment_id):
+        raise RestException({"error_code": "INTERNAL_ERROR", "message": "boom"})
+
+    monkeypatch.setattr(
+        judges, "make_judge", lambda **kw: _fake_judge(kw["name"], kw["instructions"], register=fail)
+    )
+    monkeypatch.setattr(judges, "list_scorers", lambda experiment_id: [])
+    with pytest.raises(RestException, match="boom"):
+        judges.register_judges(CFG, experiment_id="7")
 
 
 def test_register_judges_refuses_the_generator_as_the_registered_judge(monkeypatch):
