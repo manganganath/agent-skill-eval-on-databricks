@@ -1,7 +1,9 @@
 import { useState, type ReactNode } from "react";
 import { Link } from "react-router-dom";
 import { api } from "../api/client";
-import type { Dashboard as DashboardData, DashboardPassRateTrend, DashboardTriggerTrend, Verdict } from "../api/types";
+import type {
+  Dashboard as DashboardData, DashboardPassRateTrend, DashboardTokens, DashboardTriggerTrend, TokenSource, Verdict,
+} from "../api/types";
 import { useAsync } from "../hooks/useAsync";
 import { EmptyState } from "../components/EmptyState";
 import { ErrorState } from "../components/ErrorState";
@@ -24,6 +26,12 @@ const OUTCOME_FILL: Record<string, string> = {
   correct: "var(--pass)", correct_reject: "var(--outcome-correct-reject)", wrong_skill: "var(--fail)",
   missed: "var(--warn)", false_trigger: "var(--outcome-false-trigger)",
 };
+
+// Token sources, in the order of the source filter. Evaluations include their judges' calls.
+const TOKEN_SOURCES: { key: TokenSource; name: string; tile: string }[] = [
+  { key: "eval", name: "Evaluations", tile: "Evaluation tokens" }, { key: "try", name: "Try", tile: "Try tokens" },
+];
+const sourceText = (s: TokenSource) => TOKEN_SOURCES.find((x) => x.key === s)?.name ?? s;
 
 const pct = (v: number | null) => (v == null ? "-" : `${Math.round(v * 100)}%`);
 const signedPct = (v: number | null) => (v == null ? "-" : `${v > 0 ? "+" : ""}${Math.round(v * 100)}%`);
@@ -73,6 +81,7 @@ export default function Dashboard() {
   const [model, setModel] = useState(ALL);
   const [trendSkill, setTrendSkill] = useState(ALL);
   const [trendVersion, setTrendVersion] = useState(ALL);
+  const [tokenSource, setTokenSource] = useState(ALL);
 
   if (dash.loading) return <Loading label="Loading dashboard" />;
   if (dash.error) return <ErrorState error={dash.error} onRetry={dash.reload} />;
@@ -92,7 +101,9 @@ export default function Dashboard() {
   const uplift = d.uplift.filter(keep);
   const routing = d.routing.filter(keep);
   const health = d.health.filter(keep);
-  const tokens = (d.tokens ?? []).filter((r) => model === ALL || r.model_profile === model);
+  // Token rows follow the model filter; the source filter narrows the chart and table only, not the totals.
+  const modelTokens = (d.tokens ?? []).filter((r) => model === ALL || r.model_profile === model);
+  const tokens = modelTokens.filter((r) => tokenSource === ALL || r.source === tokenSource);
 
   // Trend filters: skill and version narrow the two trend charts only.
   const trendRows = [...d.trigger_trend, ...d.pass_rate_trend].filter(keep);
@@ -212,7 +223,7 @@ export default function Dashboard() {
   });
   const healthMax = Math.max(0.05, ...healthRows.flatMap((r) => [r.error ?? 0, r.inconclusive ?? 0]));
 
-  // Tokens per day per model, summed over the model's endpoints.
+  // Tokens per day per model, summed over the model's endpoints and the sources shown.
   const tokenDays = uniq(tokens.map((r) => r.day)).sort();
   const tokenLines: LineSeries[] = models.filter((m) => tokens.some((r) => r.model_profile === m)).map((m) => ({
     name: m, color: modelColor(m),
@@ -223,6 +234,10 @@ export default function Dashboard() {
   }));
   const tokenMax = Math.max(1, ...tokenLines.flatMap((l) => l.values.map((v) => v ?? 0)));
   const tokenTop = Math.ceil(tokenMax * 1.1);
+  // Input and output tokens of each source over the period, for the selected model.
+  const tokenTotal = (rows: DashboardTokens[]) => rows.reduce((n, r) => n + (r.input_tokens ?? 0) + (r.output_tokens ?? 0), 0);
+  const sourceTotals = TOKEN_SOURCES.map((x) => ({ ...x, total: tokenTotal(modelTokens.filter((r) => r.source === x.key)) }));
+  const tokenEmpty = tokenSource === ALL ? "evaluation or Try" : sourceText(tokenSource as TokenSource);
 
   return (
     <>
@@ -473,37 +488,57 @@ export default function Dashboard() {
 
           <section className="panel" aria-labelledby="tokens-heading">
             <h2 id="tokens-heading">Token usage</h2>
-            <p className="muted">Input and output tokens of the configured model endpoints, last 30 days. This covers every department.</p>
+            <p className="muted">
+              Tokens that Skill Hub evaluations and Try runs used on the configured model endpoints, per day, last 30 days.
+              Other use of these endpoints is not counted. Try runs are counted only from the release that started tagging them.
+            </p>
             {d.tokens === null ? (
               <p role="note" className="notice">
                 Token usage needs access to the system.serving tables. Ask an administrator for SELECT on
                 system.serving.endpoint_usage and system.serving.served_entities.
               </p>
-            ) : tokens.length === 0 ? (
-              <p className="muted">No token usage in the last 30 days for this selection.</p>
             ) : (
               <>
-                <Legend items={tokenLines.map((l) => ({ name: l.name, color: l.color, shape: "line" as const }))} />
-                <LineChart label="Input tokens per day, by model" days={tokenDays} series={tokenLines}
-                  yMax={tokenTop} yTicks={[0, tokenTop / 4, tokenTop / 2, (3 * tokenTop) / 4, tokenTop].map(Math.round)}
-                  format={(v) => new Intl.NumberFormat("en", { notation: "compact" }).format(v)} />
-                <TableAlt label="Token usage rows">
-                  <table className="matrix">
-                    <caption>Token usage per day and endpoint</caption>
-                    <thead><tr>
-                      <th scope="col">Day</th><th scope="col">Model</th><th scope="col">Endpoint</th>
-                      <th scope="col" className="num">Input tokens</th><th scope="col" className="num">Output tokens</th>
-                    </tr></thead>
-                    <tbody>
-                      {[...tokens].sort((a, b) => a.day.localeCompare(b.day)).map((r, i) => (
-                        <tr key={`${r.day}-${r.endpoint_name}-${i}`}>
-                          <td className="nowrap">{dayLabel(r.day)}</td><td>{r.model_profile}</td><td>{r.endpoint_name}</td>
-                          <td className="num">{count(r.input_tokens ?? 0)}</td><td className="num">{count(r.output_tokens ?? 0)}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </TableAlt>
+                <section aria-label="Token totals by source" className="dash-tiles">
+                  {sourceTotals.map((x) => <Tile key={x.key} label={x.tile} value={count(x.total)} />)}
+                </section>
+                <div className="dash-filters">
+                  <div className="field">
+                    <label htmlFor="dash-source">Source</label>
+                    <select id="dash-source" value={tokenSource} onChange={(e) => setTokenSource(e.target.value)}>
+                      <option value={ALL}>All sources</option>
+                      {TOKEN_SOURCES.map((x) => <option key={x.key} value={x.key}>{x.name}</option>)}
+                    </select>
+                  </div>
+                </div>
+                {tokens.length === 0 ? (
+                  <p className="muted">No {tokenEmpty} token usage in the last 30 days for this selection.</p>
+                ) : (
+                  <>
+                    <Legend items={tokenLines.map((l) => ({ name: l.name, color: l.color, shape: "line" as const }))} />
+                    <LineChart label="Input tokens per day, by model" days={tokenDays} series={tokenLines}
+                      yMax={tokenTop} yTicks={[0, tokenTop / 4, tokenTop / 2, (3 * tokenTop) / 4, tokenTop].map(Math.round)}
+                      format={(v) => new Intl.NumberFormat("en", { notation: "compact" }).format(v)} />
+                    <TableAlt label="Token usage rows">
+                      <table className="matrix">
+                        <caption>Token usage per day, endpoint and source</caption>
+                        <thead><tr>
+                          <th scope="col">Day</th><th scope="col">Model</th><th scope="col">Endpoint</th><th scope="col">Source</th>
+                          <th scope="col" className="num">Input tokens</th><th scope="col" className="num">Output tokens</th>
+                        </tr></thead>
+                        <tbody>
+                          {[...tokens].sort((a, b) => a.day.localeCompare(b.day)).map((r, i) => (
+                            <tr key={`${r.day}-${r.endpoint_name}-${r.source}-${i}`}>
+                              <td className="nowrap">{dayLabel(r.day)}</td><td>{r.model_profile}</td><td>{r.endpoint_name}</td>
+                              <td>{sourceText(r.source)}</td>
+                              <td className="num">{count(r.input_tokens ?? 0)}</td><td className="num">{count(r.output_tokens ?? 0)}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </TableAlt>
+                  </>
+                )}
               </>
             )}
           </section>

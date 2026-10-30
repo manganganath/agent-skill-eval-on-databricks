@@ -8,6 +8,7 @@ from concurrent.futures import ThreadPoolExecutor
 from typing import Annotated
 
 from databricks.sdk import WorkspaceClient
+from databricks.sdk.errors import NotFound
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.concurrency import run_in_threadpool
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
@@ -111,3 +112,37 @@ async def upload_draft(
     found; 413 `draft_too_large`; 403 `department_not_allowed`; 502 `draft_store_failed`."""
     body = await _capped_body(request)
     return await run_in_threadpool(_upload, body, user_w, app_w, cfg)
+
+
+class DiscardOut(BaseModel):
+    discarded: str  # the draft's run key
+
+
+@router.delete("/drafts/{run_key}", response_model=DiscardOut)
+def discard_draft(
+    run_key: str,
+    user_w: Annotated[WorkspaceClient, Depends(get_user_client)],
+    app_w: Annotated[WorkspaceClient, Depends(get_app_client)],
+    cfg: Annotated[HubConfig, Depends(get_cfg)],
+) -> DiscardOut:
+    """Remove a draft's files, as the app. Its uploader or a reviewer only: 403 `not_draft_owner` for anyone else,
+    404 `candidate_not_found` for a draft that is gone or never was. Eval results of the draft stay in the
+    eval tables, which are append-only."""
+    key = candidates.parse_key(run_key)
+    if key is None or key.kind != "draft":
+        raise problem(404, Reason.CANDIDATE_NOT_FOUND)
+    me = authz.fetch_me(user_w)
+    meta = candidates.workspace_call(lambda: candidates.read_meta(app_w, cfg, key, cfg.departments))
+    if meta is None:
+        raise problem(404, Reason.CANDIDATE_NOT_FOUND)
+    if not (candidates.is_uploader(meta, me) or authz.has_reviewer_role(me, cfg)):
+        raise problem(403, Reason.NOT_DRAFT_OWNER)
+
+    def delete() -> None:
+        try:
+            app_w.workspace.delete(candidates.folder(cfg, key), recursive=True)
+        except NotFound:
+            pass  # removed meanwhile (the cleanup, or a second click): the outcome is the same
+
+    candidates.workspace_call(delete)
+    return DiscardOut(discarded=key.run_key)

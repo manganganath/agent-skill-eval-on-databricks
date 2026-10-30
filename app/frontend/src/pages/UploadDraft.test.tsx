@@ -111,3 +111,21 @@ describe("UploadDraft", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent(/too large/i);
   });
 });
+
+describe("UploadDraft pickers", () => {
+  it("keeps the zip picker a file picker after the folder picker was shown", async () => {
+    renderPage();
+    const folderRadio = await screen.findByRole("radio", { name: /the skill folder/i });
+    fireEvent.click(folderRadio);
+    expect(document.querySelector("#draft-folder")?.hasAttribute("webkitdirectory")).toBe(true);
+    fireEvent.click(screen.getByRole("radio", { name: /a zip file/i }));
+    expect(document.querySelector("#draft-zip")?.hasAttribute("webkitdirectory")).toBe(false);
+  });
+
+  it("says what is missing while the button is off", async () => {
+    renderPage();
+    expect(await screen.findByText("To upload: choose a department and choose a zip file.")).toBeTruthy();
+    fireEvent.change(screen.getByRole("combobox", { name: /department/i }), { target: { value: "common" } });
+    expect(screen.getByText("To upload: choose a zip file.")).toBeTruthy();
+  });
+});

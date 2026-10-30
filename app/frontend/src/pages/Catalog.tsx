@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useLocation } from "react-router-dom";
 import { api } from "../api/client";
 import type { CandidateSummary, EvalAccess, Me, SkillSummary, Verdict } from "../api/types";
 import { candidatePath, canSeeCandidates } from "../candidates";
@@ -124,6 +124,8 @@ export function CandidateCard({ c, showDept = true }: { c: CandidateSummary; sho
 }
 
 export default function Catalog() {
+  // A page that sent the user here can say what just happened (a discarded draft).
+  const notice = (useLocation().state as { notice?: string } | null)?.notice;
   const [input, setInput] = useState("");
   const [q, setQ] = useState("");
   const [dept, setDept] = useState("");
@@ -190,6 +192,7 @@ export default function Catalog() {
         </div>
         {reviewing && <Link className="btn" to="/drafts/new">Upload draft</Link>}
       </div>
+      {notice && <p role="status" className="notice">{notice}</p>}
       <div className="catalog-tools">
         <div className="field search">
           <label htmlFor="skill-search">Search skills</label>

@@ -129,3 +129,19 @@ describe("Matrix", () => {
     expect(screen.queryByText(/results are hidden/i)).toBeNull();
   });
 });
+
+describe("Matrix verdict legend", () => {
+  it("explains every verdict with the deployment's thresholds and gating modes", async () => {
+    vi.mocked(api.config).mockResolvedValue({
+      workspace_url: "https://ws.example.test", models: {}, departments: ["common"],
+      verdict_rules: { fail_rate: 0.5, warn_rate: 0.8, max_error_rate: 0.1, min_reviewed_cases: 5, pass_score: 0.7, gating_modes: ["trigger"] },
+    });
+    render(<MemoryRouter><Matrix /></MemoryRouter>);
+    const legend = await screen.findByRole("region", { name: "What the verdicts mean" });
+    expect(legend).toHaveTextContent("At least 80% of the reviewed cases passed.");
+    expect(legend).toHaveTextContent("Fewer than 50% passed.");
+    expect(legend).toHaveTextContent("Fewer than 5 test cases in this mode are reviewed");
+    expect(legend).toHaveTextContent("Modes that gate a release: trigger.");
+    for (const v of ["Pass", "Warn", "Fail", "Inconclusive", "Advisory"]) expect(within(legend).getByText(v)).toBeTruthy();
+  });
+});

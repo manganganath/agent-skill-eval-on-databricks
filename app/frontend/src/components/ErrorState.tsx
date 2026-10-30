@@ -42,6 +42,7 @@ const MESSAGES: Record<string, string> = {
   draft_store_failed: "Skill Hub could not save the draft. Try again later, or ask an administrator to check the drafts folder.",
   department_not_allowed: "You can upload drafts only to departments whose live skills you can read.",
   rubric_required: "This skill has no rubric, so it can run in trigger mode only. Clear effectiveness and try again.",
+  not_draft_owner: "Only the person who uploaded this draft, or a reviewer, can discard it.",
   mixed_sources:
     "Evaluate live skills and candidates in separate runs, with candidates from one upload only. A candidate run cannot pin versions.",
 };

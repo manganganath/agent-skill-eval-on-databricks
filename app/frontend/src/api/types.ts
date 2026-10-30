@@ -135,8 +135,11 @@ export interface DashboardPassRateTrend {
 export interface DashboardHealth {
   dept: string; model_profile: string; cells: number; error_rate: number | null; inconclusive_rate: number | null;
 }
+// `eval`: evaluation runs and their judges. `try`: Try runs, which call with the signed-in user's token.
+export type TokenSource = "eval" | "try";
 export interface DashboardTokens {
-  model_profile: string; endpoint_name: string; day: string; input_tokens: number | null; output_tokens: number | null;
+  model_profile: string; endpoint_name: string; day: string; source: TokenSource;
+  input_tokens: number | null; output_tokens: number | null;
 }
 export interface DashboardOut {
   summary: DashboardSummary; verdicts: DashboardVerdict[]; uplift: DashboardUplift[]; routing: DashboardRouting[];
@@ -153,6 +156,12 @@ export interface AppConfig {
   // Always sent by the API; optional here so older mocks and callers stay valid.
   roles?: { authors: string; reviewers: string };
   department_access?: Record<string, { readers: string[]; quarantine: boolean }>;
+  verdict_rules?: VerdictRules;
+}
+// config defaults: rates are 0..1; gating_modes are request modes ("trigger", "effectiveness").
+export interface VerdictRules {
+  fail_rate: number; warn_rate: number; max_error_rate: number; min_reviewed_cases: number; pass_score: number;
+  gating_modes: string[];
 }
 export interface ReadableDepartments { departments: string[] }
 

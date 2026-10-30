@@ -335,7 +335,12 @@ def _run_one(run: _TryRun, profile: str) -> dict:
     eng, cfg = run.eng, run.cfg
     # One try per call, and no call outlives the request: the timeout is what is left of the Try budget.
     client = eng.model_client(
-        cfg, profile, run.headers, max_tries=1, timeout=max(1.0, run.deadline - time.monotonic())
+        cfg,
+        profile,
+        run.headers,
+        max_tries=1,
+        timeout=max(1.0, run.deadline - time.monotonic()),
+        usage_context={"skillhub_source": "try", "skillhub_skill": f"{run.dept}/{run.name}"},
     )
     try:
         return _run_with(run, profile, client)

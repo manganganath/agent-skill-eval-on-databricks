@@ -420,14 +420,14 @@ class _SkillPlan:
 
 def _plan(
     cfg, req: RunRequest, selected: list[SkillBundle]
-) -> tuple[list[_SkillPlan], dict[str, Any], list[RunError]]:
+) -> tuple[list[_SkillPlan], dict[tuple[str, str, str], Any], list[RunError]]:
     """Read each skill's evals.json, resolve its models and build their clients before anything is staged.
 
     An explicit request list wins; otherwise the skill's own `models`, else defaults.models. An
     unknown profile in evals.json is a request error. A skill whose evals.json cannot be read, or a profile
     whose route no model client serves yet (for example `ug-anthropic`, which is not supported yet), is recorded for that skill."""
     plans: list[_SkillPlan] = []
-    clients: dict[str, Any] = {}
+    clients: dict[tuple[str, str, str], Any] = {}  # (dept, skill, profile): one client per skill, for its tag
     unservable: dict[str, str] = {}
     errors: list[RunError] = []
     for b in selected:
@@ -443,16 +443,21 @@ def _plan(
                 f"{b.dept}/{b.name}: evals.json names unknown model profile(s): {', '.join(unknown)}"
             )
         for m in models:
-            if m in clients or m in unservable:
+            if m in unservable:
                 continue
             try:
-                clients[m] = model_client(cfg, m, auth_headers)
+                tag = {
+                    "skillhub_source": "eval",
+                    "skillhub_skill": f"{b.dept}/{b.name}",
+                    "skillhub_trigger_source": req.trigger_source,
+                }
+                clients[(b.dept, b.name, m)] = model_client(cfg, m, auth_headers, usage_context=tag)
             except (NotImplementedError, ConfigError) as e:
                 unservable[m] = f"model profile {m!r} cannot be served: {e}"
         errors += [
             RunError(b.dept, b.name, unservable[m], model_profile=m) for m in models if m in unservable
         ]
-        servable = [m for m in models if m in clients]
+        servable = [m for m in models if (b.dept, b.name, m) in clients]
         if servable:
             plans.append(_SkillPlan(bundle=b, ef=ef, models=servable, evals_bytes=data))
     return plans, clients, errors
@@ -993,7 +998,7 @@ def _run_skill(
     scope: RunScope,
     skill: StagedSkill,
     *,
-    clients: dict[str, Any],
+    clients: dict[tuple[str, str, str], Any],
     judges: list[str],
     exp_id: str,
     parent_id: str,
@@ -1053,7 +1058,8 @@ def _run_skill(
     mlflow.set_experiment(experiment_id=ctx.exp_id)
     with _evaluating(cfg.defaults.concurrency_per_endpoint):
         for profile in plan.models[first:] + plan.models[:first]:
-            by_model[profile] = _run_model(ctx, clients[profile], profile, modes)
+            client = clients[(plan.bundle.dept, plan.bundle.name, profile)]
+            by_model[profile] = _run_model(ctx, client, profile, modes)
     children: list[ChildRunSummary] = []
     errors: list[RunError] = []
     for profile in plan.models:

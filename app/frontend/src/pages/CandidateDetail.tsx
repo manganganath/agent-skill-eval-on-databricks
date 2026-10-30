@@ -1,6 +1,7 @@
-import { Link, useParams } from "react-router-dom";
+import { useState } from "react";
+import { Link, useNavigate, useParams } from "react-router-dom";
 import { api, ApiError } from "../api/client";
-import type { CandidateDetail as CandidateDetailT, CandidateResult } from "../api/types";
+import type { CandidateDetail as CandidateDetailT, CandidateResult, Me } from "../api/types";
 import { runCandidatePath } from "../candidates";
 import { CandidateBadge } from "../components/CandidateBadge";
 import { EmptyState } from "../components/EmptyState";
@@ -66,6 +67,49 @@ function Results({ s }: { s: CandidateDetailT }) {
   );
 }
 
+// A draft's uploader, or a reviewer, can remove it before its 7 days are up. Two steps, so a click never deletes.
+function DiscardDraft({ runKey, name, uploader }: { runKey: string; name: string; uploader: string | null }) {
+  const me = useAsync<Me>(() => api.me(), []);
+  const navigate = useNavigate();
+  const [asking, setAsking] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<unknown>(null);
+  const allowed = me.data !== undefined
+    && (me.data.is_reviewer || (uploader ?? "").toLowerCase() === me.data.user.toLowerCase());
+  if (!allowed) return null;
+
+  async function discard() {
+    setBusy(true);
+    setError(null);
+    try {
+      await api.discardDraft(runKey);
+      navigate("/", { state: { notice: `Draft ${name} was discarded.` } });
+    } catch (err) {
+      setError(err);
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="discard">
+      {asking ? (
+        <div role="group" aria-label="Discard this draft" className="discard-confirm">
+          <p>Discard this draft? Its files are removed. Its eval results stay in the Eval matrix.</p>
+          <div className="discard-buttons">
+            <button type="button" className="btn-danger" disabled={busy} onClick={discard}>
+              {busy ? "Discarding" : "Discard"}
+            </button>
+            <button type="button" disabled={busy} onClick={() => setAsking(false)}>Cancel</button>
+          </div>
+        </div>
+      ) : (
+        <button type="button" className="btn-danger-outline" onClick={() => setAsking(true)}>Discard draft</button>
+      )}
+      {error ? <ErrorState error={error} /> : null}
+    </div>
+  );
+}
+
 export default function CandidateDetail() {
   const { runKey = "", dept = "", skill = "" } = useParams(); // react-router has already decoded the params
   const candidate = useAsync<CandidateDetailT>(() => api.candidate(runKey, dept, skill), [runKey, dept, skill]);
@@ -125,6 +169,7 @@ export default function CandidateDetail() {
         </div>
         <div className="summary-actions">
           <Link className="btn btn-primary" to={runCandidatePath(key, s.dept, s.name)}>Run eval</Link>
+          {draft && <DiscardDraft runKey={key} name={s.name} uploader={uploader} />}
           {!s.rubric && <p className="hint summary-hint">This skill has no rubric, so it can run in trigger mode only.</p>}
         </div>
         <section className="summary-verdicts" aria-labelledby="summary-verdicts">
