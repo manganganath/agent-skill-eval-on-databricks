@@ -2,9 +2,17 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from mlflow.exceptions import RestException
 from mlflow.genai.judges import make_judge
-from mlflow.genai.scorers import ExpectationsGuidelines, Safety, ToolCallCorrectness, ToolCallEfficiency
+from mlflow.genai.scorers import (
+    ExpectationsGuidelines,
+    Safety,
+    ToolCallCorrectness,
+    ToolCallEfficiency,
+    list_scorers,
+)
 
+from skillhub import SkillHubError
 from skillhub.config import ConfigError
 from skillhub.eval.scorers import make_planted_bugs_scorer, make_skill_trigger_scorer
 from skillhub.naming import judge_name
@@ -97,7 +105,8 @@ def register_judges(cfg, experiment_id: str) -> list[str]:
     """Register the skill-use judge of `judges[0]` only. Called by `skillhub bootstrap`.
 
     The rest of the panel runs at eval time without registration. The registered judge is the one reviewers
-    run from the MLflow UI, so it must not be the generator, which wrote the rubric and the cases."""
+    run from the MLflow UI, so it must not be the generator, which wrote the rubric and the cases. A judge that
+    the experiment already holds as built is left alone."""
     profile = cfg.judges[0]
     if profile == getattr(cfg, "generator", None):
         raise ConfigError(
@@ -105,8 +114,28 @@ def register_judges(cfg, experiment_id: str) -> list[str]:
             "put another judge profile first"
         )
     judge = skill_use_judge(cfg, profile)
-    judge.register(experiment_id=experiment_id)
+    current = next((s for s in list_scorers(experiment_id=experiment_id) if s.name == judge.name), None)
+    if current is not None and _definition(current) == _definition(judge):
+        return [judge.name]
+    try:
+        judge.register(experiment_id=experiment_id)
+    except RestException as e:
+        if e.error_code != "PERMISSION_DENIED":
+            raise
+        raise SkillHubError(
+            f"Could not register the judge {judge.name} in experiment {experiment_id}: {e.message}. "
+            f"MLflow runs the registered judges of an experiment from a Job named "
+            f"'[{experiment_id}] Trace Metrics Computation Job', owned by whoever registered the first judge "
+            "there, and changing a judge needs access to that Job. Give the identity that runs bootstrap "
+            "CAN_MANAGE on that Job, then run bootstrap again."
+        ) from e
     return [judge.name]
+
+
+def _definition(scorer) -> dict:
+    # Registering an unchanged judge again would still rewrite the experiment's monitoring Job, which the
+    # workspace refuses when another identity owns that Job. The MLflow version that wrote it is not part of it.
+    return {k: v for k, v in scorer.model_dump().items() if k != "mlflow_version"}
 
 
 def _dedupe(scorers: list) -> list:

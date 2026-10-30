@@ -67,6 +67,8 @@ Grant no other role on either principal.
 
 Bootstrap registers the prompts. It registers one `make_judge` judge in each skill experiment and in each department's unreleased experiment: the skill-use judge of the first model in `judges`. Publishing a skill registers it in that skill's new experiment. The first judge in `judges` must not be the generator model. The other panel judges run at eval time and are not registered. After an upgrade that changes judge prompts, re-run bootstrap. Until you do, `prompt_versions` shows 0 for `judge_criterion` and `judge_skill_use`.
 
+Bootstrap leaves alone a judge that an experiment already holds unchanged. MLflow runs an experiment's registered judges from a Job named `[<experiment id>] Trace Metrics Computation Job`, owned by whoever registered the first judge there, often the person who ran the first bootstrap. Changing that judge later needs access to that Job. If the `skillhub-bootstrap` Job stops with `Could not register the judge`, give `skillhub-ci` CAN_MANAGE on the Job that the message names, then run bootstrap again.
+
 ## Identities
 
 | Identity | Kind | Purpose |
