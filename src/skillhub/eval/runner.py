@@ -54,7 +54,7 @@ from mlflow.pyfunc.context import get_prediction_context
 
 from skillhub import SkillHubError, evalspec
 from skillhub.agent.fixtures import FixtureStore
-from skillhub.agent.loop import SkillsBridge, run_agent
+from skillhub.agent.loop import MultiSkillsBridge, run_agent
 from skillhub.auth import auth_headers, workspace_client
 from skillhub.bundle import SkillBundle, SkillRefError, discover_bundles, find_bundle, select_bundles
 from skillhub.config import ConfigError
@@ -95,7 +95,7 @@ from skillhub.gateway.toolnames import ToolNameMap
 from skillhub.naming import judge_name, live_schema, make_run_key
 from skillhub.prompts import load_packaged, load_prompt
 from skillhub.registry.journal import Journal
-from skillhub.registry.stage import RunScope, StagedSkill, drop_run_schemas, stage
+from skillhub.registry.stage import RunScope, StagedSkill, drop_run_schemas, stage, visible_depts
 from skillhub.registry.uc_skills import UCSkills
 from skillhub.results.datasets import case_record
 from skillhub.retry import is_transient, is_write_conflict, retrying
@@ -932,7 +932,7 @@ def _open_parent(req: RunRequest, scope: RunScope, exp_id: str, prompt_versions:
         run_name=f"{req.run_key}:{scope.dept}",
         tags={k: v for k, v in tags.items() if v},
     )
-    scope_record = {"schema": scope.schema_fqn, "skills": [dataclasses.asdict(s) for s in scope.skills]}
+    scope_record = dataclasses.asdict(scope)
     client.log_dict(run.info.run_id, scope_record, "run_scope.json")
     return run.info.run_id
 
@@ -976,11 +976,12 @@ def _describe(e: Exception) -> str:
 
 
 def _run_names(cfg, scope: RunScope) -> ToolNameMap:
-    """Every staged FQN in the scope reads as its production FQN, and the bare run schema as the department's
-    schema."""
+    """Every staged FQN in the scope reads as its production FQN, and each bare run schema as the live schema of
+    the department it holds."""
     names = ToolNameMap()
-    rewrite = {scope.schema_fqn: live_schema(cfg, scope.dept)}
-    rewrite.update({s.staged_fqn: s.production_fqn for s in scope.skills})
+    homes = visible_depts(scope.dept)
+    rewrite = {schema: live_schema(cfg, d) for schema, d in zip(scope.schemas, homes, strict=True)}
+    rewrite.update({s.staged_fqn: s.production_fqn for s in [*scope.skills, *scope.hidden]})
     names.set_fqn_rewrite(rewrite)
     return names
 
@@ -1262,9 +1263,14 @@ def _scorers(cfg, rubric, judges, mode, skill_name, cases, fixtures, label) -> l
 
 
 def _open_skills(ctx: _SkillCtx) -> _CachedSkills:
-    try:
-        bridge = SkillsBridge(SkillsMcpClient(ctx.cfg.workspace.host, [ctx.scope.schema_fqn], auth_headers))
-    except Exception as e:  # the server URL holds the staged schema
+    host = ctx.cfg.workspace.host
+    try:  # one connection per run schema, the department's first: the server offers 20 skill tools per connection
+        bridge = MultiSkillsBridge(
+            ctx.scope.schemas,
+            lambda schema: SkillsMcpClient(host, [schema], auth_headers),
+            hidden=[s.staged_fqn for s in ctx.scope.hidden],
+        )
+    except Exception as e:  # the server URLs hold the staged schemas
         raise RuntimeError(ctx.names.to_production(f"skills server: {type(e).__name__}: {e}")) from None
     return _CachedSkills(bridge, ctx.names)
 
