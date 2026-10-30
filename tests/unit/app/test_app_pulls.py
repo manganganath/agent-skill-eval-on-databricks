@@ -17,6 +17,8 @@ HUB = release.HUB_MARKER
 FQN = "skill_hub.common.new-skill"  # the skill's name in Unity Catalog, as its live page is named
 HEAD = "H5"
 MAIN = {}  # a new skill: the repository has no folder for it
+# What pull request 5 changes, unless a test says otherwise.
+SKILL_PATHS = ["skills/common/new-skill/SKILL.md"]
 
 
 @pytest.fixture(autouse=True)
@@ -233,7 +235,8 @@ def test_a_submitted_draft_shows_its_pull_request_while_that_is_not_listed(make_
 # --- release status ----------------------------------------------------------------------------------------------
 
 
-def put_pull(gh, number=5, **fields):
+def put_pull(gh, number=5, *, paths=SKILL_PATHS, **fields):
+    """A pull request in the fake repository that changes `paths`."""
     base = {
         "number": number,
         "url": f"https://github.test/acme/skills/pull/{number}",
@@ -247,6 +250,7 @@ def put_pull(gh, number=5, **fields):
         "mergeable_state": "clean",
     }
     gh.pulls[number] = github.Pull(**{**base, **fields})
+    gh.paths[number] = list(paths)
 
 
 def status(make_client, gh, *, sql=None, tree=None, pr=5, dept="common", skill="new-skill", user=None):
@@ -366,8 +370,45 @@ def test_a_reader_gets_403_not_author(make_client, gh):
 
 
 def test_a_reviewer_reads_any_department(make_client, gh):
-    put_pull(gh)
+    put_pull(gh, paths=["skills/external/new-skill/SKILL.md"])
     assert status(make_client, gh, dept="external", user=reviewer()).status_code == 200
+
+
+@pytest.mark.parametrize(
+    "paths",
+    [
+        ["skills/equity_research/secret-skill/SKILL.md"],  # another department's skill
+        ["skills/common/other-skill/SKILL.md"],  # another skill of the department
+        ["README.md", ".github/workflows/platform.yml"],  # no skill at all
+        ["skills/common/new-skill"],  # not a file under the folder
+        [],
+    ],
+)
+def test_a_pull_request_that_does_not_change_the_skill_is_not_found_and_nothing_of_it_leaks(
+    make_client, gh, paths
+):
+    """The app reads any pull request of the repository with its own token, so the department the caller may see must
+    be the one the pull request changes: otherwise the answer is that of a pull request that is not there."""
+    put_pull(gh, paths=paths, state="closed", merged=True, merged_at="2026-10-29T12:00:00Z", merge_sha="M5")
+    gh.checks[HEAD] = {"skills-pr": "passed"}
+    gh.runs["M5"] = github.Run(url="https://run/1", status="completed", conclusion="success", waiting=False)
+    r = status(make_client, gh)
+    assert r.status_code == 404 and r.json() == {"detail": {"reason": "pull_not_found"}}
+    assert r.json() == status(make_client, gh, pr=99).json()  # the same answer as a missing pull request
+    assert "github.test" not in r.text and "M5" not in r.text
+    assert "check_states" not in gh.calls and "publish_run" not in gh.calls
+
+
+def test_a_pull_request_too_large_to_read_has_no_release_status(make_client, gh):
+    put_pull(gh)
+    gh.fail["pull_paths"] = github.GitHubRejected(422)
+    r = status(make_client, gh)
+    assert r.status_code == 404 and r.json() == {"detail": {"reason": "pull_not_found"}}
+
+
+def test_a_pull_request_that_changes_the_skill_among_others_has_its_status(make_client, gh):
+    put_pull(gh, paths=["skills/common/other-skill/SKILL.md", "skills/common/new-skill/evals/evals.json"])
+    assert status(make_client, gh).status_code == 200
 
 
 def test_release_status_and_merge_need_the_skill_pieces_to_be_valid(make_client, gh):

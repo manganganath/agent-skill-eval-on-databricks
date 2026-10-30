@@ -36,6 +36,15 @@ def _pull(gh: github.GitHubClient, number: int) -> github.Pull:
         raise problem(404, Reason.PULL_NOT_FOUND) from None
 
 
+def _changes_skill(gh: github.GitHubClient, number: int, cfg: HubConfig, dept: str, skill: str) -> bool:
+    """Whether the pull request changes a file under skills/<dept>/<skill>/. One too large to read changes no skill."""
+    try:
+        paths = gh.pull_paths(number)
+    except github.GitHubRejected:
+        return False
+    return any(release.skill_of(path, cfg.departments) == (dept, skill) for path in paths)
+
+
 def _when(value: object) -> datetime | None:
     """A journal or GitHub timestamp as an aware datetime, or None."""
     if isinstance(value, str):
@@ -69,13 +78,17 @@ def release_status(
 ) -> ReleaseStatusOut:
     """The steps of a pull request's path to a live version, for one skill of it: opened, the eval gate, merged, the
     release (waiting for approval in GitHub, or done), and the skill's live version. Authors and reviewers, with the
-    visibility of the department's candidates. 404 `pull_not_found`; 503 `github_not_configured`."""
+    visibility of the department's candidates. The pull request must change the skill's folder: the app reads any
+    pull request of the repository, so one that does not is 404 `pull_not_found`, as a missing one is, and nothing of
+    it is returned. 503 `github_not_configured`."""
     if dept not in cfg.departments or not candidates.valid_skill_name(skill):
         raise problem(404, Reason.CANDIDATE_NOT_FOUND)
     me = authz.fetch_me(user_w)
     candidates.require_visible(app_w, cfg, me, [dept])
     gh = github.connect(app_w)
     pull = _pull(gh, pr)
+    if not _changes_skill(gh, pr, cfg, dept, skill):
+        raise problem(404, Reason.PULL_NOT_FOUND)
     checks = gh.check_states(pull.head_sha)
     merged_sha = pull.merge_sha if pull.merged else None
     run = gh.publish_run(merged_sha, release.PUBLISH_WORKFLOW) if merged_sha else None
