@@ -1,0 +1,271 @@
+{
+  "skill_name": "guidance-tracker",
+  "evals": [
+    {
+      "id": 1,
+      "kind": "trigger",
+      "prompt": "Did Northwind hit the guidance it gave last quarter? Give me a scorecard.",
+      "should_trigger": true
+    },
+    {
+      "id": 2,
+      "kind": "trigger",
+      "prompt": "How did Q3 revenue compare with what management guided on the Q2 call?",
+      "should_trigger": true
+    },
+    {
+      "id": 3,
+      "kind": "trigger",
+      "prompt": "Walk me through what Northwind said it would do versus what it reported, line by line.",
+      "should_trigger": true
+    },
+    {
+      "id": 4,
+      "kind": "trigger",
+      "prompt": "Did NWRB raise, cut or hold its FY26 outlook, and why?",
+      "should_trigger": true
+    },
+    {
+      "id": 5,
+      "kind": "trigger",
+      "prompt": "Management guided Q3 revenue to $398M to $408M. Beat, met or miss?",
+      "should_trigger": true
+    },
+    {
+      "id": 6,
+      "kind": "trigger",
+      "prompt": "Did the company walk back anything it told us on the last call? Check the new guidance against the old.",
+      "should_trigger": true
+    },
+    {
+      "id": 7,
+      "kind": "trigger",
+      "prompt": "Make a table of guided versus actual for Northwind: revenue, margin, EPS, whatever both sources cover.",
+      "should_trigger": true
+    },
+    {
+      "id": 8,
+      "kind": "trigger",
+      "prompt": "Quick check before I speak to the CFO: where did results land against guidance, and what did they change in the outlook?",
+      "should_trigger": true
+    },
+    {
+      "id": 9,
+      "kind": "trigger",
+      "prompt": "Write a full earnings update report on Northwind's Q3 with charts and a revised thesis.",
+      "should_trigger": false,
+      "expected_skill": "earnings-analysis"
+    },
+    {
+      "id": 10,
+      "kind": "trigger",
+      "prompt": "What should we watch for when Northwind reports Q4 on November 12? Set up bull and bear scenarios.",
+      "should_trigger": false,
+      "expected_skill": "earnings-preview"
+    },
+    {
+      "id": 11,
+      "kind": "trigger",
+      "prompt": "Plug Northwind's new FY26 guidance into our model and update the estimates.",
+      "should_trigger": false,
+      "expected_skill": "model-update"
+    },
+    {
+      "id": 12,
+      "kind": "trigger",
+      "prompt": "Is my Northwind thesis still intact after the Q3 print? Add the new data points.",
+      "should_trigger": false,
+      "expected_skill": "thesis-tracker"
+    },
+    {
+      "id": 13,
+      "kind": "trigger",
+      "prompt": "Summarise the plot of Pride and Prejudice in three sentences.",
+      "should_trigger": false
+    },
+    {
+      "id": 14,
+      "kind": "trigger",
+      "prompt": "What is the capital of Australia?",
+      "should_trigger": false
+    },
+    {
+      "id": 15,
+      "kind": "trigger",
+      "prompt": "Write a haiku about autumn leaves.",
+      "should_trigger": false
+    },
+    {
+      "id": 101,
+      "kind": "effectiveness",
+      "prompt": "Compare Northwind's Q3 FY26 results with the guidance from the Q2 call and write the guidance scorecard.",
+      "should_trigger": true,
+      "assertions": [
+        "Says Q3 revenue of $412.0M beat the Q2 guidance of $398M to $408M, by $4.0M above the top of the range and $9.0M (about 2.2%) above the $403.0M midpoint",
+        "Does not give a result for Q3 gross margin or Q3 EPS against guidance, and says the Q2 call gave no Q3 guidance for those lines (the 40.0% to 41.0% gross margin guide was for the full year)",
+        "Names the sources with their dates: the Q2 call of July 23, 2026 and the Q3 press release and call of October 22, 2026"
+      ],
+      "fixtures": [
+        "northwind/prior_q2_call.md",
+        "northwind/press_release_q3.md",
+        "northwind/transcript_q3.md"
+      ],
+      "expected_tool_calls": [
+        {
+          "name": "read_file",
+          "arguments": {
+            "path": "northwind/prior_q2_call.md"
+          }
+        },
+        {
+          "name": "read_file",
+          "arguments": {
+            "path": "northwind/press_release_q3.md"
+          }
+        },
+        {
+          "name": "read_file",
+          "arguments": {
+            "path": "northwind/transcript_q3.md"
+          }
+        }
+      ]
+    },
+    {
+      "id": 102,
+      "kind": "effectiveness",
+      "prompt": "What changed in Northwind's FY26 outlook between the Q2 and Q3 reports?",
+      "should_trigger": true,
+      "assertions": [
+        "States FY26 revenue guidance was raised from $1.62 billion to $1.66 billion to $1.64 billion to $1.68 billion, a midpoint increase of $20M",
+        "States FY26 non-GAAP EPS guidance is $3.22 to $3.30, previously $3.10 to $3.20 per the press release, and does not use any other EPS guidance figure",
+        "Says the prior EPS range comes from the Q3 press release because the Q2 call excerpt gave no EPS guidance"
+      ],
+      "fixtures": [
+        "northwind/prior_q2_call.md",
+        "northwind/press_release_q3.md"
+      ],
+      "expected_tool_calls": [
+        {
+          "name": "read_file",
+          "arguments": {
+            "path": "northwind/prior_q2_call.md"
+          }
+        },
+        {
+          "name": "read_file",
+          "arguments": {
+            "path": "northwind/press_release_q3.md"
+          }
+        }
+      ]
+    },
+    {
+      "id": 103,
+      "kind": "effectiveness",
+      "prompt": "Did Northwind keep its promise on restructuring charges?",
+      "should_trigger": true,
+      "assertions": [
+        "Says management said on the Q2 call it did not expect further restructuring charges in fiscal 2026 and that the Tacoma consolidation was complete",
+        "Says Q3 included restructuring charges of $5.8M pre-tax, about $0.04 per diluted share, for consolidating assembly into Fremont, so the earlier statement did not hold",
+        "Notes the effect on EPS: GAAP diluted EPS of $0.80 against non-GAAP diluted EPS of $0.84"
+      ],
+      "fixtures": [
+        "northwind/prior_q2_call.md",
+        "northwind/press_release_q3.md",
+        "northwind/transcript_q3.md"
+      ],
+      "expected_tool_calls": [
+        {
+          "name": "read_file",
+          "arguments": {
+            "path": "northwind/prior_q2_call.md"
+          }
+        },
+        {
+          "name": "read_file",
+          "arguments": {
+            "path": "northwind/press_release_q3.md"
+          }
+        },
+        {
+          "name": "read_file",
+          "arguments": {
+            "path": "northwind/transcript_q3.md"
+          }
+        }
+      ]
+    },
+    {
+      "id": 104,
+      "kind": "effectiveness",
+      "prompt": "What did management say about Q4 and full-year gross margin before and after the Q3 print?",
+      "should_trigger": true,
+      "assertions": [
+        "Says on the Q2 call management expected Q4 gross margin in line with the full-year range of 40.0% to 41.0%",
+        "Says on the Q3 call management expected Q4 gross margin broadly in line with Q3, which was 41.5% non-GAAP, and that the Q3 materials do not restate a full-year gross margin range",
+        "Says no Q4 revenue guidance appears in either source and does not invent one"
+      ],
+      "fixtures": [
+        "northwind/prior_q2_call.md",
+        "northwind/press_release_q3.md",
+        "northwind/transcript_q3.md"
+      ],
+      "expected_tool_calls": [
+        {
+          "name": "read_file",
+          "arguments": {
+            "path": "northwind/prior_q2_call.md"
+          }
+        },
+        {
+          "name": "read_file",
+          "arguments": {
+            "path": "northwind/press_release_q3.md"
+          }
+        },
+        {
+          "name": "read_file",
+          "arguments": {
+            "path": "northwind/transcript_q3.md"
+          }
+        }
+      ]
+    },
+    {
+      "id": 105,
+      "kind": "effectiveness",
+      "prompt": "One line for the morning meeting: did Northwind beat its own guidance in Q3?",
+      "should_trigger": true,
+      "assertions": [
+        "Says yes: Q3 revenue of $412.0M was above the $398M to $408M guide, and FY26 revenue and EPS guidance were raised",
+        "Keeps the answer to one or two sentences"
+      ],
+      "fixtures": [
+        "northwind/prior_q2_call.md",
+        "northwind/press_release_q3.md",
+        "northwind/transcript_q3.md"
+      ],
+      "expected_tool_calls": [
+        {
+          "name": "read_file",
+          "arguments": {
+            "path": "northwind/prior_q2_call.md"
+          }
+        },
+        {
+          "name": "read_file",
+          "arguments": {
+            "path": "northwind/press_release_q3.md"
+          }
+        },
+        {
+          "name": "read_file",
+          "arguments": {
+            "path": "northwind/transcript_q3.md"
+          }
+        }
+      ]
+    }
+  ]
+}
