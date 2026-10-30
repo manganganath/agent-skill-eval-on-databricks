@@ -245,9 +245,10 @@ class ReleaseOpened(BaseModel):
 
 
 class ReleaseGate(BaseModel):
-    """The eval gate: the skills-pr check of the pull request's head commit. `none` when no check has run."""
+    """The eval gate: the skills-pr check of the pull request's head commit. `none` when no check has run, `cancelled`
+    when a newer push or a person cancelled it."""
 
-    state: Literal["pending", "passed", "failed", "none"]
+    state: Literal["pending", "passed", "failed", "cancelled", "none"]
     url: str
 
 
@@ -258,9 +259,10 @@ class ReleaseMerged(BaseModel):
 
 
 class ReleaseRelease(BaseModel):
-    """The skills-publish run of the merge commit. `url` links to the run, which is where a waiting release is approved."""
+    """The skills-publish run of the merge commit. `url` links to the run, which is where a waiting release is approved.
+    `cancelled` when a newer run of the release concurrency group replaced it, or a person cancelled it."""
 
-    state: Literal["not_started", "running", "waiting_approval", "succeeded", "failed"]
+    state: Literal["not_started", "running", "waiting_approval", "succeeded", "failed", "cancelled"]
     url: str | None
 
 

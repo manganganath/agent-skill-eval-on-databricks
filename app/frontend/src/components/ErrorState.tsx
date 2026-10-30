@@ -55,12 +55,17 @@ const MESSAGES: Record<string, string> = {
     "This pull request cannot be merged from the Skill Hub yet. It must be open, change only skills, pass its checks, and be up to date with main. If main has moved, update the branch in GitHub; the gate then runs again.",
   mixed_sources:
     "Evaluate live skills and candidates in separate runs, with candidates from one upload only. A candidate run cannot pin versions.",
+  cross_site_request:
+    "Skill Hub refused this request because another site sent it. Open Skill Hub itself and do it from there.",
 };
 
-export function ErrorState({ error, onRetry }: { error: unknown; onRetry?: () => void }) {
+// `message` replaces the reason's own words, for a page that knows more about the refusal than its reason says.
+export function ErrorState({ error, onRetry, message: override }: {
+  error: unknown; onRetry?: () => void; message?: string;
+}) {
   const reason = error instanceof ApiError ? error.reason : undefined;
   const message =
-    (reason && MESSAGES[reason]) ?? "Something went wrong. Try again.";
+    override ?? (reason && MESSAGES[reason]) ?? "Something went wrong. Try again.";
   return (
     <div role="alert" className="error">
       <p>{message}</p>

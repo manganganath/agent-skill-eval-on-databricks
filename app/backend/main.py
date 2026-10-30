@@ -8,6 +8,7 @@ from fastapi.staticfiles import StaticFiles
 
 from backend import github, queries
 from backend.authz import Forbidden, Reason
+from backend.cross_site import CrossSiteGuard
 from backend.data import SqlDenied, SqlError
 
 DEFAULT_STATIC = Path(__file__).resolve().parent / "static"
@@ -39,6 +40,7 @@ def _include_routers(app: FastAPI) -> None:
 
 def create_app(static_dir: Path = DEFAULT_STATIC) -> FastAPI:
     app = FastAPI(title="Skill Hub", version="0.1.0")
+    app.add_middleware(CrossSiteGuard)  # before any route: a form that another site posts changes nothing
 
     @app.exception_handler(Forbidden)
     async def _forbidden(_request, exc: Forbidden):
