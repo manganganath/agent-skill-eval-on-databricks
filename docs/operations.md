@@ -2,14 +2,22 @@
 
 ## Bootstrap
 
-Prerequisites: a workspace with Unity Catalog and a SQL warehouse, serverless jobs, Python 3.11 or later with `uv`, and a GitHub repository. The Skill Hub app runs on the Databricks Apps runtime, which is Python 3.11.
+Prerequisites: a workspace with Unity Catalog and a SQL warehouse, serverless jobs, Python 3.11 or later with `uv`, and a GitHub repository. The floor is 3.11 (`requires-python` in `pyproject.toml`), because the Skill Hub app runs on the Python of the Databricks Apps runtime, which is 3.11. CI and the commands in this guide use Python 3.12.
 
-Follow this order.
+Follow this order. The first deploy takes two passes, because the deploy creates the Skill Hub app, and with it the app's service principal. Until pass 2, the `skillhub-ci` application ID stands in for the app's.
 
-1. **A person runs the first bootstrap.** Set `SKILLHUB_WORKSPACE_ROOT` to the folder for the experiments and CI candidates, normally `/Users/<skillhub-ci application ID>/skill-hub`, and `SKILLHUB_APP_PRINCIPAL` to the app's application ID. Then run `uv run skillhub bootstrap --create-identities --secret-out <file> --eval-secret-out <file>`. The person must own the catalog and be a workspace admin. Without `SKILLHUB_WORKSPACE_ROOT` the folder is `/Shared/skill-hub`, which every user can edit (see [Experiment folders](#experiment-folders)).
+1. **A person runs the first bootstrap.** Set `SKILLHUB_CATALOG`, `SQL_WAREHOUSE_ID`, and `SKILLHUB_WORKSPACE_ROOT` to the folder for the experiments and CI candidates, normally `/Users/<skillhub-ci application ID>/skill-hub`. Leave `SKILLHUB_APP_PRINCIPAL` unset: the app does not exist yet, so bootstrap warns and skips the app's grants. Then run `uv run skillhub bootstrap --create-identities --secret-out <file> --eval-secret-out <file>`. The person must own the catalog and be a workspace admin. Without `SKILLHUB_WORKSPACE_ROOT` the folder is `/Shared/skill-hub`, which every user can edit (see [Experiment folders](#experiment-folders)).
 2. **Grant one role by hand.** `skillhub-ci` needs the Service Principal User role on `skillhub-ci-eval`. Do this before the first prod deploy. See [Service Principal User role](#service-principal-user-role).
-3. **Configure GitHub and deploy.** See Secrets and Deploy.
-4. **Re-run the bootstrap Job.** After the first deploy, run the `skillhub-bootstrap` Job once. It runs as `skillhub-ci`. Run it again after every upgrade, so the tables, views, alerts and prompts match the new code.
+3. **Configure GitHub.** Run `scripts/configure_github.sh` (see [Secrets](#secrets)). Give `--app-principal` and `--app-principal-dev` the `skillhub-ci` application ID as the stand-in. This is safe: bootstrap gives no app grants to a principal that is a CI principal, and the bundle accepts `skillhub-ci` twice on the `skill-switch` Job.
+4. **Deploy (pass 1).** Push to `main`, or run `gh workflow run platform.yml --ref main -f deploy=prod`. Then approve the `production` deployment. The deploy creates the Jobs and the app (see [Deploy](#deploy)).
+5. **Replace the stand-in (pass 2).**
+   1. Read the app's application ID: `databricks apps get skill-hub -o json`, field `service_principal_client_id`. The app names are `app_name` in `databricks.yml`: `skill-hub` for `prod`, `skill-hub-dev` for `dev`.
+   2. Set it: `gh variable set APP_PRINCIPAL --env production --repo <owner>/<repo> --body <application ID>`. Record the Job IDs at the same time (see [Change one variable](#change-one-variable)).
+   3. Deploy prod again: `gh workflow run platform.yml --ref main -f deploy=prod`, then approve it.
+   4. The dev app exists only after a dev deploy. After the first one, set `APP_PRINCIPAL_DEV` from `skill-hub-dev` in the same way, and deploy dev again.
+
+   Finish pass 2 before the nightly run at 02:00 UTC. With the stand-in, `skillhub-ci` counts as the app, so `check-permissions` reports its access from its home folder as `inherited_access`.
+6. **Grant the app, then run the bootstrap Job.** Give the app's principal `USE CATALOG` and `CREATE SCHEMA` on the catalog (see [Try on skills under review](#try-on-skills-under-review)). Then run the `skillhub-bootstrap` Job once. It runs as `skillhub-ci` and gives the app its schema grants, trace-table access and folder access. Run it again after every upgrade, so the tables, views, alerts and prompts match the new code.
 
 What the first run does:
 
@@ -17,7 +25,7 @@ What the first run does:
 - It creates the schemas, applies the grants from `config/hub.yaml`, creates the tables and views, and creates the experiment folders with their access lists. It creates an experiment for each skill on `main` and an unreleased experiment for each department (see [Experiments of new skills](#experiments-of-new-skills)).
 - It registers the prompts and the skill-use judge (see below).
 - It creates or updates the SQL alerts and the Genie space.
-- It gives both CI principals `CAN_USE` on the SQL warehouse. Without `--create-identities` it only warns.
+- It gives `skillhub-ci-eval` `CAN_USE` on the SQL warehouse, and `skillhub-ci` `CAN_MANAGE`: the deploy binds the warehouse to the app, and Databricks Apps needs `CAN_MANAGE` for that. Without `--create-identities` it only warns.
 - It makes `skillhub-ci` the owner of the SQL alerts and gives it the Genie space (owner where the API allows it, else `CAN_MANAGE`). If the workspace refuses, bootstrap prints the manual step.
 - It hands ownership of every schema, results table and view it created to `skillhub-ci`. This is why the Job, which runs as `skillhub-ci`, passes the owner checks. The check accepts only the deploying person and `skillhub-ci` as owners. It refuses `skillhub-ci-eval` and any other owner.
 
@@ -37,7 +45,7 @@ The required groups are account groups that are assigned to the workspace. Unity
 ### CI principals
 
 - Each CI principal gets the entitlements `workspace-access` and `databricks-sql-access`. Without them every API call from the principal fails. Bootstrap adds a missing entitlement to an existing principal only with `--create-identities`.
-- Each CI principal gets `CAN_USE` on the SQL warehouse.
+- `skillhub-ci-eval` gets `CAN_USE` on the SQL warehouse, and `skillhub-ci` gets `CAN_MANAGE`.
 - Bootstrap writes each new OAuth secret to the file you give (`--secret-out` for `skillhub-ci`, `--eval-secret-out` for `skillhub-ci-eval`). The file must not exist. Bootstrap creates it with mode 0600. It never prints a secret.
 - A principal with an unexpired secret gets no new one.
 
@@ -85,7 +93,7 @@ In this release CI uses an OAuth machine-to-machine secret. OIDC federation is p
 
 ## Secrets
 
-GitHub holds the CI credentials in environments, not as repository secrets. Run `scripts/configure_github.sh` once after bootstrap. Run it again after the first production deploy, with `--job-id-eval` and `--job-id-switch`, to record the Job IDs. The script sets branch protection on `main` and creates two environments:
+GitHub holds the CI credentials in environments, not as repository secrets. Run `scripts/configure_github.sh` once after bootstrap. It needs every secret file and every required option on each run. So keep the files, with mode 0600, until setup is complete, then delete them. After that, change one value at a time with `gh` (see [Change one variable](#change-one-variable)). The script sets branch protection on `main` and creates two environments:
 
 | Environment | Reviewers | Credentials | Used by |
 |---|---|---|---|
@@ -100,13 +108,34 @@ The script sets these variables:
 |---|---|---|
 | `SKILLHUB_CATALOG` | `production`, `ci-eval` | The catalog. Every workflow step that runs the bundle passes it. |
 | `SKILLHUB_WORKSPACE_ROOT` | `production`, `ci-eval` | The folder for experiments and CI candidates (with `--workspace-root`; default `/Users/<ci principal>/skill-hub`). The deploy passes it to the bundle, and the PR and merge evals upload candidates under it. The script refuses a folder under `/Shared`. |
-| `CI_PRINCIPAL`, `CI_EVAL_PRINCIPAL`, `APP_PRINCIPAL`, `APP_PRINCIPAL_DEV` | `production` | Application IDs for the bundle |
+| `CI_PRINCIPAL`, `CI_EVAL_PRINCIPAL`, `APP_PRINCIPAL`, `APP_PRINCIPAL_DEV` | `production` | Application IDs for the bundle: `skillhub-ci`, `skillhub-ci-eval`, and the service principals of the prod and dev Skill Hub apps |
 | `CI_EVAL_PRINCIPAL` | `ci-eval` | The only author whose MLflow runs the PR and merge gates trust |
 | `SKILLHUB_JOB_ID_EVAL` | `production`, `ci-eval` | ID of the `skill-eval` Job (with `--job-id-eval`) |
 | `SKILLHUB_JOB_ID_SWITCH` | `production` | ID of the `skill-switch` Job (with `--job-id-switch`) |
 | `SKILLHUB_ALERT_DESTINATION_ID` | `production` | Notification destination for the SQL alerts and for failed `skill-switch` and nightly runs (with `--alert-destination-id`). See Reconcile alerts. |
 | `SKILL_HUB_URL` | `production`, `ci-eval` | Address of the Skill Hub, used in PR comment links (with `--skill-hub-url`) |
 | `SKILLHUB_PR_LINKS` | Repository | `true` or `false` (with `--pr-links`). See below. |
+
+### Change one variable
+
+After setup, set one variable at a time with `gh variable set`. Use the same names and environments as the script:
+
+```bash
+# The Job IDs, after the first deploy: databricks jobs list --name skill-eval (and --name skill-switch)
+gh variable set SKILLHUB_JOB_ID_EVAL --env production --repo <owner>/<repo> --body <skill-eval ID>
+gh variable set SKILLHUB_JOB_ID_EVAL --env ci-eval --repo <owner>/<repo> --body <skill-eval ID>
+gh variable set SKILLHUB_JOB_ID_SWITCH --env production --repo <owner>/<repo> --body <skill-switch ID>
+# The app's service principal: databricks apps get skill-hub -o json (skill-hub-dev for dev)
+gh variable set APP_PRINCIPAL --env production --repo <owner>/<repo> --body <application ID>
+gh variable set APP_PRINCIPAL_DEV --env production --repo <owner>/<repo> --body <application ID>
+# The alert destination
+gh variable set SKILLHUB_ALERT_DESTINATION_ID --env production --repo <owner>/<repo> --body <destination ID>
+# The Skill Hub address for pull request comment links
+gh variable set SKILL_HUB_URL --env production --repo <owner>/<repo> --body <url>
+gh variable set SKILL_HUB_URL --env ci-eval --repo <owner>/<repo> --body <url>
+```
+
+`gh` does not check the values as the script does. A Job ID is a number, and a destination ID is a UUID. The workflows read the Job IDs and `SKILL_HUB_URL` when they run. `APP_PRINCIPAL` and `SKILLHUB_ALERT_DESTINATION_ID` take effect at the next prod deploy, and `APP_PRINCIPAL_DEV` at the next dev deploy. After a prod deploy, run the `skillhub-bootstrap` Job, so the app's grants and the alerts follow.
 
 ### GitHub token for the Skill Hub
 
@@ -163,7 +192,7 @@ GH_TOKEN=$(gh auth token --user <owner-login>) scripts/configure_github.sh --rep
   [--alert-destination-id <id>] [--job-id-eval <N> --job-id-switch <N>] [--skip-org-check] [--dry-run]
 ```
 
-The script reads each secret from a file and passes it on stdin. It never prints a secret or puts one on the command line. Use `--dry-run` to see the commands first. For an organization-owned repository it also checks that no organization-level `DATABRICKS_*` secret exists. Use `--skip-org-check` only after you checked that by hand. To rotate a client secret, create a new one, re-run the script with the new file, then delete the old secret.
+The script reads each secret from a file and passes it on stdin. It never prints a secret or puts one on the command line. Use `--dry-run` to see the commands first. For an organization-owned repository it also checks that no organization-level `DATABRICKS_*` or `SQL_WAREHOUSE_ID` secret exists. Use `--skip-org-check` only after you checked that by hand. To rotate a client secret, create a new one and set it, then delete the old secret and the file. For `skillhub-ci`: `tr -d '\r\n' < <file> | gh secret set DATABRICKS_CLIENT_SECRET --env production --repo <owner>/<repo>`. For `skillhub-ci-eval`, use `--env ci-eval`. While you still have every file, re-running the script with the new one does the same.
 
 ### Network access from CI
 
@@ -193,6 +222,8 @@ gh workflow run platform.yml --ref main -f deploy=none   # the checks only
 
 Both deploys run in the `production` environment, so each one asks for the approval. GitHub starts no `pull_request` run for a commit that a workflow pushes. So when the `skills-pr` bot commits generated evals to a pull request, it starts the `skills-pr` and `platform` checks on that commit itself, with `deploy=none`.
 
+To deploy from your own machine, run `scripts/build_app.sh` first. Set the bundle variables that the workflow sets: `BUNDLE_VAR_warehouse_id`, `BUNDLE_VAR_ci_principal`, `BUNDLE_VAR_ci_eval_principal`, `BUNDLE_VAR_app_principal`, `BUNDLE_VAR_catalog` and `BUNDLE_VAR_workspace_root`. A deploy creates the app but neither starts it nor deploys its source; `databricks bundle run skill_hub -t dev` does both. The dev Jobs and app need the `<catalog>_dev` catalog. Create it, then run a person's bootstrap with `SKILLHUB_CATALOG=<catalog>_dev`.
+
 ### Replaced runs
 
 The prod deploy, `skills-publish.yml` and `skills-switch.yml` share one concurrency group, `skillhub-release`. Only one of them runs at a time, so the Jobs never change during a publish or a switch. A run that waits for the group is pending. GitHub keeps at most one pending run in the group. When a newer run joins, GitHub cancels the older pending run and shows it as Cancelled, although nothing failed.
@@ -211,12 +242,12 @@ A pull request runs the PR pipeline automatically. To run by hand, open the Run 
 
 | Parameter | Value |
 |---|---|
-| `run_key` | For example `hub_<8hex>` from the Skill Hub, or `manual_<8hex>` |
+| `run_key` | For example `hub_<8hex>` for a Skill Hub run on live skills, `<candidate run key>_h<8hex>` for one on a candidate or draft, or a label of your own such as `manual_<8hex>` |
 | `skills` | A list of `dept/name`, or `all` |
 | `models` | A list, or `default` |
 | `modes` | `trigger`, `effectiveness` |
-| `source` | `git:<sha>` or `live` |
-| `trigger_source` | `manual` |
+| `source` | `git:<sha>` for a pull request, a merge or a candidate, `draft:<id>` for a Skill Hub draft, or `live` |
+| `trigger_source` | `hub` for a Skill Hub run on live skills. `manual` for a Skill Hub run on a candidate or draft, and the default for a run you start yourself. CI sends `pr` and `merge`, and the nightly Job sends `nightly`. |
 | `requested_by` | The user who asked for the run |
 | `versions` | Optional. Pins as `dept/name=N[,dept/name=N]`, to evaluate that registered version instead of the live copy. The same skill name may be pinned in two departments. |
 | `skills_root`, `fixtures_root` | Optional. Folders that hold candidate skills and fixtures. Empty means the deployed ones. |
@@ -238,7 +269,7 @@ Verdicts: `inconclusive` means infrastructure failed or too many votes were miss
 
 Each skill is isolated in its own process because MLflow keeps tracing state per process (see Evaluation method in the architecture document). Inside a worker, one child run and one `evaluate` call run at a time; that call holds all the repeats. Two `evaluate` calls at once in one process deadlocked inside MLflow. Each skill starts on a different model of its list, so the workers spread over the endpoints. Lower either value if endpoints answer 429 often; the model client retries with backoff. `skill_workers: 1` evaluates the skills one after another in the Job's own process. Several `skill-eval` runs can run at the same time (`max_concurrent_runs: 4`), and each adds its own load.
 
-The first workers start 5 seconds apart, so their setups do not reach the dataset and workspace APIs at the same moment; a later worker starts as soon as a slot is free. A skill's setup is retried with backoff when an API answers 429, 503 or 504 (up to 6 attempts); after the last one the skill is recorded as `setup failed: ...`. A rubric insert that meets a Delta write conflict with another worker of its department is retried up to 5 times. The eval tasks (`skill-eval` `eval`, nightly `eval_live`) set `max_retries: 0`: an automatic retry would run every skill again under the same run key, so a failed eval stops and you re-run it on purpose.
+The first workers start 5 seconds apart, so their setups do not reach the dataset and workspace APIs at the same moment; a later worker starts as soon as a slot is free. A skill's setup is retried with backoff when an API answers 429, 503 or 504 (up to 6 attempts); after the last one the skill is recorded as `setup failed: ...`. A rubric insert that meets a Delta write conflict with another worker of its department is tried up to 5 times. The eval tasks (`skill-eval` `eval`, nightly `eval_live`) set `max_retries: 0`: an automatic retry would run every skill again under the same run key, so a failed eval stops and you re-run it on purpose.
 
 A worker's log lines appear in the Job output, prefixed with `[dept/skill]`. A worker that crashes is recorded as an error of its skill (`evaluation worker failed: ...` with the end of its log), and the other skills carry on. In a serverless Job, the runtime credentials do not reach a child process, so each worker gets the workspace host and a token of the Job's identity in its environment. CI waits up to 5 hours for the eval Job.
 
@@ -325,7 +356,7 @@ Bootstrap creates these alerts and updates them on every run:
 
 The first three count only gating runs: merge and nightly runs, without the `without_skill` mode.
 
-Alerts notify the destination in the `SKILLHUB_ALERT_DESTINATION_ID` variable of the `production` environment. Set it with `scripts/configure_github.sh --alert-destination-id <id>`. The prod deploy passes it to the bundle and to bootstrap. It also makes failed `skill-switch` and nightly Job runs notify the same destination. If the variable is empty, the deploy prints a warning and the alerts have no subscribers. Bootstrap adds the destination to an existing alert but never removes a subscriber. The first bootstrap makes `skillhub-ci` the alerts' owner. The `skillhub-bootstrap` Job changes only alerts that `skillhub-ci` owns. For any other alert it logs a warning and leaves it as it is: change the owner in the UI, or apply the change by hand.
+Alerts notify the destination in the `SKILLHUB_ALERT_DESTINATION_ID` variable of the `production` environment. Set it with `scripts/configure_github.sh --alert-destination-id <id>` during setup, or later with `gh variable set SKILLHUB_ALERT_DESTINATION_ID --env production --repo <owner>/<repo> --body <id>` (see [Change one variable](#change-one-variable)). The prod deploy passes it to the bundle and to bootstrap. It also makes failed `skill-switch` and nightly Job runs notify the same destination. If the variable is empty, the deploy prints a warning and the alerts have no subscribers. Bootstrap adds the destination to an existing alert but never removes a subscriber. The first bootstrap makes `skillhub-ci` the alerts' owner. The `skillhub-bootstrap` Job changes only alerts that `skillhub-ci` owns. For any other alert it logs a warning and leaves it as it is: change the owner in the UI, or apply the change by hand.
 
 ### Experiment folders
 
@@ -350,7 +381,7 @@ Bootstrap creates the folders (an admin can create folders in a service principa
 
 `candidates/` adds `CAN_MANAGE` for `skillhub-ci` and `skillhub-ci-eval`: CI creates a folder per pull request run there. `drafts/` adds `CAN_MANAGE` for `skillhub-ci`, `skillhub-ci-eval` and the app service principal: the Skill Hub creates a folder per draft there, and the nightly cleanup (as `skillhub-ci-eval`) deletes old ones. The app never gets `CAN_MANAGE` on `candidates/`, so it cannot change a pull request's upload. Without `SKILLHUB_APP_PRINCIPAL`, `drafts/` has the two CI principals only and draft uploads fail with `draft_store_failed`.
 
-The parent `<workspace_root>` gets only the two CI principals. The Job gets the app principal from the bundle. When a person runs bootstrap, set the environment variable `SKILLHUB_APP_PRINCIPAL` first. Without it the app gets no access, and bootstrap warns. Bootstrap also warns about any grant that the root inherits beyond these lists. `skillhub-ci` inheriting `CAN_MANAGE` from its own home folder is expected.
+The parent `<workspace_root>` gets only the two CI principals. The Job gets the app principal from the bundle. When a person runs bootstrap after the app exists, set the environment variable `SKILLHUB_APP_PRINCIPAL` first. Without it the app gets no access, and bootstrap warns. Bootstrap also warns about any grant that the root inherits beyond these lists. `skillhub-ci` inheriting `CAN_MANAGE` from its own home folder is expected.
 
 After an upgrade that adds the drafts folder, re-run the `skillhub-bootstrap` Job (it runs as `skillhub-ci`) or a person's bootstrap. Bootstrap creates `drafts/` and sets its access list; until then the Skill Hub cannot store drafts.
 

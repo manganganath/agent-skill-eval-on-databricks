@@ -140,14 +140,16 @@ Agents outside the Skill Hub load skills from the Unity Gateway skills MCP (Beta
 - A workspace admin who owns the catalog, for the first bootstrap.
 - A GitHub repository with Actions, environments and branch protection. On GitHub Free, these need a public repository.
 - A self-hosted runner if the workspace has an IP access list, because GitHub-hosted runners use changing addresses. See [Network access from CI](docs/operations.md#network-access-from-ci).
-- Locally: Python 3.12 with [`uv`](https://docs.astral.sh/uv/), the Databricks CLI (v1.20 or later), the GitHub CLI `gh`, and Node.js 20 or later for the app's frontend.
+- Locally: Python 3.11 or later with [`uv`](https://docs.astral.sh/uv/) (CI and the commands below use 3.12), the Databricks CLI (v1.20 or later), the GitHub CLI `gh`, and Node.js 20 or later for the app's frontend.
 
 ### Steps
 
-[docs/operations.md](docs/operations.md) has the details for each step. In order:
+[docs/operations.md](docs/operations.md) has the details for each step. The first deploy takes two passes. The deploy creates the Skill Hub app, and with it the app's service principal. So pass 1 uses the `skillhub-ci` application ID as a stand-in for the app's, and pass 2 replaces it.
 
-1. **Make the repository yours.** Create your own repository from this one. Edit `config/hub.yaml`: your departments and their reader groups, your model endpoints, and your thresholds. See [Configure it](#configure-it). Replace or import the skills under `skills/`.
-2. **Run the first bootstrap, as a person.** Set `SKILLHUB_CATALOG`, `SQL_WAREHOUSE_ID` and `SKILLHUB_WORKSPACE_ROOT` (`/Users/<skillhub-ci application ID>/skill-hub`), then run:
+**Pass 1: set up and deploy**
+
+1. **Make the repository yours.** Create your own repository from this one. Edit `config/hub.yaml`: your departments and their reader groups, your model endpoints, and your thresholds. See [Configure it](#configure-it). Replace or import the skills under `skills/`. The unit tests check the shipped example skills, so update the tests that name them in the same change (see [Import another skill repository](docs/onboarding.md#import-another-skill-repository)). Otherwise the `platform` check fails, and nothing deploys. Deploy and eval runs before step 5 fail, because GitHub is not configured yet. That is expected.
+2. **Run the first bootstrap, as a person.** You must own the catalog and be a workspace admin. Sign in with the Databricks CLI, for example `databricks auth login --host <workspace URL>`. Set `SKILLHUB_CATALOG`, `SQL_WAREHOUSE_ID` and `SKILLHUB_WORKSPACE_ROOT` (`/Users/<skillhub-ci application ID>/skill-hub`). Leave `SKILLHUB_APP_PRINCIPAL` unset, because the app does not exist yet. Then run:
    ```bash
    uv run skillhub bootstrap --create-identities --secret-out ci-secret.txt --eval-secret-out ci-eval-secret.txt
    ```
@@ -158,34 +160,48 @@ Agents outside the Skill Hub load skills from the Unity Gateway skills MCP (Beta
 
    The workspace root sits in `skillhub-ci`'s home folder, so its ID must be known first. If `skillhub-ci` doesn't exist yet, create the two service principals in Settings → Identity and access → Service principals, named `skillhub-ci` and `skillhub-ci-eval`. Bootstrap uses existing principals by name.
 
-   It writes each new OAuth secret to the file you name (mode 0600) and never prints one. `--print-identities` lists what it would create, for an admin to do by hand. [Bootstrap](docs/operations.md#bootstrap) explains the order and what to do when the workspace refuses an API call.
+   It writes each new OAuth secret to the file you name (mode 0600) and never prints one. It prints the application IDs of both CI principals. It warns that the app gets no grants; pass 2 gives them. `--print-identities` lists what it would create, for an admin to do by hand. [Bootstrap](docs/operations.md#bootstrap) explains the order and what to do when the workspace refuses an API call.
 3. **Grant one role by hand.** `skillhub-ci` needs the **Service Principal User** role on `skillhub-ci-eval` before the first production deploy. See [Service Principal User role](docs/operations.md#service-principal-user-role).
-4. **Configure GitHub.** Run `scripts/configure_github.sh`. It:
+4. **Configure GitHub.** Run `scripts/configure_github.sh`. Give both `--app-principal` and `--app-principal-dev` the `skillhub-ci` application ID, as the stand-in. The script:
    - creates the `ci-eval` and `production` environments with their secrets and variables, and names the release approver;
    - protects `main` (the `skills-pr` and `platform` checks must pass, and branches must be up to date).
 
-   It reads every secret from a file and never prints one. See [Secrets](docs/operations.md#secrets). Delete the secret files afterwards.
-5. **Deploy.** A push to `main` runs `platform.yml`, which deploys the bundle (Jobs, app, schemas) into the `prod` target after the `production` approval. Then:
-   - run `scripts/configure_github.sh` again with `--job-id-eval` and `--job-id-switch`, to record the new Job IDs;
-   - run the `skillhub-bootstrap` Job once. It runs as `skillhub-ci` and finishes the hand-over.
-6. **Grant the app.** Give the Skill Hub app's service principal `USE CATALOG` and `CREATE SCHEMA` on the catalog. Try on skills under review needs both:
+   It reads every secret from a file and never prints one. Besides the two secret files from step 2, it reads the workspace URL, the warehouse ID and each CI application ID from files. See [Secrets](docs/operations.md#secrets). Keep the files, with mode 0600, until setup is complete: the script needs all of them on every run.
+5. **Deploy.** Push to `main`, for example your changes from step 1, or run `gh workflow run platform.yml --ref main -f deploy=prod`. Then approve the `production` deployment: GitHub → the run → Review deployments. `platform.yml` deploys the bundle (the Jobs and the app) into the `prod` target. If the push changes `skills/`, `skills-publish` also runs and fails, because the Job IDs are not set yet. Step 11 releases the skills.
+
+**Pass 2: connect the app**
+
+6. **Record the app and the Jobs in GitHub.** Use the Databricks CLI sign-in from step 2:
+   - `databricks apps get skill-hub -o json` shows the app's application ID as `service_principal_client_id`. `skill-hub` is the prod app name in `databricks.yml`.
+   - `databricks jobs list --name skill-eval` and `databricks jobs list --name skill-switch` show the Job IDs.
+   - Set the variables:
+     ```bash
+     gh variable set APP_PRINCIPAL --env production --repo <owner>/<repo> --body <app application ID>
+     gh variable set SKILLHUB_JOB_ID_EVAL --env production --repo <owner>/<repo> --body <skill-eval ID>
+     gh variable set SKILLHUB_JOB_ID_EVAL --env ci-eval --repo <owner>/<repo> --body <skill-eval ID>
+     gh variable set SKILLHUB_JOB_ID_SWITCH --env production --repo <owner>/<repo> --body <skill-switch ID>
+     ```
+   `APP_PRINCIPAL_DEV` belongs to the dev app, `skill-hub-dev`, which exists only after a dev deploy. Set it the same way after your first dev deploy, then deploy dev again.
+7. **Deploy again.** Run `gh workflow run platform.yml --ref main -f deploy=prod`, and approve it. The bundle now gives the app's principal its permissions on the `skill-eval` and `skill-switch` Jobs.
+8. **Grant the app.** As the catalog owner, give the Skill Hub app's service principal `USE CATALOG` and `CREATE SCHEMA` on the catalog. Try on skills under review needs both:
    ```sql
-   GRANT USE CATALOG, CREATE SCHEMA ON CATALOG <catalog> TO `<app service principal application id>`
+   GRANT USE CATALOG, CREATE SCHEMA ON CATALOG <catalog> TO `<app application ID>`
    ```
-   `databricks apps get <app name>` shows the ID as `service_principal_client_id`.
-7. **Connect the Skill Hub to GitHub.** **Submit for review**, the **Release path** and **Merge** need a fine-grained GitHub token for this repository, stored as the Databricks secret `skillhub/github-token`, with READ for the app's principal. See [GitHub token for the Skill Hub](docs/operations.md#github-token-for-the-skill-hub). A GitHub App is the production choice.
-8. **Add people to the groups.** Readers go into `skillhub-users` and the department groups; also fill `skillhub-authors` and `skillhub-reviewers`. The groups are account groups assigned to the workspace.
-9. **Release the first skills.** Open a pull request that adds skills under `skills/`. Its gate evaluates them; after you merge and approve, CI publishes them as v1 and makes them live.
+   Then run the `skillhub-bootstrap` Job once: `databricks jobs run-now <ID>`, with the ID from `databricks jobs list --name skillhub-bootstrap`. It runs as `skillhub-ci` and gives the app its schema grants and folder access.
+9. **Connect the Skill Hub to GitHub.** **Submit for review**, the **Release path** and **Merge** need a fine-grained GitHub token for this repository, stored as the Databricks secret `skillhub/github-token`, with READ for the app's principal. See [GitHub token for the Skill Hub](docs/operations.md#github-token-for-the-skill-hub). A GitHub App is the production choice.
+10. **Add people to the groups.** Readers go into `skillhub-users` and the department groups; also fill `skillhub-authors` and `skillhub-reviewers`. Add `skillhub-reviewers` to every department's reader group too: reviewers browse and switch a department's live skills only through it. The groups are account groups assigned to the workspace.
+11. **Release the first skills.** Nothing is released yet, so the first release takes every skill on `main`. Run `gh workflow run skills-publish.yml --ref main`, or merge a pull request that changes `skills/`. It evaluates the skills, waits for the `production` approval, then publishes them as v1 and makes them live.
+12. **Delete the secret files.** Setup is complete. To change one variable later, use `gh variable set`. See [Change one variable](docs/operations.md#change-one-variable).
 
 **Check it worked:**
 - The Skill Hub shows your skills as live, with a verdict per model.
 - **Access** shows your roles.
 - **Try this skill** answers with "Skill invoked: yes".
-- `uv run skillhub check-permissions` exits 0.
+- `uv run skillhub check-permissions`, with the variables from step 2, exits 0.
 
 ### Upgrade
 
-Merge the new version into your repository. The `platform` workflow deploys it after the `production` approval. Then run the `skillhub-bootstrap` Job once, so tables, views, alerts, prompts and experiment folders match the new code.
+Merge the new version into your repository. The `platform` workflow deploys it after the `production` approval. Then run the `skillhub-bootstrap` Job once, so the tables, views, alerts, prompts and experiment folders match the new code.
 
 ## Configure it
 
@@ -210,11 +226,11 @@ Everything customer-specific is in `config/hub.yaml`. `${VAR}` values come from 
 
 ## Operate it
 
-- **Nightly:** the Job `skillhub-nightly` (02:00 UTC) re-evaluates every live skill. It also checks for drift between the journal and the live skills and for permission drift, and cleans up old drafts and run schemas.
-- **Alerts:** four SQL alerts: a verdict regression, the error rate, inconclusive runs, and a failed switch. Set their destination with `scripts/configure_github.sh --alert-destination-id`.
+- **Nightly:** the Job `skillhub-nightly` (02:00 UTC) re-evaluates every live skill. It also checks for drift between the journal and the live skills and for permission drift, and cleans up old run schemas, candidates and drafts.
+- **Alerts:** four SQL alerts: a verdict regression, the error rate, inconclusive runs, and a failed switch. Set their destination with `gh variable set SKILLHUB_ALERT_DESTINATION_ID --env production --repo <owner>/<repo> --body <destination ID>`, then deploy prod and run the `skillhub-bootstrap` Job. See [SQL alerts](docs/operations.md#sql-alerts).
 - **Switch and rollback:** from the Skill Hub (reviewers), or with the `skills-switch` workflow. Every switch is journaled with who did it.
 - **A release that failed outside the eval** (for example, the runner lost the workspace), **or a release or deploy that shows as Cancelled:** releases, prod deploys and switches wait in one queue. A newer run replaces an older one that is still waiting, and GitHub shows the older one as Cancelled. Nothing is lost, but nothing starts it again by itself. Start a release again with `gh workflow run skills-publish.yml --ref main`. It picks up every unreleased change and still waits for approval. Start a prod deploy again with `gh workflow run platform.yml --ref main -f deploy=prod`. See [Replaced runs](docs/operations.md#replaced-runs).
-- **Results:** query the views in `<catalog>.<dept>_evals`, or ask the Genie space.
+- **Results:** query the views in each department's evals schema, for example `<catalog>.dept_equity_research_evals` (`common_evals` for `common`), or, for reviewers, the cross-department views in `<catalog>.eval`. Or ask the Genie space.
 
 [docs/operations.md](docs/operations.md) covers each of these, plus retiring skills, quarantine and break-glass commands.
 
@@ -239,7 +255,7 @@ uv run --frozen skillhub --help               # the CLI: generate, eval, sync, p
 | `config/hub.yaml` | Deployment settings: catalog, departments, model profiles, thresholds |
 | `src/skillhub/` | Python package and `skillhub` CLI |
 | `app/` | Skill Hub app (FastAPI backend, React frontend) |
-| `resources/`, `databricks.yml` | Databricks bundle: Jobs, app, schemas |
+| `resources/`, `databricks.yml` | Databricks bundle: the Jobs and the app |
 | `.github/workflows/` | CI/CD: `platform` (tests and deploys), `skills-pr` (the gate), `skills-publish` (release), `skills-switch` (manual switch) |
 | `docs/` | Architecture, operations, API and onboarding guides |
 | `fixtures/` | Synthetic test data for evaluations, with the Northwind Robotics suite |
