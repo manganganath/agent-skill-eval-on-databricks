@@ -167,6 +167,8 @@ def _pull(raw: dict) -> Pull:
 def _check_state(run: dict) -> str:
     if run.get("status") != "completed":
         return "pending"
+    if run.get("conclusion") == "cancelled":  # a newer run replaced it, or someone cancelled it: no verdict
+        return "cancelled"
     return "passed" if run.get("conclusion") == "success" else "failed"
 
 
@@ -293,7 +295,7 @@ class GitHubClient:
     # --- checks and workflow runs -------------------------------------------------------------------------------
 
     def check_states(self, sha: str) -> dict[str, str]:
-        """{check name: pending, passed or failed} for the newest run of each check on the commit."""
+        """{check name: pending, passed, failed or cancelled} for the newest run of each check on the commit."""
         raw = self.get(f"{self._root}/commits/{sha}/check-runs", {"per_page": PAGE})
         newest: dict[str, dict] = {}
         for run in raw.get("check_runs") or []:

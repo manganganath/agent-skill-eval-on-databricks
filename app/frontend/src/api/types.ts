@@ -73,8 +73,8 @@ export interface DraftOut { run_key: string; dept: string; name: string; has_rub
 // A draft opened as a pull request (POST /api/drafts/{run_key}/submit), and the steps of its release (GET
 // /api/release-status). Mirrors SubmitOut, ReleaseStatusOut and MergeOut in app/backend/schemas.py.
 export interface SubmitOut { pr_number: number; url: string; branch: string; notes: string[] }
-export type GateState = "pending" | "passed" | "failed" | "none";
-export type ReleaseState = "not_started" | "running" | "waiting_approval" | "succeeded" | "failed";
+export type GateState = "pending" | "passed" | "failed" | "cancelled" | "none";
+export type ReleaseState = "not_started" | "running" | "waiting_approval" | "succeeded" | "failed" | "cancelled";
 export interface ReleaseStatus {
   pr_number: number; dept: string; skill: string;
   opened: { state: "open" | "closed"; url: string };

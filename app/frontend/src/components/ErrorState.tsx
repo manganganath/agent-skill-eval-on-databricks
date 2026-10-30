@@ -59,10 +59,13 @@ const MESSAGES: Record<string, string> = {
     "Skill Hub refused this request because another site sent it. Open Skill Hub itself and do it from there.",
 };
 
-export function ErrorState({ error, onRetry }: { error: unknown; onRetry?: () => void }) {
+// `message` replaces the reason's own words, for a page that knows more about the refusal than its reason says.
+export function ErrorState({ error, onRetry, message: override }: {
+  error: unknown; onRetry?: () => void; message?: string;
+}) {
   const reason = error instanceof ApiError ? error.reason : undefined;
   const message =
-    (reason && MESSAGES[reason]) ?? "Something went wrong. Try again.";
+    override ?? (reason && MESSAGES[reason]) ?? "Something went wrong. Try again.";
   return (
     <div role="alert" className="error">
       <p>{message}</p>

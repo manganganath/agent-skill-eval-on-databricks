@@ -121,12 +121,15 @@ def merge_pull(
     """Merge a pull request with a merge commit. Reviewers only: 403 `not_reviewer`. 409 `not_mergeable` lists in
     `unmet` the rules that do not hold: the pull request is open, it touches only skills/, it was opened from the Skill
     Hub or names only skills the reviewer may see, every required check passed, and its mergeable state is clean.
-    The production release is never approved here: it waits for the reviewers of the production environment in GitHub."""
+    A mergeable state GitHub is still working out is read again a few times; if it stays unknown, `unmet` has
+    `mergeable_unknown`. The production release is never approved here: it waits for the reviewers of the production
+    environment in GitHub."""
     me = authz.fetch_me(user_w)
     if not authz.has_reviewer_role(me, cfg):
         raise problem(403, Reason.NOT_REVIEWER)
     gh = github.connect(app_w, cached=False)  # the rules are checked against GitHub as it is now
-    pull = _pull(gh, number)
+    # Settled first, so the checks below are those of the head that is merged.
+    pull = release.settled_pull(gh, _pull(gh, number))
     try:
         paths = gh.pull_paths(number)
     except github.GitHubRejected:

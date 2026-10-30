@@ -30,6 +30,12 @@ def _no_github_by_accident(monkeypatch):
     github._cache.clear()
 
 
+@pytest.fixture(autouse=True)
+def _no_waits(monkeypatch):
+    """A merge reads an unknown mergeable state again after a pause; the tests count the reads, not the seconds."""
+    monkeypatch.setattr(release, "MERGEABLE_WAIT_S", 0.0)
+
+
 @pytest.fixture
 def gh(monkeypatch):
     """The repository the Hub talks to: a FakeGitHub, which the connection returns whatever the configuration says."""
@@ -277,6 +283,7 @@ def test_release_status_before_the_gate_has_run(make_client, gh):
         ({"skills-pr": "pending"}, "pending"),
         ({"skills-pr": "passed"}, "passed"),
         ({"skills-pr": "failed"}, "failed"),
+        ({"skills-pr": "cancelled"}, "cancelled"),
     ],
 )
 def test_release_status_reports_the_gate_of_the_head_commit(make_client, gh, check, gate):
@@ -295,7 +302,9 @@ def test_release_status_while_the_release_runs_and_waits_for_approval(make_clien
     assert body["merged"]["sha"] == "M5"
 
 
-@pytest.mark.parametrize(("conclusion", "state"), [("success", "succeeded"), ("failure", "failed")])
+@pytest.mark.parametrize(
+    ("conclusion", "state"), [("success", "succeeded"), ("failure", "failed"), ("cancelled", "cancelled")]
+)
 def test_release_status_when_the_release_has_finished(make_client, gh, conclusion, state):
     put_pull(gh, state="closed", merged=True, merged_at="2026-10-29T12:00:00Z", merge_sha="M5")
     gh.runs["M5"] = github.Run(url="https://run/1", status="completed", conclusion=conclusion, waiting=False)
@@ -454,8 +463,11 @@ def test_an_author_cannot_merge(make_client, gh):
         ({}, {"skills-pr": "pending", "platform": "passed"}, None, ["check:skills-pr"]),
         ({}, {"skills-pr": "failed", "platform": "passed"}, None, ["check:skills-pr"]),
         ({}, {"skills-pr": "passed"}, None, ["check:platform"]),
+        ({}, {"skills-pr": "cancelled", "platform": "passed"}, None, ["check:skills-pr"]),
         ({"mergeable_state": "blocked"}, None, None, ["clean"]),
-        ({"mergeable_state": None}, None, None, ["clean"]),
+        ({"mergeable_state": "behind"}, None, None, ["clean"]),
+        ({"mergeable_state": "unknown"}, None, None, ["mergeable_unknown"]),
+        ({"mergeable_state": None}, None, None, ["mergeable_unknown"]),
         ({}, None, ["skills/common/new-skill/SKILL.md", "README.md"], ["only_skills"]),
         ({}, None, [], ["only_skills"]),
         ({}, None, ["skills/common/new-skill/SKILL.md", "skills/finance/x/SKILL.md"], ["only_skills"]),
@@ -471,6 +483,44 @@ def test_a_merge_is_refused_unless_every_rule_holds(make_client, gh, fields, che
     assert r.status_code == 409, r.text
     assert r.json() == {"detail": {"reason": "not_mergeable", "unmet": unmet}}
     assert gh.merges == []
+
+
+def test_a_merge_reads_the_pull_request_again_while_github_works_out_its_mergeable_state(make_client, gh):
+    green(gh)
+    gh.mergeable_reads[5] = ["unknown", None, "clean"]  # GitHub knows by the third read
+    r = merge(make_client, gh)
+    assert r.status_code == 200, r.text
+    assert gh.calls.count("pull") == 3
+    assert gh.merges == [(5, HEAD)]  # still the head commit, as read
+
+
+def test_a_mergeable_state_still_unknown_after_the_reads_asks_the_reviewer_to_try_again(make_client, gh):
+    green(gh, mergeable_state=None)
+    r = merge(make_client, gh)
+    assert r.status_code == 409
+    assert r.json() == {"detail": {"reason": "not_mergeable", "unmet": ["mergeable_unknown"]}}
+    assert gh.calls.count("pull") == 1 + release.MERGEABLE_READS  # bounded: then the answer comes
+    assert gh.merges == []
+
+
+def test_a_settled_mergeable_state_is_not_read_again(make_client, gh):
+    green(gh, mergeable_state="blocked")
+    assert merge(make_client, gh).json()["detail"]["unmet"] == ["clean"]
+    assert gh.calls.count("pull") == 1
+
+
+def test_settled_pull_pauses_between_reads_and_leaves_a_closed_pull_request_alone(gh):
+    put_pull(gh)
+    gh.mergeable_reads[5] = ["unknown", "unknown", "unknown", "unknown", "clean"]
+    pauses: list[float] = []
+    pull = release.settled_pull(gh, gh.pull(5), sleep=pauses.append)
+    assert pull.mergeable_state == "unknown"  # three more reads, then the answer, settled or not
+    assert len(pauses) == release.MERGEABLE_READS == 3
+
+    put_pull(gh, state="closed", mergeable_state=None)
+    gh.calls.clear()
+    assert release.settled_pull(gh, gh.pulls[5], sleep=pauses.append) is gh.pulls[5]
+    assert gh.calls == []
 
 
 def test_a_pull_request_not_from_the_hub_may_merge_when_it_names_only_skills(make_client, gh):
