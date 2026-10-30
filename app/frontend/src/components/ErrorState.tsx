@@ -47,10 +47,12 @@ const MESSAGES: Record<string, string> = {
     "Pull requests are not set up for the Skill Hub yet. An administrator sets the GitHub repository and token secret. See the operations guide.",
   github_failed: "Skill Hub could not reach GitHub, or GitHub refused the request. Try again later.",
   already_submitted: "This draft was already submitted for review. Its pull request is listed on this page.",
+  no_changes:
+    "main already has this skill exactly as the draft has it, so a pull request would change nothing. If it is waiting for release, follow its pull request.",
   evals_missing: "This draft has no test cases (evals/evals.json), so it cannot be submitted. Upload it again with its evals.",
   pull_not_found: "That pull request was not found in the repository.",
   not_mergeable:
-    "This pull request cannot be merged from the Skill Hub yet. Its gate must pass, it must be open, change only skills, and be mergeable.",
+    "This pull request cannot be merged from the Skill Hub yet. It must be open, change only skills, pass its checks, and be up to date with main. If main has moved, update the branch in GitHub; the gate then runs again.",
   mixed_sources:
     "Evaluate live skills and candidates in separate runs, with candidates from one upload only. A candidate run cannot pin versions.",
 };

@@ -164,7 +164,7 @@ def submit_draft(
 ) -> SubmitOut:
     """Open a pull request that adds or updates the draft's skill on main. Its uploader or a reviewer only: 403
     `not_draft_owner` for anyone else. 409 `already_submitted` (with `pr_number`) for a draft already submitted;
-    422 `evals_missing`; 503 `github_not_configured`; 502 `github_failed`. The pull request's gate and release are
+    409 `no_changes` when main already has the skill exactly as the draft has it; 422 `evals_missing`; 503 `github_not_configured`; 502 `github_failed`. The pull request's gate and release are
     read by GET /api/release-status."""
     key = candidates.parse_key(run_key)
     if key is None or key.kind != "draft":
@@ -209,6 +209,8 @@ def submit_draft(
             me.user,
             has_rubric=meta.has_rubric,
         )
+    except release.NoChanges:
+        raise problem(409, Reason.NO_CHANGES) from None
     except release.AlreadySubmitted as exc:
         # The branch of an earlier submit has a pull request that the draft does not record: record it now.
         candidates.record_submission(

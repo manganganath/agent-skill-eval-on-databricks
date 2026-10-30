@@ -1,9 +1,8 @@
-import hashlib
 import io
 from dataclasses import replace
 from types import SimpleNamespace
 
-from backend import github
+from backend import github, release
 from databricks.sdk.errors import NotFound, ResourceAlreadyExists
 from databricks.sdk.service.workspace import ObjectType
 
@@ -276,7 +275,10 @@ class FakeGitHub:
         base = f"{folder}/" if folder else ""
         under = sorted(p[len(base) :] for p in self.snapshots[snap] if p.startswith(base))
         if recursive:
-            return [{"path": rel, "type": "blob", "sha": None} for rel in under]
+            return [
+                {"path": rel, "type": "blob", "sha": release.blob_sha(self.snapshots[snap][base + rel])}
+                for rel in under
+            ]
         out: dict[str, dict] = {}
         for rel in under:
             head, _, rest = rel.partition("/")
@@ -288,7 +290,7 @@ class FakeGitHub:
 
     def create_blob(self, data):
         self._touch("create_blob")
-        sha = hashlib.sha1(data).hexdigest()
+        sha = release.blob_sha(data)
         self.blobs[sha] = bytes(data)
         return sha
 

@@ -116,7 +116,6 @@ The Skill Hub opens pull requests from drafts, shows their gate and release, and
 | Pull requests | Read and write | Opening, reading and merging the pull request |
 | Actions | Read | The `skills-publish` run that waits for the production approval |
 | Commit statuses | Read | The eval gate (the `skills-pr` check) of a pull request |
-| Deployments | Read | Read the state of the production environment. The app never approves it |
 
 Store it as the secret `skillhub/github-token`: the scope `skillhub`, the key `github-token`. The bundle variable `github_token_secret` sets that name, and the platform workflow sets `github_repo` from `github.repository`, so each fork names its own repository. The app principal needs READ on the scope:
 

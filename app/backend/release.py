@@ -6,6 +6,7 @@ environment in GitHub.
 
 from __future__ import annotations
 
+import hashlib
 from collections.abc import Collection
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
@@ -32,6 +33,10 @@ class AlreadySubmitted(Exception):
     def __init__(self, pull: Pull):
         self.pull = pull
         super().__init__(f"pull request {pull.number} exists for this draft")
+
+
+class NoChanges(Exception):
+    """main already holds the skill folder exactly as the draft has it, so a pull request would change nothing."""
 
 
 @dataclass(frozen=True)
@@ -78,6 +83,11 @@ def pull_body(dept: str, skill: str, run_key: str, submitter: str, *, has_rubric
     return "\n".join(lines)
 
 
+def blob_sha(data: bytes) -> str:
+    """The Git blob id of a file, as GitHub lists it in a tree."""
+    return hashlib.sha1(b"blob %d\0" % len(data) + data).hexdigest()  # noqa: S324 - Git's object id, not a secret
+
+
 def _folder_files(gh: GitHubClient, root_tree: str, folder: str) -> dict[str, str]:
     """{path relative to the folder: blob sha} for the skill folder on main. {} when the folder is not there."""
     tree = root_tree
@@ -105,12 +115,15 @@ def open_pull(
     has_rubric: bool,
 ) -> Submission:
     """Open the pull request for a draft: a commit on a new branch from main's head, in which the skill folder holds the
-    draft's files and nothing else. A file of the skill on main that the draft lacks is deleted. Raises AlreadySubmitted
-    when the branch already has a pull request."""
+    draft's files and nothing else. A file of the skill on main that the draft lacks is deleted. Raises NoChanges, before
+    anything is written, when main already has the folder as the draft has it, and AlreadySubmitted when the branch
+    already has a pull request."""
     folder = skill_folder(dept, skill)
     head = gh.ref_sha(BASE)
     base_tree = gh.commit_tree(head)
     on_main = _folder_files(gh, base_tree, folder)
+    if on_main and on_main == {rel: blob_sha(data) for rel, data in files.items()}:
+        raise NoChanges()
     with ThreadPoolExecutor(max_workers=BLOB_WORKERS) as pool:
         blobs = dict(zip(files, pool.map(gh.create_blob, files.values()), strict=True))
     entries: list[dict] = [

@@ -107,6 +107,15 @@ def test_an_update_replaces_the_folder_and_deletes_the_files_the_draft_lacks(mak
     assert files["skills/common/other/SKILL.md"] == b"other skill"  # another skill is untouched
 
 
+def test_a_draft_that_main_already_has_is_409_and_nothing_is_written(make_client, gh):
+    tree, key = stored_draft(make_client)
+    gh.snapshots["S0"] = {f"skills/common/new-skill/{p}": d for p, d in skill_files().items()}
+    r = submit(make_client, tree, key)
+    assert r.status_code == 409 and r.json()["detail"]["reason"] == "no_changes"
+    assert not {"create_blob", "create_tree", "create_commit", "create_ref", "create_pull"} & set(gh.calls)
+    assert "submitted_pr" not in meta_of(tree, key)
+
+
 def test_a_top_level_fixtures_folder_stays_in_the_hub_and_the_response_says_so(make_client, gh):
     tree, key = stored_draft(make_client, fixtures=True)
     r = submit(make_client, tree, key)
