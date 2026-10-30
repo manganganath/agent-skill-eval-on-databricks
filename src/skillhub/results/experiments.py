@@ -19,6 +19,7 @@ from skillhub.naming import (
     experiment_parts,
     experiment_path,
     experiment_root,
+    unreleased_experiment_path,
     workspace_root,
 )
 
@@ -55,27 +56,60 @@ def _trace_location(cfg: HubConfig, dept: str) -> UnityCatalog:
     return UnityCatalog(catalog, schema, table_prefix="traces")
 
 
-def ensure_experiment(cfg: HubConfig, dept: str, skill: str) -> str:
-    """Create <workspace_root>/<catalog>/<dept>/<skill> bound to <d>_evals traces. Idempotent.
-
-    The trace location can only be set at creation, so an existing experiment must already
-    point at the same location.
-    """
-    configure_mlflow(cfg)
-    path = experiment_path(cfg, dept, skill)
-    location = _trace_location(cfg, dept)
-    existing = mlflow.get_experiment_by_name(path)
-    if existing is None:
-        mlflow.set_experiment(experiment_name=path, trace_location=location)
-        existing = mlflow.get_experiment_by_name(path)
-    elif getattr(existing, "trace_location", None) is None:
+def _checked(path: str, existing, location: UnityCatalog) -> str:
+    """The experiment ID, once its trace location is the department's. The location is set only at creation."""
+    if getattr(existing, "trace_location", None) is None:
         raise RuntimeError(
             f"{path} exists without a UC trace location; the binding is set only at creation. "
             "Delete the experiment and run bootstrap again."
         )
-    elif existing.trace_location != location:
+    if existing.trace_location != location:
         raise RuntimeError(f"{path} is bound to {existing.trace_location}, expected {location}")
     return existing.experiment_id
+
+
+def _ensure(cfg: HubConfig, dept: str, path: str) -> str:
+    configure_mlflow(cfg)
+    location = _trace_location(cfg, dept)
+    existing = mlflow.get_experiment_by_name(path)
+    if existing is None:
+        mlflow.set_experiment(experiment_name=path, trace_location=location)
+        return mlflow.get_experiment_by_name(path).experiment_id
+    return _checked(path, existing, location)
+
+
+def ensure_experiment(cfg: HubConfig, dept: str, skill: str) -> str:
+    """Create <workspace_root>/<catalog>/<dept>/<skill> bound to <d>_evals traces. Idempotent.
+
+    Creating needs CAN_MANAGE on the department folder, which only ci holds: bootstrap and publish call this, the
+    evals and Try call eval_experiment. An existing experiment must already point at the same trace location.
+    """
+    return _ensure(cfg, dept, experiment_path(cfg, dept, skill))
+
+
+def ensure_unreleased_experiment(cfg: HubConfig, dept: str) -> str:
+    """Create the department's experiment for unreleased skills, as ensure_experiment does. Bootstrap calls it."""
+    return _ensure(cfg, dept, unreleased_experiment_path(cfg, dept))
+
+
+def eval_experiment(cfg: HubConfig, dept: str, skill: str) -> str:
+    """The experiment that an eval or a Try of dept/skill writes to. Never creates one.
+
+    The skill's own experiment once bootstrap or a publish created it. Before that (a Skill Hub draft, or a pull
+    request that adds the skill) the department's unreleased experiment: ci_eval and the app hold only CAN_EDIT on
+    the department folders, so they cannot create experiments there, and they never get MANAGE (it would let code
+    holding their credentials reopen the folder ACLs). Fails closed when neither exists.
+    """
+    configure_mlflow(cfg)
+    location = _trace_location(cfg, dept)
+    for path in (experiment_path(cfg, dept, skill), unreleased_experiment_path(cfg, dept)):
+        existing = mlflow.get_experiment_by_name(path)
+        if existing is not None:
+            return _checked(path, existing, location)
+    raise RuntimeError(
+        f"{dept}/{skill} has no experiment, and {unreleased_experiment_path(cfg, dept)} does not exist. "
+        "Run bootstrap: it creates each department's experiment for unreleased skills."
+    )
 
 
 def _privs(assignment) -> set[str]:
@@ -415,7 +449,16 @@ def check_permissions(cfg: HubConfig, w) -> list[Drift]:
     configure_mlflow(cfg)
     drifts = check_root_acl(cfg, w)
     exempt = _parent_ids(w, cfg)
-    for exp in skill_experiments(cfg):
+    experiments = skill_experiments(cfg)
+    names = {exp.name for exp in experiments}
+    # Without it, a skill that has no experiment of its own (a draft, a pull request that adds one) cannot be
+    # evaluated: the eval identities cannot create experiments.
+    drifts += [
+        Drift(path, "-", "missing_experiment", "the unreleased experiment does not exist; run bootstrap")
+        for path in (unreleased_experiment_path(cfg, dept) for dept in cfg.departments)
+        if path not in names
+    ]
+    for exp in experiments:
         try:
             dept, _ = experiment_parts(cfg, exp.name)
         except ValueError:

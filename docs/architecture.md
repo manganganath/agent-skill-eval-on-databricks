@@ -44,12 +44,21 @@ sequenceDiagram
   GH-->>A: Sticky comment with the verdict table
 ```
 
-**Merge to `main`.** CI re-evaluates every changed skill that still exists on every merge. Changed means changed since the `skillhub/released` tag, which a release moves when it finishes, so the next merge picks up a release that failed or was rejected. Before the first release there is no tag, and every skill counts as changed. A change that moves a skill out of a quarantined department stops here: an operator must handle it. A `fail` or `inconclusive` verdict stops the run. `warn`, `advisory` and `pass` go on to approval in the `production` environment. After approval, CI starts the `skill-switch` Job (`publish`, then `switch`), which registers `<skill>-v<N+1>` in the versions schema and makes it live, and writes the journal. CI never registers a version itself; publishes run only in the `skill-switch` Job.
+**Merge to `main`.** CI re-evaluates every changed skill that still exists on every merge. Changed means changed since the `skillhub/released` tag, which a release moves when it finishes, so the next merge picks up a release that failed or was rejected. Before the first release there is no tag, and every skill counts as changed. A change that moves a skill out of a quarantined department stops here: an operator must handle it.
 
-**Publish gate.** Published content equals evaluated content, and the eval read the merged cases. The publish step takes the run key of the merge eval and the plan's eval digests and cells. It refuses, exits with code 2 and journals `publish_refused` unless all of these hold:
+CI reuses the pull request gate's eval instead, and asks for approval a few minutes after the merge, only when all of these hold:
+
+- The pushed commit is a merge with two parents, and its tree is the tree of the pull request head (the second parent). So the merge brought nothing else.
+- The pull request changed only files under `skills/`. So the gate ran the same code that is now on `main`.
+- `defaults.gating_modes` is `[trigger]`. Trigger verdicts use no judge; effectiveness verdicts in a pull request use one judge, and in a merge the panel.
+- A trusted pull request gate run for that head (`trigger_source` `pr`) passes the same check as the merge gate, against the merge plan: a row for every planned cell, every row on the merged content, rubric, cases and fixtures, and no blocking verdict. The newest such run is used.
+
+In every other case, and when the check itself fails, CI evaluates the merged content again. A `fail` or `inconclusive` verdict stops the run. `warn`, `advisory` and `pass` go on to approval in the `production` environment. After approval, CI starts the `skill-switch` Job (`publish`, then `switch`), which registers `<skill>-v<N+1>` in the versions schema and makes it live, and writes the journal. CI never registers a version itself; publishes run only in the `skill-switch` Job.
+
+**Publish gate.** Published content equals evaluated content, and the eval read the merged cases. The publish step takes the run key and trigger source of the eval the release cites (the merge eval, or the reused pull request gate run) and the plan's eval digests and cells. It refuses, exits with code 2 and journals `publish_refused` unless all of these hold:
 
 - `skillhub-ci` started the `skill-switch` Job run. The app may switch and retire, never publish.
-- Every planned cell has a trusted row.
+- Every planned cell has a trusted row from that eval. Only rows with its trigger source count: `merge`, or `pr` for a reused pull request gate.
 - The rows were computed on exactly the bundle being published, with the merge's rubric (`rubric_hash`) and cases and fixtures (`dataset_digest`).
 - None of the latest trigger or with-skill verdicts blocks it.
 
@@ -61,14 +70,18 @@ sequenceDiagram
   actor R as Reviewer
   participant S as skill-switch Job (skillhub-ci)
   participant UC as Unity Catalog
-  GH->>J: Re-evaluate changed skills with the merge run key
-  J-->>GH: Verdicts
+  alt merge of the evaluated pull request head, only skills changed, trigger gate only
+    GH->>GH: Reuse the pull request gate's run if it passes the merge gate's check
+  else any other merge, or no passing gate run
+    GH->>J: Re-evaluate changed skills with the merge run key
+    J-->>GH: Verdicts
+  end
   alt fail or inconclusive
     GH->>GH: Stop
   else pass, warn or advisory
     GH->>R: Wait for production approval
     R-->>GH: Approve
-    GH->>S: publish, then switch (run key, digests, planned cells)
+    GH->>S: publish, then switch (run key, trigger source, digests, planned cells)
     S->>S: Publish gate: started by skillhub-ci, every cell trusted, hashes match, no blocking verdict
     S->>UC: Register skill-vN+1, copy it into live, write the journal
   end
@@ -134,10 +147,10 @@ Naming rules:
 |---|---|
 | Browse skills | The Unity Catalog Skills API, called with the signed-in user's token |
 | See results | `SELECT` on `<d>_evals`, with the user's token, through the SQL warehouse |
-| Try a skill | The agent loop runs with the user's token, so only the user's own skills are offered. The app service principal writes the traces to the skill's experiment. Each trace has a `hub_try` root span and the tags `trigger_source=hub-try`, `mode` and `requested_by`. A Try request that runs longer than 180 seconds answers 504 `try_timeout`, and the next Try can start at once. A skill under review is staged into a private run schema that only the requester can read, and that schema is dropped when the run ends. |
+| Try a skill | The agent loop runs with the user's token, so only the user's own skills are offered. The app service principal writes the traces to the skill's experiment, or to the department's unreleased experiment for a skill that has none yet. Each trace has a `hub_try` root span and the tags `trigger_source=hub-try`, `mode` and `requested_by`. A Try request that runs longer than 180 seconds answers 504 `try_timeout`, and the next Try can start at once. A skill under review is staged into a private run schema that only the requester can read, and that schema is dropped when the run ends. |
 | Run an eval | The app checks that the user can read every requested skill, then starts `skill-eval` as the app's service principal and records who requested it |
 | See or evaluate a candidate | The user must be in the authors or reviewers group. Reviewers see every department; an author sees a department only when the effective-permissions API shows `USE CATALOG`, `USE SCHEMA` and `READ VOLUME` on its live schema for the user. The uploader of a draft always sees it. Only then does the app read the candidate or draft folder as its service principal. Eval rows are read with the user's token |
-| Upload a draft | The user must be an author or reviewer, and an author may upload only to a department they can read. The app checks the upload as `skillhub lint` does and stores it in `<workspace_root>/<catalog>/drafts` as its service principal. A draft is never published: publish accepts only rows of the merge eval (`trigger_source` `merge`) |
+| Upload a draft | The user must be an author or reviewer, and an author may upload only to a department they can read. The app checks the upload as `skillhub lint` does and stores it in `<workspace_root>/<catalog>/drafts` as its service principal. A draft is never published: publish accepts only rows of the merge eval or of a pull request gate run that the release reuses (`trigger_source` `merge` or `pr`) |
 | Switch a version | The app checks that the user is in the reviewers group, then starts `skill-switch` as the app's service principal |
 
 - Only `skillhub-ci-eval` and the app service principal may run `skill-eval`. Only `skillhub-ci` and the app service principal may run `skill-switch`, and a publish runs only in a `skill-switch` run that `skillhub-ci` started. Users cannot start these Jobs directly.
@@ -145,7 +158,7 @@ Naming rules:
 - If user authorisation does not cover the skills API in a workspace (the user-token call answers permission denied), the app lists skills as its service principal and filters them with the effective-permissions API for the signed-in user. After a fallback "yes", the app reads the skill files as its service principal. That principal therefore needs `READ VOLUME` on the live skill schemas and access to the effective-permissions API. If the fallback also fails, browsing is refused.
 - The app is open to the group `users` (`CAN_USE`).
 - A quarantined department (`quarantine: true`) is granted to reviewers and the two CI principals only. Moving a skill out of it needs an operator; CI refuses the change.
-- Experiment permissions are derived from the grants on `<d>_evals`. The experiment folder `<workspace_root>/<catalog>` has its own access list: `CAN_MANAGE` for `skillhub-ci`, `CAN_EDIT` for `skillhub-ci-eval` and the app (Try traces), `CAN_READ` for reviewers, nothing for `users`. Its `candidates/` folder adds `CAN_MANAGE` for the two CI principals, and its `drafts/` folder adds `CAN_MANAGE` for them and the app. The workspace root is the home folder of `skillhub-ci` (`/Users/<ci principal>/skill-hub`), because every folder under `/Workspace/Shared` inherits `CAN_MANAGE` for `users`. A nightly check reports drift.
+- Experiment permissions are derived from the grants on `<d>_evals`. The experiment folder `<workspace_root>/<catalog>` has its own access list: `CAN_MANAGE` for `skillhub-ci`, `CAN_EDIT` for `skillhub-ci-eval` and the app (Try traces), `CAN_READ` for reviewers, nothing for `users`. Its `candidates/` folder adds `CAN_MANAGE` for the two CI principals, and its `drafts/` folder adds `CAN_MANAGE` for them and the app. Only `skillhub-ci` (bootstrap and publish) can create experiments in the department folders; the evals and Try use a skill's experiment, or, for a skill that has none yet, the department's unreleased experiment. The workspace root is the home folder of `skillhub-ci` (`/Users/<ci principal>/skill-hub`), because every folder under `/Workspace/Shared` inherits `CAN_MANAGE` for `users`. A nightly check reports drift.
 - Results are trusted by author. Sync and every gate read only MLflow runs written by `skillhub-ci-eval`, the deployer or the running identity. The app service principal is not trusted; it never writes eval runs. `eval_runs.run_author` records the author. Databricks does not return a server-side author for a run, so the author comes from the MLflow `mlflow.user` tag, which the client sets. The tag is only as trustworthy as write access to the experiments, which bootstrap limits to the CI and app principals.
 - Results are also trusted by where each field is written. Sync reads runner tags only from tags and runner params only from params, and skips a run where a runner field appears in the other place.
 
@@ -197,10 +210,11 @@ Naming rules:
 
 MLflow is the source of truth. Delta is synced from it.
 
-- One experiment per skill (`<workspace_root>/<catalog>/<dept>/<skill>`), bound at creation to the department's trace tables.
+- One experiment per skill (`<workspace_root>/<catalog>/<dept>/<skill>`), bound at creation to the department's trace tables. Bootstrap creates them for the skills on `main`, and publishing a skill creates its experiment. Both run as `skillhub-ci`.
+- One unreleased experiment per department (`<workspace_root>/<catalog>/<dept>/_unreleased`), which bootstrap creates with the same binding. Evals and Try of a skill that has no experiment yet (a Skill Hub draft, a pull request that adds a skill, its merge eval) write there, because `skillhub-ci-eval` and the app cannot create experiments. A skill name cannot start with `_`, so no skill experiment has this name. See [Experiments of new skills](operations.md#experiments-of-new-skills).
 - One parent run per department for each eval, keyed by `run_key`. Child runs for each skill version, model profile and mode sit under it.
 - Child runs carry params (`skill_fqn`, `skill`, `dept`, `skill_version`, `content_hash`, `rubric_hash`, `dataset_digest`, `model_profile`, `endpoint`, `model_class`, `mode`, `judges`, `prompt_versions`, `git_sha`, `trigger_source`, `requested_by`, `run_key`, `repeats`), tags (`run_key`, `parent_run_id`, `harness`, `verdict`, `error`, `rubric_stale`) and metrics (`pass_rate`, `spread`, `error_rate`, accuracy, precision, recall, uplift by type, `pass_rate_without`, and `planted_bugs_recall` where it applies).
-- `skillhub sync --run-key <key>` reads each run back from MLflow and inserts missing rows into `eval_runs` and `eval_cases`. It never updates or deletes rows. It skips runs by untrusted authors, runs with a runner field in the wrong place (for example a `verdict` param), runs whose department differs from their experiment's, and runs in badly named experiments, with a warning.
+- `skillhub sync --run-key <key>` reads each run back from MLflow and inserts missing rows into `eval_runs` and `eval_cases`. It never updates or deletes rows. It skips runs by untrusted authors, runs with a runner field in the wrong place (for example a `verdict` param), runs whose department differs from their experiment's, and runs in badly named experiments, with a warning. A run in a skill experiment must also name that skill; a run in the unreleased experiment names its own skill, which must be a valid skill name.
 - **Harness.** `eval_runs` has a `harness` column. The built-in agent loop is `reference`, and it is the only harness in this release. Other harnesses come later. The matrix, the alerts and the Skill Hub show the column.
 - `eval_matrix` shows the latest run per skill, version, model profile and mode. It carries the verdict, `n_reviewed` and `n_cases`, and the experiment ID so the UI can link to MLflow. The cross-department matrix shows `dept`.
 - The SQL alerts and the Genie space read these tables. The Skill Hub Dashboard tab reads each department's `eval_matrix`, `eval_runs` and `eval_cases` with the signed-in user's permissions, and reads token usage from `system.serving`.

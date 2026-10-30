@@ -102,6 +102,7 @@ def wired(monkeypatch):
         "spans": [],
         "tags": [],
         "experiments": [],
+        "looked_up": [],  # (dept, skill) of each experiment lookup
         "agent": [],
         "bridges": [],
         "models": [],
@@ -174,7 +175,7 @@ def wired(monkeypatch):
         SkillToolError=SkillToolError,
         ToolNameMap=ToolNameMap,
         load_packaged=lambda key: f"packaged {key}",
-        ensure_experiment=lambda cfg, dept, skill: "exp-9",
+        eval_experiment=lambda cfg, dept, skill: calls["looked_up"].append((dept, skill)) or "exp-9",
     )
     monkeypatch.setattr(authz, "UCSkills", _UC)
     monkeypatch.setattr(try_panel, "_load_engine", lambda: engine)
@@ -539,11 +540,11 @@ def test_a_timeout_during_experiment_setup_frees_the_lock_when_that_step_ends(
         gate.wait(5)
         return "exp-9"
 
-    eng.ensure_experiment = slow_experiment
+    eng.eval_experiment = slow_experiment
     try:
         r = post(make_client, body())
         assert r.status_code == 504
-        # Creating an experiment also sets MLflow's active experiment, so the lock stays until that step ends.
+        # The lookup and setting MLflow's active experiment are one exclusive step: the lock stays until it ends.
         assert not try_panel._TRY_LOCK.acquire(timeout=0.1)
     finally:
         gate.set()
@@ -732,6 +733,14 @@ def test_candidate_try_tags_the_trace_with_the_run_key(make_client, wired, stagi
     assert cpost(make_client).status_code == 200
     assert wired["tags"][0][1]["candidate_run_key"] == CKEY
     assert wired["tags"][0][1]["mode"] == "with_skill"
+
+
+def test_candidate_try_names_its_skill_for_the_shared_unreleased_experiment(make_client, wired, staging):
+    """A new skill has no experiment of its own yet: its traces go to the department's unreleased experiment, which
+    the app finds but never creates, beside other skills' traces."""
+    assert cpost(make_client).status_code == 200
+    assert wired["looked_up"] == [("common", "new-skill")]
+    assert {t[1]["candidate_skill"] for t in wired["tags"]} == {"common/new-skill"}
 
 
 def test_candidate_try_drops_its_schema_on_success(make_client, wired, staging):

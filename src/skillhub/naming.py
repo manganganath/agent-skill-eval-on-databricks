@@ -93,13 +93,24 @@ def experiment_path(cfg: HubConfig, dept: str, skill: str) -> str:
     return f"{experiment_root(cfg)}/{dept}/{skill}"
 
 
-def experiment_parts(cfg: HubConfig, path: str) -> tuple[str, str]:
-    """(dept, skill) of a path built by experiment_path for this catalog. ValueError for any other path."""
+# The department's experiment for skills that have no experiment of their own yet: Skill Hub drafts and pull requests
+# that add a skill. A skill name cannot start with "_" (SKILL_RE), so no skill experiment has this name.
+UNRELEASED = "_unreleased"
+
+
+def unreleased_experiment_path(cfg: HubConfig, dept: str) -> str:
+    """Bootstrap creates it as ci, so no eval identity needs MANAGE on the department folder to create one."""
+    return experiment_path(cfg, dept, UNRELEASED)
+
+
+def experiment_parts(cfg: HubConfig, path: str) -> tuple[str, str | None]:
+    """(dept, skill) of a path built by experiment_path for this catalog, with skill None for the department's
+    unreleased experiment (unreleased_experiment_path), whose runs name their skill. ValueError for any other path."""
     root = experiment_root(cfg) + "/"
     rest = path[len(root) :].split("/") if path.startswith(root) else []
     if len(rest) != 2 or not all(rest):
         raise ValueError(f"not a skill-hub experiment path under {root}: {path!r}")
-    return rest[0], rest[1]
+    return rest[0], None if rest[1] == UNRELEASED else rest[1]
 
 
 def experiment_dept(cfg: HubConfig, path: str) -> str:

@@ -22,6 +22,7 @@ CONFIG = Path(__file__).resolve().parents[2] / "config" / "hub.yaml"
 CI = "ci-app"
 JOB_RUN = "77"
 _REAL_JOB_RUN_CREATOR = cli._job_run_creator  # the fixture below replaces it
+_REAL_EXPERIMENT_STEP = cli._ensure_skill_experiment  # the conftest fixture published_experiments replaces it
 
 
 @pytest.fixture(autouse=True)
@@ -701,6 +702,68 @@ def test_job_switch_publishes_when_only_an_advisory_mode_fails(reg, make_bundle,
     assert [h.action for h in reg.journal.history(DEPT, SKILL)] == ["published"]
 
 
+# --- A published skill gets its own experiment ---
+
+
+def test_publish_ensures_the_skill_experiment_also_when_unchanged(
+    reg, make_bundle, monkeypatch, tmp_path, published_experiments
+):
+    """Its evals ran in the unreleased experiment until now. A re-run of the same publish ensures it again, so a
+    publish whose experiment step failed converges."""
+    monkeypatch.setenv("SKILLHUB_SKILLS", str(tmp_path / "skills"))
+    evaluated(reg, make_bundle(DEPT, SKILL, body="one"))
+    args = ("--action", "publish", "--git-sha", SHA, "--eval-run-id", "r")
+    assert '"published"' in _cli(reg, monkeypatch, *args).output
+    assert '"unchanged"' in _cli(reg, monkeypatch, *args).output
+    assert published_experiments == [(DEPT, SKILL), (DEPT, SKILL)]
+
+
+def test_a_refused_publish_creates_no_experiment(
+    reg, make_bundle, monkeypatch, tmp_path, published_experiments
+):
+    monkeypatch.setenv("SKILLHUB_SKILLS", str(tmp_path / "skills"))
+    make_bundle(DEPT, SKILL, body="never evaluated")
+    r = _cli(reg, monkeypatch, "--action", "publish", "--git-sha", SHA, "--eval-run-id", "r")
+    assert r.exit_code == 2, r.output
+    assert published_experiments == []
+
+
+def test_switch_and_retire_create_no_experiment(reg, live, make_bundle, monkeypatch, published_experiments):
+    """The Skill Hub (the app principal) starts these: only ci's publish creates experiments."""
+    live(make_bundle(DEPT, SKILL, body="one"))
+    assert _cli(reg, monkeypatch, "--action", "switch", "--version", "1").exit_code == 0
+    assert _cli(reg, monkeypatch, "--action", "retire").exit_code == 0
+    assert published_experiments == []
+
+
+def test_a_failed_experiment_step_fails_the_job_after_the_version_is_journaled(
+    reg, make_bundle, monkeypatch, tmp_path
+):
+    monkeypatch.setenv("SKILLHUB_SKILLS", str(tmp_path / "skills"))
+    evaluated(reg, make_bundle(DEPT, SKILL, body="one"))
+
+    def down(cfg, dept, skill):
+        raise RuntimeError("MLflow is unavailable")
+
+    monkeypatch.setattr(cli, "_ensure_skill_experiment", down)
+    r = _cli(reg, monkeypatch, "--action", "publish", "--git-sha", SHA, "--eval-run-id", "r")
+    assert r.exit_code != 0
+    assert [h.action for h in reg.journal.history(DEPT, SKILL)] == ["published"]
+
+
+def test_the_experiment_step_creates_the_skill_experiment_and_registers_its_judge(reg, monkeypatch):
+    from skillhub.eval import judges
+    from skillhub.results import experiments
+
+    calls = []
+    monkeypatch.setattr(experiments, "ensure_experiment", lambda c, d, s: calls.append(("exp", d, s)) or "41")
+    monkeypatch.setattr(
+        judges, "register_judges", lambda c, experiment_id: calls.append(("judges", experiment_id))
+    )
+    _REAL_EXPERIMENT_STEP(reg.cfg, DEPT, SKILL)
+    assert calls == [("exp", DEPT, SKILL), ("judges", "41")]
+
+
 # --- Only the ci principal publishes ---
 
 
@@ -832,3 +895,29 @@ def test_job_switch_publish_refuses_a_matrix_with_a_missing_cell(reg, make_bundl
 def test_job_switch_malformed_cells_exit_2(reg, monkeypatch, bad):
     r = _cli(reg, monkeypatch, "--action", "switch", "--version", "1", "--expect-cells", bad)
     assert r.exit_code == 2 and "--expect-cells" in r.output
+
+
+# --- Publish cites the merge eval, or the pull request gate that the release reuses ---
+
+
+def test_job_switch_publishes_from_a_reused_pull_request_gate(reg, make_bundle, monkeypatch, tmp_path):
+    monkeypatch.setenv("SKILLHUB_SKILLS", str(tmp_path / "skills"))
+    evaluated(reg, make_bundle(DEPT, SKILL), run_key="pr12_abc1234_a1", trigger_source="pr")
+    args = ("--action", "publish", "--git-sha", SHA, "--eval-run-id", "pr12_abc1234_a1")
+    r = _cli(reg, monkeypatch, *args)  # the default is the merge eval: the gate's rows do not count
+    assert r.exit_code == 2 and "no gating eval result" in r.output
+    r = _cli(reg, monkeypatch, *args, "--trigger-source", "")
+    assert r.exit_code == 2 and "no gating eval result" in r.output
+    r = _cli(reg, monkeypatch, *args, "--trigger-source", "pr")
+    assert r.exit_code == 0, r.output
+    published = [h for h in reg.journal.history(DEPT, SKILL) if h.action == "published"]
+    assert [h.eval_run_id for h in published] == ["pr12_abc1234_a1"]
+
+
+@pytest.mark.parametrize("source", ["nightly", "manual", "hub", "hub-try", "PR"])
+def test_job_switch_refuses_any_other_trigger_source(reg, make_bundle, monkeypatch, tmp_path, source):
+    monkeypatch.setenv("SKILLHUB_SKILLS", str(tmp_path / "skills"))
+    evaluated(reg, make_bundle(DEPT, SKILL), trigger_source=source)
+    r = _cli(reg, monkeypatch, *_publish_args("--trigger-source", source))
+    assert r.exit_code == 2 and "--trigger-source" in r.output
+    assert reg.journal.history(DEPT, SKILL) == []

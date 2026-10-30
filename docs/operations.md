@@ -14,7 +14,7 @@ Follow this order.
 What the first run does:
 
 - It creates the account groups and the two CI service principals if they are missing.
-- It creates the schemas, applies the grants from `config/hub.yaml`, creates the tables and views, and creates the experiment folders with their access lists.
+- It creates the schemas, applies the grants from `config/hub.yaml`, creates the tables and views, and creates the experiment folders with their access lists. It creates an experiment for each skill on `main` and an unreleased experiment for each department (see [Experiments of new skills](#experiments-of-new-skills)).
 - It registers the prompts and the skill-use judge (see below).
 - It creates or updates the SQL alerts and the Genie space.
 - It gives both CI principals `CAN_USE` on the SQL warehouse. Without `--create-identities` it only warns.
@@ -65,7 +65,7 @@ Grant no other role on either principal.
 
 ### Judges and prompts
 
-Bootstrap registers the prompts. It registers one `make_judge` judge in each skill experiment: the skill-use judge of the first model in `judges`. The first judge in `judges` must not be the generator model. The other panel judges run at eval time and are not registered. After an upgrade that changes judge prompts, re-run bootstrap. Until you do, `prompt_versions` shows 0 for `judge_criterion` and `judge_skill_use`.
+Bootstrap registers the prompts. It registers one `make_judge` judge in each skill experiment and in each department's unreleased experiment: the skill-use judge of the first model in `judges`. Publishing a skill registers it in that skill's new experiment. The first judge in `judges` must not be the generator model. The other panel judges run at eval time and are not registered. After an upgrade that changes judge prompts, re-run bootstrap. Until you do, `prompt_versions` shows 0 for `judge_criterion` and `judge_skill_use`.
 
 ## Identities
 
@@ -230,13 +230,15 @@ A worker's log lines appear in the Job output, prefixed with `[dept/skill]`. A w
 - Sync reads each field of a child run only from where the runner writes it. `verdict`, `harness`, `parent_run_id`, `run_key`, `error` and `rubric_stale` are tags. `dept`, `skill`, `content_hash`, `rubric_hash`, `dataset_digest`, `mode`, `model_profile` and the other run settings are params, which cannot change once logged. A run with a runner tag logged as a param (for example a `verdict` param), a runner param set as a tag, or a `run_key` tag that differs from its param was changed by someone else. Sync skips it with a warning and counts it, and its cell is then missing.
 - The gates bind what the eval read, not only the skill content. `uv run skillhub eval-digests --skills <dept/skill,...>` prints, for each skill of the checkout: the content `hash`, the `rubric_hash` (`none` without `rubric.json`), the `dataset_digest` of `evals.json` and the bytes of every fixture its cases use, and the planned `cells`. The cells are every gating model and mode the eval must produce: each model from the request, else from `evals.json` `models`, else from `defaults.models`, times `trigger` and `with_skill` where the skill has those cases. `without_skill` never gates. The runner computes the same digests from what it loads, and the agent reads only a private copy of those fixtures.
 - The PR and merge gates pass that output to `check-verdict --expect-file`. They fail if a planned cell has no trusted row ("no result for planned cells"), or if a gating row evaluated other content, another rubric, or other cases or fixtures ("wrong content"). So an `evals.json` or fixture swapped in the candidate folder, or a failing child run deleted before sync, fails the gate.
-- Publishing is bound the same way. `skillhub job-switch --action publish` takes `--run-key` and the plan's `--expect-rubric-hash`, `--expect-dataset-digest` and `--expect-cells`. It exits 2 and writes a `publish_refused` journal row unless all of these hold:
+- A release cites the pull request gate's run instead of a merge eval only under the rule in [Data flow](architecture.md#data-flow). `skillhub reuse-pr-gate` applies it in the `eval-merge` job of `skills-publish.yml`. When a rule fails, or the check cannot run, the job shows the reason as a notice and evaluates the merged content as before.
+- To start a release again after a run failed outside the eval (for example the runner lost the workspace), run `gh workflow run skills-publish.yml --ref main`. It plans from the `skillhub/released` tag like a push run, so it releases every unreleased change, and it still waits for the production approval. A dispatch from another branch plans nothing.
+- Publishing is bound the same way. `skillhub job-switch --action publish` takes `--run-key`, `--trigger-source` and the plan's `--expect-rubric-hash`, `--expect-dataset-digest` and `--expect-cells`. It exits 2 and writes a `publish_refused` journal row unless all of these hold:
   - The `skill-switch` Job run was started by `skillhub-ci` (`SKILLHUB_CI_PRINCIPAL`). The Skill Hub may switch and retire through the Job, but never publish.
-  - Every planned cell has a trusted row for that run key, from the merge eval: only rows with `trigger_source` `merge` count. A pull request eval, a Skill Hub run (`hub` or `manual`, which covers candidates and drafts) or a nightly run never satisfies publish, even under the same run key.
+  - Every planned cell has a trusted row for that run key, from the eval the release cites: only rows with its `trigger_source` count. That is `merge` for the merge eval (the default), or `pr` when the release reuses the pull request gate's run. A Skill Hub run (`hub`, `hub-try` or `manual`, which covers candidates and drafts) or a nightly run never satisfies publish, even under the same run key.
   - Every gating row evaluated exactly the bundle being published with the expected rubric, cases and fixtures.
   - None of the latest trigger and with-skill verdicts is blocking.
 
-  So published content always equals evaluated content. The `skill-switch` Job has the parameters `run_key`, `expect_rubric_hash`, `expect_dataset_digest` and `expect_cells` for this. The `run_key` default is the key of the eval run ID. The operator command `skillhub publish` reads the eval inputs and the cells from its own checkout (`evals/` and `SKILLHUB_FIXTURES`).
+  So published content always equals evaluated content. The `skill-switch` Job has the parameters `run_key`, `trigger_source` (`merge` or `pr`; default `merge`), `expect_rubric_hash`, `expect_dataset_digest` and `expect_cells` for this. The `run_key` default is the key of the eval run ID. The operator command `skillhub publish` reads the eval inputs and the cells from its own checkout (`evals/` and `SKILLHUB_FIXTURES`).
 - A merge that changes `defaults.models` can run its eval on the Jobs of the previous deploy. The gate then misses the new models' cells and fails closed. Re-run the release after the prod deploy.
 
 One-off cleanup after you upgrade: treat MLflow traces written before this fix as holding expired `skillhub-ci-eval` tokens. Restrict or purge them.
@@ -304,6 +306,7 @@ Alerts notify the destination in the `SKILLHUB_ALERT_DESTINATION_ID` variable of
 Experiments, CI candidates and Skill Hub drafts live under the workspace root (`workspace_root` in `config/hub.yaml`, from `SKILLHUB_WORKSPACE_ROOT`):
 
 - Experiments: `<workspace_root>/<catalog>/<dept>/<skill>`.
+- Each department's unreleased experiment: `<workspace_root>/<catalog>/<dept>/_unreleased` (see [Experiments of new skills](#experiments-of-new-skills)).
 - CI candidates: `<workspace_root>/<catalog>/candidates/<run key>`.
 - Skill Hub drafts: `<workspace_root>/<catalog>/drafts/draft_<id>`.
 
@@ -333,6 +336,31 @@ After an upgrade from a build that used `/Shared/skill-hub`, re-run bootstrap. I
 - `inherited_access`: a principal has more access through a parent folder than the access list allows. For `users` the command only reports it and still exits 0, so the nightly Job does not fail every night while the root is under `/Shared`. Move the root to fix it.
 - `unreadable`: the command cannot read the folder ACL.
 
+It also reports `missing_experiment` for a department that has no unreleased experiment. Run bootstrap.
+
+### Experiments of new skills
+
+Creating an experiment needs `CAN_MANAGE` on its folder. Only `skillhub-ci` has it on the department folders: `skillhub-ci-eval` runs pull request code, and the app serves every user, so neither ever gets `CAN_MANAGE` there (it would let them reopen the folders' access lists). Bootstrap and publish run as `skillhub-ci`, so they create the experiments. The evals and Try never do:
+
+- An eval or a Try of a skill uses the skill's experiment, `<dept>/<skill>`, when it exists.
+- A skill that has none yet, such as a Skill Hub draft or a pull request that adds a skill, uses its department's unreleased experiment, `<dept>/_unreleased`. Bootstrap creates one for every department, bound to the department's trace tables, and registers the judge in it. The merge eval of a new skill also runs there.
+- Publishing a skill (the `skill-switch` Job's `publish` action, as `skillhub-ci`) creates the skill's experiment and registers its judge, after the publish gate. The nightly and later evals use it. A re-run of the publish does this again and converges, so a publish that fails at this step can be re-run.
+
+```mermaid
+flowchart LR
+    bootstrap["bootstrap<br/>(skillhub-ci)"] -- creates --> unreleased["dept/_unreleased"]
+    eval["eval or Try of dept/skill<br/>(skillhub-ci-eval or the app)"] --> own{"dept/skill<br/>exists?"}
+    own -- no --> unreleased
+    own -- yes --> skill["dept/skill"]
+    publish["publish, or bootstrap<br/>for skills on main<br/>(skillhub-ci)"] -- creates --> skill
+```
+
+Runs in the unreleased experiment name their skill in the `skill` param. Sync takes the department from the experiment and the skill from the run, so the eval tables, the matrix and the Skill Hub show a new skill's rows as they show any skill's. Every experiment of a department has the same access list, so this gives no one more access. A Try of a skill under review also tags its trace `candidate_skill=<dept>/<skill>`, because the unreleased experiment holds the traces of several skills. Older runs stay in the unreleased experiment after the publish, and their links still work.
+
+The unreleased experiment has no access list of its own. It inherits the root's, like the skill experiments, and `check-permissions` checks it in the same way. It needs no new folder and no new grant.
+
+After an upgrade to a build that has the unreleased experiments, re-run the `skillhub-bootstrap` Job (or a person's bootstrap). Until then, an eval or a Try of a skill that has no experiment fails with "Run bootstrap", and `check-permissions` reports `missing_experiment`. Skills that already have an experiment are not affected.
+
 ## Access to the app
 
 ### Try on skills under review
@@ -349,7 +377,7 @@ A skill under review is not in Unity Catalog, so the app stages it for each run 
 
 Two things to know:
 - `CREATE SCHEMA` cannot be limited to a name pattern, so the app's principal can create any schema in the catalog. The app's own code creates and drops only `run_try_*` names. A schema with a production name that someone else pre-creates is caught by bootstrap's owner checks.
-- A Try writes its trace, including the skill text the agent loaded, to the skill's experiment and the `<d>_evals` trace tables. The department's eval readers can read those traces, as they can read the traces of a candidate's pull request eval. Don't put anything in a skill under review that the department's readers must not see.
+- A Try writes its trace, including the skill text the agent loaded, to the skill's experiment (or, for a skill that has none yet, its department's unreleased experiment) and the `<d>_evals` trace tables. The department's eval readers can read those traces, as they can read the traces of a candidate's pull request eval. Don't put anything in a skill under review that the department's readers must not see.
 
 - **App.** The bundle gives the group `users` `CAN_USE` on the Skill Hub app. The app reads with each user's own Unity Catalog permissions, so a wide group is safe. Change the group with the bundle variable `app_users_group`.
 - **Dashboard tab.** It needs no grant of its own. It reads the department eval tables with each user's permissions, so a user sees only the departments they can read; a refused department is named on the page. Its token section also needs `SELECT` on `system.serving.endpoint_usage` and `system.serving.served_entities`. It counts evaluation tokens by the eval service principal (`SKILLHUB_CI_EVAL_PRINCIPAL`, set from `ci_eval_principal`) and by the `usage_context` tag each eval and Try request carries; Try calls run as the signed-in user, so only the tag identifies them, and they count from the release that started tagging them. Without that access the section says so, and the rest of the page still works.

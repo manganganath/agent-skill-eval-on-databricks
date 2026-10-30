@@ -156,6 +156,32 @@ def missing_cells(rows: list[dict[str, Any]], expected: Mapping[str, Expected]) 
     ]
 
 
+def gate_failures(
+    rows: list[dict[str, Any]],
+    expected: Mapping[str, Expected],
+    skills: Iterable[str] = (),
+    gating_modes: Iterable[str] = REQUEST_MODES,
+) -> list[str]:
+    """Why the merge gate (`check-verdict`) fails these rows; [] when it passes. In order: a listed or expected
+    skill with no result, a planned cell with no row, a row bound to other content or eval inputs, and then a
+    blocking or missing verdict. Release reuse of the pull request gate runs the same check."""
+    missing = missing_skills(rows, [*skills, *expected])
+    if missing:
+        return [f"no result for: {', '.join(missing)}"]
+    absent = missing_cells(rows, expected)
+    if absent:
+        return [f"no result for planned cells: {', '.join(absent)}"]
+    wrong = binding_mismatches(rows, expected)
+    if wrong:
+        return [f"wrong content: {line}" for line in wrong]
+    verdicts = blocking_verdicts(rows, gating_modes)
+    if not verdicts:
+        return ["no gating verdict"]
+    if exit_code(verdicts):
+        return [f"blocking verdicts: {', '.join(sorted({v or 'none' for v in verdicts}))}"]
+    return []
+
+
 def parse_cells(value: str) -> tuple[str, ...]:
     """`model/mode,model/mode` -> the cells. ValueError on a malformed entry."""
     cells = tuple(dict.fromkeys(c.strip() for c in value.split(",") if c.strip()))
@@ -351,8 +377,9 @@ def load_matrix_rows(
 ) -> list[dict[str, Any]]:
     """`fetch(sql, params)` returns rows as dicts: the latest row per partition, by trusted authors only.
 
-    With `trigger_source`, only rows of runs started with that trigger source count (the publish gate passes the
-    merge eval's). Without it every trigger source counts, as the PR and merge gates read their own keys."""
+    With `trigger_source`, only rows of runs started with that trigger source count (the publish gate and release
+    reuse pass the one of the eval they cite). Without it every trigger source counts, as the PR and merge gates
+    read their own keys."""
     authors = sorted(set(trusted))
     if not authors:
         raise ValueError(
