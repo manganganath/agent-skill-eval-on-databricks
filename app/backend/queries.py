@@ -208,20 +208,34 @@ def dashboard_sql(cfg: HubConfig, dept: str) -> dict[str, tuple[str, dict[str, o
     }
 
 
-def tokens_sql(endpoints: list[str]) -> tuple[str, dict[str, object]]:
-    """Input and output tokens per day for the given serving endpoints, over the last 30 days. Reads the
-    system.serving tables with the user's credentials, so the caller maps a refusal to no tokens section."""
+def tokens_sql(endpoints: list[str], ci_eval_principal: str | None) -> tuple[str, dict[str, object]]:
+    """Input and output tokens per day and source for the given serving endpoints, over the last 30 days.
+
+    A row is `try` when its usage_context says so (Try runs call with the user's token), and `eval` when its
+    usage_context says so or its requester is the eval service principal (eval runs and their judges). Other
+    rows are left out. Without a principal, only the tagged rows count. Reads the system.serving tables with the
+    user's credentials, so the caller maps a refusal to no tokens section."""
     if not endpoints:
         raise ValueError("at least one endpoint")
     params: dict[str, object] = {f"e{i}": e for i, e in enumerate(endpoints)}
     names = ", ".join(f":e{i}" for i in range(len(endpoints)))
+    eval_by_requester = ""
+    if ci_eval_principal:
+        params["ci_eval_principal"] = ci_eval_principal
+        eval_by_requester = " OR u.requester = :ci_eval_principal"
     sql = (
         "WITH latest AS (SELECT served_entity_id, endpoint_name FROM system.serving.served_entities "
-        "QUALIFY ROW_NUMBER() OVER (PARTITION BY served_entity_id ORDER BY change_time DESC) = 1) "
-        "SELECT l.endpoint_name, CAST(u.request_time AS DATE) AS day, "
-        "SUM(u.input_token_count) AS input_tokens, SUM(u.output_token_count) AS output_tokens "
-        "FROM system.serving.endpoint_usage AS u JOIN latest AS l ON u.served_entity_id = l.served_entity_id "
-        f"WHERE l.endpoint_name IN ({names}) AND u.request_time >= current_timestamp() - {DASHBOARD_WINDOW} "
-        "GROUP BY l.endpoint_name, CAST(u.request_time AS DATE) ORDER BY day"
+        "QUALIFY ROW_NUMBER() OVER (PARTITION BY served_entity_id ORDER BY change_time DESC) = 1), "
+        "sourced AS (SELECT u.served_entity_id, u.request_time, u.input_token_count, u.output_token_count, "
+        "CASE WHEN u.usage_context['skillhub_source'] = 'try' THEN 'try' "
+        "WHEN u.usage_context['skillhub_source'] = 'eval'"
+        f"{eval_by_requester} THEN 'eval' END AS source "
+        "FROM system.serving.endpoint_usage AS u "
+        f"WHERE u.request_time >= current_timestamp() - {DASHBOARD_WINDOW}) "
+        "SELECT l.endpoint_name, CAST(s.request_time AS DATE) AS day, s.source, "
+        "SUM(s.input_token_count) AS input_tokens, SUM(s.output_token_count) AS output_tokens "
+        "FROM sourced AS s JOIN latest AS l ON s.served_entity_id = l.served_entity_id "
+        f"WHERE s.source IS NOT NULL AND l.endpoint_name IN ({names}) "
+        "GROUP BY l.endpoint_name, CAST(s.request_time AS DATE), s.source ORDER BY day"
     )
     return sql, params

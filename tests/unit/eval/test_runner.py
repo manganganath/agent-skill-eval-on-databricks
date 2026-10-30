@@ -315,7 +315,7 @@ def wired(tmp_path, monkeypatch):
     monkeypatch.setattr(
         runner, "load_prompt", lambda cfg, key: PromptRef(key, f"cat.eval.{key}", 1, load_packaged(key))
     )
-    monkeypatch.setattr(runner, "model_client", lambda cfg, profile, headers: state["model"])
+    monkeypatch.setattr(runner, "model_client", lambda cfg, profile, headers, **kw: state["model"])
     monkeypatch.setattr(runner, "SkillsMcpClient", lambda *a: state["mcp"](*a))
 
     def read_evals(path):
@@ -943,7 +943,7 @@ def test_a_child_that_fails_is_inconclusive_even_when_errors_would_not_gate(wire
 def test_a_profile_no_client_can_serve_is_recorded_per_skill_before_staging(wired, monkeypatch):
     built = []
 
-    def clients(cfg, profile, headers):
+    def clients(cfg, profile, headers, **kw):
         built.append((profile, wired["stage"] == {}))  # (profile, still before staging)
         if profile == "claude":
             raise NotImplementedError("ug-anthropic route is not supported yet")
@@ -951,7 +951,10 @@ def test_a_profile_no_client_can_serve_is_recorded_per_skill_before_staging(wire
 
     monkeypatch.setattr(runner, "model_client", clients)
     summary = run_eval(CFG, request(models=["gpt", "claude"]))
-    assert built == [("gpt", True), ("claude", True)]  # one client per profile, all before staging
+    assert sorted(set(built)) == [
+        ("claude", True),
+        ("gpt", True),
+    ]  # one client per skill and profile, all before staging
     assert {c.model_profile for c in summary.children} == {"gpt"}
     assert sorted((e.skill, e.model_profile) for e in summary.errors) == [
         ("audit-xls", "claude"),
@@ -2173,7 +2176,8 @@ def test_the_worker_rebuilds_the_run_skill_call_the_parent_planned(wired, worker
     assert (w_plan.bundle, w_plan.ef, w_plan.models) == (run.plan.bundle, run.plan.ef, run.plan.models)
     assert (w_plan.evals_bytes, w_plan.dataset_digest) == (run.plan.evals_bytes, run.plan.dataset_digest)
     assert (w_scope, w_skill) == (run.scope, run.skill)
-    assert set(kw["clients"]) == {"gpt"} and kw["judges"] == runner._judges(parent_cfg, parent_req) == ["gpt"]
+    assert set(kw["clients"]) == {("equity_research", "earnings-preview", "gpt")}
+    assert kw["judges"] == runner._judges(parent_cfg, parent_req) == ["gpt"]
     assert (kw["exp_id"], kw["parent_id"], kw["version"]) == (run.exp_id, run.parent_id, 3)
     assert kw["index"] == 1  # earnings-preview is the run's second skill: it starts on its second model
     assert kw["prompts"] == prompts and isinstance(kw["prompts"], tuple)
@@ -2370,3 +2374,19 @@ def test_ready_does_not_wait_for_the_planted_bug_assessment(tmp_path):
     trace = _planted_trace("x", 5, [SimpleNamespace(name=n) for n in names])
     trace.info.state = SimpleNamespace(value="OK")
     assert runner._ready(ctx, trace, "with_skill", planted_on=True)
+
+
+def test_each_skill_model_client_tags_its_requests_as_eval_with_the_skill_and_trigger(wired, monkeypatch):
+    tags = []
+
+    def fake_model_client(cfg, profile, headers, **kw):
+        tags.append((profile, kw.get("usage_context")))
+        return wired["model"]
+
+    monkeypatch.setattr(runner, "model_client", fake_model_client)
+    run_eval(CFG, request(models=["gpt"], trigger_source="nightly"))
+    assert {skill for _, skill in ((p, t["skillhub_skill"]) for p, t in tags)} == {
+        "equity_research/earnings-preview",
+        "common/audit-xls",
+    }
+    assert all(t["skillhub_source"] == "eval" and t["skillhub_trigger_source"] == "nightly" for _, t in tags)

@@ -50,6 +50,7 @@ def test_app_env_comes_from_bundle_variables():
     assert env["OTEL_TRACES_SAMPLER"] == "always_on"
     assert env["SKILLHUB_JOB_ID_EVAL"] == "${resources.jobs.skill_eval.id}"
     assert env["SKILLHUB_JOB_ID_SWITCH"] == "${resources.jobs.skill_switch.id}"
+    assert env["SKILLHUB_CI_EVAL_PRINCIPAL"] == "${var.ci_eval_principal}"
     assert env["SKILLHUB_WORKSPACE_ROOT"] == "${var.workspace_root}"  # The Jobs use the same folder
     assert not [n for n in env if n.startswith("SKILLHUB_ENDPOINT_")]
 

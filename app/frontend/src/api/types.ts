@@ -135,8 +135,11 @@ export interface DashboardPassRateTrend {
 export interface DashboardHealth {
   dept: string; model_profile: string; cells: number; error_rate: number | null; inconclusive_rate: number | null;
 }
+// `eval`: evaluation runs and their judges. `try`: Try runs, which call with the signed-in user's token.
+export type TokenSource = "eval" | "try";
 export interface DashboardTokens {
-  model_profile: string; endpoint_name: string; day: string; input_tokens: number | null; output_tokens: number | null;
+  model_profile: string; endpoint_name: string; day: string; source: TokenSource;
+  input_tokens: number | null; output_tokens: number | null;
 }
 export interface DashboardOut {
   summary: DashboardSummary; verdicts: DashboardVerdict[]; uplift: DashboardUplift[]; routing: DashboardRouting[];

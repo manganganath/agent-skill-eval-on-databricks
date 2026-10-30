@@ -28,6 +28,11 @@ def workspace_host() -> str:
     return host if host.startswith("https://") else f"https://{host}"
 
 
+def ci_eval_principal() -> str | None:
+    """The application ID of the eval service principal, which runs the evals and their judges. Unset: None."""
+    return os.environ.get("SKILLHUB_CI_EVAL_PRINCIPAL", "").strip() or None
+
+
 def user_client(token: str) -> WorkspaceClient:
     # skillhub.auth sets auth_type="pat", so the SDK never mixes the forwarded token with the app's OAuth env vars.
     return user_workspace_client(workspace_host(), token)

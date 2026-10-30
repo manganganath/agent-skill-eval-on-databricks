@@ -203,9 +203,12 @@ class DashboardHealth(BaseModel):
 
 
 class DashboardTokens(BaseModel):
+    """One day, endpoint and source. `source` is `eval` (evaluation runs and their judges) or `try` (Try runs)."""
+
     model_profile: str
     endpoint_name: str
     day: str
+    source: Literal["eval", "try"]
     input_tokens: int | None
     output_tokens: int | None
 
