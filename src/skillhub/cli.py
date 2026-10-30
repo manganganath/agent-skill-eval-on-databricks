@@ -357,6 +357,19 @@ def _local_cells(cfg, bundle) -> tuple[str, ...] | None:
     return tuple(planned_cells(ef, default_models=cfg.defaults.models))
 
 
+def _ensure_skill_experiment(cfg, dept: str, skill: str) -> None:
+    """The published skill's own experiment and its registered judge, as bootstrap makes them. Idempotent.
+
+    Until now its evals ran in the department's unreleased experiment, because the eval identities cannot create
+    experiments; publish runs as ci, which can. From here on the nightly and later evals use this one. It runs after
+    the gate and the publish, so only evaluated content gets one. A failure fails the Job with the version already
+    journaled, and a re-run (the publish is then `unchanged`) converges."""
+    from skillhub.eval.judges import register_judges
+    from skillhub.results.experiments import ensure_experiment
+
+    register_judges(cfg, ensure_experiment(cfg, dept, skill))
+
+
 @app.command("publish")
 def publish_cmd(
     ctx: typer.Context,
@@ -404,6 +417,7 @@ def publish_cmd(
             actor=actor,
             job_run_id=job_run_id or None,  # Jobs pass "" for an unset parameter
         )
+        _ensure_skill_experiment(cfg, dept, skill)
     typer.echo(json.dumps(asdict(res), indent=2))
 
 
@@ -680,6 +694,7 @@ def _job_switch(
                 actor=actor,
                 job_run_id=run_id,
             )
+            _ensure_skill_experiment(cfg, dept, skill)
             out = {"status": "published" if res.created else "unchanged", **asdict(res)}
         elif action == "switch":
             if not _opt(version):
