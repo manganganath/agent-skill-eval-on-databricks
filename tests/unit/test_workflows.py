@@ -100,7 +100,8 @@ def test_skills_pr_eval_step_contract():
     wf = load_workflow("skills-pr.yml")
     run = step_named(wf, "Start skill-eval Job and wait")["run"]
     # Skills run in parallel workers, but a large PR still takes hours: the full gate, not a 30 min cut-off.
-    assert "--timeout 300m" in run and "databricks jobs run-now" in run
+    # The start is never retried; the shared script polls the run, so a network drop does not fail the step.
+    assert "databricks jobs run-now --no-wait" in run and 'wait_job_run.sh "$run_id" 300' in run
     assert step_named(wf, "Start skill-eval Job and wait")["name"].endswith("(5 h)")
     assert wf["jobs"]["skills-pr"]["timeout-minutes"] == 330  # the wait plus the steps around it
     assert "-t prod" not in run and "SKILLHUB_JOB_ID_EVAL" in run
@@ -340,7 +341,8 @@ def test_publish_and_switch_use_the_evaluated_folder_and_expected_hash():
     assert 'action: "retire"' in retire["run"] and "skills_root" not in retire["run"]
     assert publish["env"]["MERGE_SHA"] == "${{ github.sha }}"
     for s in (publish, switch, retire):
-        assert "SUCCESS" in s["run"] and "run_page_url" in s["run"] and "--timeout 30m" in s["run"]
+        assert "SUCCESS" in s["run"] and "run_page_url" in s["run"]
+        assert "databricks jobs run-now --no-wait" in s["run"] and 'wait_job_run.sh "$run_id" 30 ' in s["run"]
         assert "::error::run-now failed" in s["run"]
 
 
@@ -373,7 +375,7 @@ def test_eval_merge_uploads_once_and_exposes_one_candidate_path():
     step = step_named(load_workflow("skills-publish.yml"), "Start skill-eval Job and wait")
     run = step["run"]
     assert 'trigger_source: "merge"' in run and "skills_root: $skills_root" in run
-    assert "-t prod" not in run and "--timeout 300m" in run and "run_page_url" in run
+    assert "-t prod" not in run and ('wait_job_run.sh "$run_id" 300' in run and "run_page_url" in run)
     assert step["name"].endswith("(5 h)") and evalj["timeout-minutes"] == 330
 
 
@@ -615,15 +617,20 @@ def test_failed_run_now_prints_a_non_empty_url(tmp_path, workflow, prefix, body)
 
 
 # Behaves like `databricks jobs run-now` in CLI v1.20: a positional JOB_ID next to --json is an error.
-# Saves the request body to $SAVED.
+# Saves the request body to $SAVED. A get-run poll answers TERMINATED/SUCCESS.
 _RUN_NOW_CLI = r"""
 databricks() {
+  if [ "$1 $2" = "jobs get-run" ]; then
+    echo '{"run_page_url": "https://ws.example/jobs/42/runs/7", "state": {"life_cycle_state": "TERMINATED", "result_state": "SUCCESS"}}'
+    return 0
+  fi
   [ "$1 $2" = "jobs run-now" ] || return 0
   shift 2
-  local body="" pos=""
+  local body="" pos="" no_wait=""
   while [ $# -gt 0 ]; do
     case "$1" in
-      --json | --timeout | -o) [ "$1" = --json ] && body=$2; shift 2 ;;
+      --json | -o) [ "$1" = --json ] && body=$2; shift 2 ;;
+      --no-wait) no_wait=1; shift ;;
       -*) shift ;;
       *) pos=$1; shift ;;
     esac
@@ -632,9 +639,11 @@ databricks() {
     echo "Error: when --json flag is specified, no positional arguments are allowed." >&2
     return 1
   fi
+  [ -n "$no_wait" ] || { echo "Error: the start must not wait inside the CLI." >&2; return 1; }
   printf '%s' "$body" > "$SAVED"
-  echo '{"state": {"result_state": "SUCCESS"}}'
+  echo '{"run_id": 7}'
 }
+export -f databricks  # the wait script runs in a child bash
 uv() { echo pr12_ab12cd3; }
 """
 
@@ -655,13 +664,14 @@ def test_run_job_sends_the_job_id_in_the_request_body(tmp_path, workflow, prefix
     saved = tmp_path / "body.json"
     env = {"PATH": "/usr/bin:/bin:/usr/local/bin:/opt/homebrew/bin", "RUNNER_TEMP": str(tmp_path)}
     env |= {"DATABRICKS_HOST": "https://ws.example", "JOB_ID": "42", "SAVED": str(saved)}
-    proc = subprocess.run(["bash", "-e", "-c", script], env=env, capture_output=True, text=True)
+    proc = subprocess.run(["bash", "-e", "-c", script], cwd=ROOT, env=env, capture_output=True, text=True)
     assert proc.returncode == 0, proc.stdout + proc.stderr
     assert json.loads(saved.read_text()) == {"job_id": 42, "job_parameters": {"k": "v"}}
 
 
 def test_pr_eval_sends_the_job_id_in_the_request_body(tmp_path):
     (tmp_path / "skills").mkdir()
+    (tmp_path / "scripts").symlink_to(ROOT / "scripts")  # the step runs scripts/wait_job_run.sh
     saved = tmp_path / "body.json"
     env = {"PATH": "/usr/bin:/bin:/usr/local/bin:/opt/homebrew/bin", "RUNNER_TEMP": str(tmp_path)}
     env |= {"SAVED": str(saved), "GITHUB_OUTPUT": str(tmp_path / "out")}
@@ -1055,6 +1065,23 @@ def test_every_run_now_result_is_checked_for_success_and_uses_a_validated_job_id
     assert found >= 5  # skills-pr eval, eval-merge, publish, switch, retire (+ skills-switch)
 
 
+def test_every_run_now_step_waits_with_the_shared_script_after_a_checkout():
+    """The polling lives in scripts/wait_job_run.sh, so the job must have checked the repository out."""
+    found = 0
+    for name, job_name, job in all_jobs():
+        steps = job.get("steps", [])
+        for i, step in enumerate(steps):
+            run = step.get("run", "")
+            if "jobs run-now" not in run:
+                continue
+            found += 1
+            where = (name, job_name, step.get("name"))
+            assert "--no-wait" in run and "--timeout" not in run, where  # the CLI's own wait is not retried
+            assert "bash scripts/wait_job_run.sh" in run, where
+            assert any(str(p.get("uses", "")).startswith("actions/checkout@") for p in steps[:i]), where
+    assert found >= 5
+
+
 def test_run_now_is_started_only_from_the_expected_jobs():
     """Eval Jobs start from ci-eval jobs; switch Jobs only from production jobs."""
     seen = {"EVAL": 0, "SWITCH": 0}
@@ -1296,8 +1323,10 @@ databricks() {
       shift
     done
   fi
-  if [ "$1" = jobs ]; then echo '{"state": {"result_state": "SUCCESS"}}'; fi
+  # One answer serves the run-now start and the get-run polls.
+  if [ "$1" = jobs ]; then echo '{"run_id": 7, "state": {"life_cycle_state": "TERMINATED", "result_state": "SUCCESS"}}'; fi
 }
+export -f databricks  # the wait script runs in a child bash
 uv() { echo pr12_ab12cd3; }
 """
 
@@ -1318,6 +1347,7 @@ def test_candidate_uploads_write_the_marker_that_cleanup_reads(tmp_path, workflo
 
     work = tmp_path / "work"
     (work / "skills").mkdir(parents=True)
+    (work / "scripts").symlink_to(ROOT / "scripts")  # the step runs scripts/wait_job_run.sh
     if with_fixtures:
         (work / "fixtures").mkdir()
     log = tmp_path / "log"
@@ -1373,6 +1403,7 @@ def test_candidate_uploads_go_to_the_workspace_root_or_stop(
     """The upload folder is $SKILLHUB_WORKSPACE_ROOT/$SKILLHUB_CATALOG/candidates/<key>; a missing or
     malformed root or catalog stops the step before anything is uploaded."""
     (tmp_path / "skills").mkdir()
+    (tmp_path / "scripts").symlink_to(ROOT / "scripts")  # the step runs scripts/wait_job_run.sh
     log = tmp_path / "log"
     log.write_text("")
     env = {"PATH": "/usr/bin:/bin:/usr/local/bin:/opt/homebrew/bin", "RUNNER_TEMP": str(tmp_path)}
@@ -1397,7 +1428,8 @@ def test_publish_passes_the_planned_cells_as_one_comma_separated_job_parameter(t
     saved = tmp_path / "params.json"
     stub = (
         'databricks() { while [ $# -gt 0 ]; do if [ "$1" = --json ]; then printf "%s" "$2" > "$SAVED"; fi; '
-        """shift; done; echo '{"state": {"result_state": "SUCCESS"}}'; }\n"""
+        """shift; done; echo '{"run_id": 7, "state": {"life_cycle_state": "TERMINATED", "result_state": "SUCCESS"}}'; }\n"""
+        "export -f databricks\n"
     )
     env = {
         "PATH": "/usr/bin:/bin:/usr/local/bin:/opt/homebrew/bin",
@@ -1406,7 +1438,7 @@ def test_publish_passes_the_planned_cells_as_one_comma_separated_job_parameter(t
     }
     env |= {"JOB_ID": "42", "SKILLS_ROOT": "/Workspace/x/skills", "MERGE_SHA": "f" * 40, "EVAL_RUN_ID": "k"}
     env |= {"ACTOR": "a", "DATABRICKS_HOST": "https://ws.example", "SAVED": str(saved)}
-    proc = subprocess.run(["bash", "-c", stub + run], env=env, capture_output=True, text=True)
+    proc = subprocess.run(["bash", "-c", stub + run], cwd=ROOT, env=env, capture_output=True, text=True)
     assert proc.returncode == 0, proc.stdout + proc.stderr
     params = json.loads(saved.read_text())["job_parameters"]
     assert params["expect_cells"] == "gpt/trigger,claude-sonnet/with_skill"
@@ -1463,7 +1495,8 @@ def test_release_steps_publish_and_switch_what_the_merge_eval_recorded(reg, cfg,
     saved = tmp_path / "bodies"
     stub = (
         'databricks() { while [ $# -gt 0 ]; do if [ "$1" = --json ]; then printf "%s\\n" "$2" >> "$SAVED"; fi; '
-        """shift; done; echo '{"state": {"result_state": "SUCCESS"}}'; }\n"""
+        """shift; done; echo '{"run_id": 7, "state": {"life_cycle_state": "TERMINATED", "result_state": "SUCCESS"}}'; }\n"""
+        "export -f databricks\n"
     )
     env = {"PATH": "/usr/bin:/bin:/usr/local/bin:/opt/homebrew/bin", "RUNNER_TEMP": str(tmp_path)}
     env |= {"ROWS": digests.stdout.strip(), "JOB_ID": "42", "SKILLS_ROOT": str(skill.parents[1])}
@@ -1471,7 +1504,9 @@ def test_release_steps_publish_and_switch_what_the_merge_eval_recorded(reg, cfg,
     env["DATABRICKS_HOST"] = "https://ws.example"
     for prefix in ("Publish", "Switch"):
         saved.unlink(missing_ok=True)
-        proc = subprocess.run(["bash", "-e", "-c", stub + release_step(prefix)["run"]], env=env, text=True)
+        proc = subprocess.run(
+            ["bash", "-e", "-c", stub + release_step(prefix)["run"]], cwd=ROOT, env=env, text=True
+        )
         assert proc.returncode == 0
         [body] = saved.read_text().splitlines()
         argv = _switch_task_argv(json.loads(body)["job_parameters"], job_run_id="77")
