@@ -197,7 +197,7 @@ def _load_engine() -> SimpleNamespace:
         from skillhub.gateway.skills_mcp import SkillsMcpClient, SkillToolError
         from skillhub.gateway.toolnames import ToolNameMap
         from skillhub.prompts import load_packaged
-        from skillhub.results.experiments import ensure_experiment
+        from skillhub.results.experiments import eval_experiment
     except ImportError as exc:
         log.warning("Try panel unavailable: %s", type(exc).__name__)
         raise problem(503, Reason.TRY_UNAVAILABLE) from None
@@ -211,7 +211,7 @@ def _load_engine() -> SimpleNamespace:
         SkillToolError=SkillToolError,
         ToolNameMap=ToolNameMap,
         load_packaged=load_packaged,
-        ensure_experiment=ensure_experiment,
+        eval_experiment=eval_experiment,
     )
 
 
@@ -420,9 +420,10 @@ def _run_try(
         out: list[dict] = []
         failure: BaseException | None = None
         try:
-            # ensure_experiment can create the experiment, which also sets the active one: an exclusive step.
+            # The skill's experiment, or its department's unreleased one: the app cannot create experiments. Setting
+            # the active experiment is process-global: an exclusive step.
             with lease.exclusive():
-                exp_id = eng.ensure_experiment(cfg, dept, name)  # the app's identity
+                exp_id = eng.eval_experiment(cfg, dept, name)  # the app's identity
                 lease.check()
                 eng.mlflow.set_experiment(experiment_id=exp_id)
             run = _TryRun(
@@ -617,7 +618,8 @@ def try_candidate(
         hidden=frozenset({production, live_fqn(cfg, "common", skill)}),
         rewrite={staged: production},
         ready_fqn=staged,
-        tags={"candidate_run_key": key.run_key},
+        # A new skill's traces go to the department's unreleased experiment, which holds other skills' traces too.
+        tags={"candidate_run_key": key.run_key, "candidate_skill": f"{dept}/{skill}"},
         setup=setup,
         teardown=teardown,
     )

@@ -34,13 +34,14 @@ def _offline_hooks(monkeypatch, tmp_path_factory):
     """Keep bootstrap's optional hooks offline. The real modules call MLflow and the workspace, and the
     default skills root is the repository's skills/ tree. Tests that need a hook stub it themselves."""
     monkeypatch.setenv("SKILLHUB_SKILLS", str(tmp_path_factory.mktemp("no-skills")))
-    for name, attr in (
-        ("skillhub.results.experiments", "ensure_experiment"),
-        ("skillhub.prompts", "register_prompts"),
-        ("skillhub.eval.judges", "register_judges"),
+    for name, attrs in (
+        ("skillhub.results.experiments", ("ensure_experiment", "ensure_unreleased_experiment")),
+        ("skillhub.prompts", ("register_prompts",)),
+        ("skillhub.eval.judges", ("register_judges",)),
     ):
         stub = types.ModuleType(name)
-        setattr(stub, attr, lambda *a, **k: None)
+        for attr in attrs:
+            setattr(stub, attr, lambda *a, **k: None)
         monkeypatch.setitem(sys.modules, name, stub)
 
 
@@ -322,6 +323,7 @@ def test_hooks_register_judges_once_per_skill_experiment(cfg, make_bundle, tmp_p
     calls = []
     exps = types.ModuleType("skillhub.results.experiments")
     exps.ensure_experiment = lambda c, dept, skill: calls.append(("exp", dept, skill)) or f"exp-{skill}"
+    exps.ensure_unreleased_experiment = lambda c, dept: calls.append(("unreleased", dept)) or f"new-{dept}"
     judges = types.ModuleType("skillhub.eval.judges")  # matches the real signature
     judges.register_judges = lambda c, experiment_id: calls.append(("judges", experiment_id))
     monkeypatch.setitem(sys.modules, "skillhub.results", types.ModuleType("skillhub.results"))
@@ -334,8 +336,28 @@ def test_hooks_register_judges_once_per_skill_experiment(cfg, make_bundle, tmp_p
     monkeypatch.setitem(sys.modules, "skillhub.prompts", prompts)
     ran = run_hooks(cfg, FakeSql(), tmp_path / "skills")
     assert ("judges", "exp-audit-xls") in calls and ("judges", "exp-comps") in calls
-    assert len([c for c in calls if c[0] == "judges"]) == 2
+    # Every department gets an experiment for its unreleased skills, with the same registered judge.
+    assert [c[1] for c in calls if c[0] == "unreleased"] == list(cfg.departments)
+    assert all(("judges", f"new-{d}") in calls for d in cfg.departments)
+    assert len([c for c in calls if c[0] == "judges"]) == 2 + len(cfg.departments)
     assert ran == ["ensure_experiment", "register_prompts", "register_judges"]
+
+
+def test_hooks_create_the_unreleased_experiments_without_any_skill(cfg, tmp_path, monkeypatch):
+    """A fresh workspace, or a department with no skill on main yet, can still evaluate its first skill."""
+    calls = []
+    exps = types.ModuleType("skillhub.results.experiments")
+    exps.ensure_experiment = lambda c, dept, skill: calls.append(("exp", dept, skill)) or "x"
+    exps.ensure_unreleased_experiment = lambda c, dept: calls.append(("unreleased", dept)) or f"new-{dept}"
+    judges = types.ModuleType("skillhub.eval.judges")
+    judges.register_judges = lambda c, experiment_id: calls.append(("judges", experiment_id))
+    monkeypatch.setitem(sys.modules, "skillhub.results.experiments", exps)
+    monkeypatch.setitem(sys.modules, "skillhub.eval.judges", judges)
+    (tmp_path / "skills").mkdir()
+    assert "register_judges" in run_hooks(cfg, FakeSql(), tmp_path / "skills")
+    assert calls == [("unreleased", d) for d in cfg.departments] + [
+        ("judges", f"new-{d}") for d in cfg.departments
+    ]
 
 
 def test_bootstrap_runs_results_steps_in_order_and_sets_genie_acl(cfg, tmp_path):
@@ -1486,6 +1508,7 @@ def test_the_experiment_root_is_locked_before_the_hooks_create_experiments(cfg, 
     order = []
     exps = types.ModuleType("skillhub.results.experiments")
     exps.ensure_experiment = lambda c, dept, skill: order.append("experiment") or "exp-1"
+    exps.ensure_unreleased_experiment = lambda c, dept: order.append("unreleased") or "exp-0"
     monkeypatch.setitem(sys.modules, "skillhub.results.experiments", exps)
     (tmp_path / "common" / "audit-xls").mkdir(parents=True)
     (tmp_path / "common" / "audit-xls" / "SKILL.md").write_text(
@@ -1493,7 +1516,7 @@ def test_the_experiment_root_is_locked_before_the_hooks_create_experiments(cfg, 
     )
     w = _w(existing_groups=required_groups(cfg), existing_sps=[cfg.roles.ci, cfg.roles.ci_eval])
     log = bootstrap(cfg, w, FakeSql(), create_identities=False, skills_root=tmp_path, results=_steps(order))
-    assert order.index(("root", "app-1", "app-2")) < order.index("experiment")
+    assert order.index(("root", "app-1", "app-2")) < min(order.index("experiment"), order.index("unreleased"))
     assert "experiment root locked for app-1, app-2" in log
 
 

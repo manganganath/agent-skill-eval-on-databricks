@@ -63,7 +63,7 @@ def main(argv: list[str] | None = None) -> int:
     spec_path, out_path = argv if argv is not None else sys.argv[1:]
     with runner._sigterm_raises(), redirect_stdout(sys.stderr):  # the parent never reads stdout
         args, kwargs = _rebuild(json.loads(Path(spec_path).read_text(encoding="utf-8")))
-        runner.configure_mlflow(args[0])  # the parent's ensure_experiment did this in its own process
+        runner.configure_mlflow(args[0])  # the parent's eval_experiment did this in its own process
         mlflow.openai.autolog()  # LLM spans in every trace
         children, errors = runner._run_skill(*args, **kwargs)
     result = {

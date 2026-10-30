@@ -216,6 +216,38 @@ def test_child_runs_skip_a_run_whose_dept_or_skill_differs_from_its_experiment(m
     assert "and 2 whose dept or skill differs" in caplog.text
 
 
+def test_child_runs_take_the_skill_from_the_run_in_the_unreleased_experiment(monkeypatch, caplog):
+    """A new skill's runs live in its department's unreleased experiment and sync like any skill's: the department
+    still comes from the experiment, and the skill must be a valid name."""
+    _experiments(monkeypatch, (f"{ROOT}/common/_unreleased", "15"), (f"{ROOT}/common/earnings-preview", "11"))
+    runs = [
+        run("n1", skill="estimate-revision", experiment_id="15"),
+        run("n2", experiment_id="15"),  # a released skill whose run started before its experiment existed
+        run("x1", dept="external", skill="estimate-revision", experiment_id="15"),
+        run("x2", skill="_unreleased", experiment_id="15"),
+        run("x3", skill=None, experiment_id="15"),
+        run("x4", skill="estimate-revision"),  # the skill experiment still holds only its own skill
+    ]
+    _search(monkeypatch, runs)
+    with caplog.at_level("WARNING", logger=sync_mod.__name__):
+        got = sync_mod.child_runs(make_cfg(), "pr12_ab12cd3", trusted=TRUSTED)
+    assert sorted(r.info.run_id for r in got) == ["n1", "n2"]
+    assert "and 4 whose dept or skill differs" in caplog.text
+
+
+def test_a_new_skill_syncs_rows_like_an_existing_skill(monkeypatch):
+    """The eval tables, the matrix and the Hub's candidate pages read dept, skill and experiment_id from the row."""
+    _experiments(monkeypatch, (f"{ROOT}/common/_unreleased", "15"))
+    _search(monkeypatch, [run("n1", skill="estimate-revision", experiment_id="15", n_cases=0)])
+    monkeypatch.setattr(sync_mod, "_traces", lambda r: [])
+    sql = ScriptedSql()
+    sync_mod.sync_run(make_cfg(), sql, "pr12_ab12cd3", trusted=TRUSTED)
+    [(stmt, params)] = sql.inserts("eval_runs")
+    [row] = json.loads(params["rows"])
+    assert f"{evals_schema(make_cfg(), 'common')}.eval_runs " in stmt
+    assert (row["dept"], row["skill"], row["experiment_id"]) == ("common", "estimate-revision", "15")
+
+
 def test_child_runs_skip_a_run_with_a_runner_param_set_as_a_tag(monkeypatch, caplog):
     """The runner logs dept as a param only. A dept tag was set by someone else: the run is not trusted."""
     _experiments(monkeypatch, (f"{ROOT}/common/earnings-preview", "11"))
@@ -675,6 +707,7 @@ def test_experiment_dept_parses_experiment_path():
     assert path == "/Shared/skill-hub/skill_hub/common/earnings-preview"
     assert experiment_dept(cfg, path) == "common"
     assert experiment_parts(cfg, path) == ("common", "earnings-preview")
+    assert experiment_parts(cfg, f"{ROOT}/common/_unreleased") == ("common", None)
     for bad in ("/Users/x/y", "/Shared/skill-hub/common/x", "/Shared/skill-hub/other_hub/common/x"):
         with pytest.raises(ValueError):
             experiment_dept(cfg, bad)

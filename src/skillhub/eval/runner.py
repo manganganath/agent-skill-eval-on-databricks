@@ -6,7 +6,8 @@ The run schemas are dropped in `finally`. `sync` copies the verdict tag, so it c
 
 - One parent run per department, created with `MlflowClient` in the experiment of the department's first skill
   and never made active, so each child run lives in its own skill experiment. Children carry the tags
-  `run_key` and `parent_run_id`.
+  `run_key` and `parent_run_id`. A skill without an experiment of its own (a draft, or a pull request that adds it)
+  runs in its department's unreleased experiment; the eval identity never creates experiments.
 - One child run per skill x model x mode. Repeats are `evaluate` calls inside it. Trigger mode runs the
   `trigger` cases and the effectiveness modes run the `effectiveness` cases; `without_skill` runs first so
   `with_skill` can report uplift.
@@ -205,7 +206,7 @@ class RunSummary:
 
 _RESULTS = (
     ("experiments", "configure_mlflow"),
-    ("experiments", "ensure_experiment"),
+    ("experiments", "eval_experiment"),
     ("datasets", "sync_dataset"),
     ("sync", "sync_run"),
     ("sync", "record_rubric"),
@@ -232,8 +233,9 @@ def configure_mlflow(cfg) -> None:
     _results("experiments", "configure_mlflow")(cfg)
 
 
-def ensure_experiment(cfg, dept: str, skill: str) -> str:
-    return _results("experiments", "ensure_experiment")(cfg, dept, skill)
+def eval_experiment(cfg, dept: str, skill: str) -> str:
+    """The skill's experiment, or its department's unreleased one: the eval identity never creates one."""
+    return _results("experiments", "eval_experiment")(cfg, dept, skill)
 
 
 def sync_dataset(cfg, dept: str, skill: str, ef: EvalFile, experiment_id: str) -> tuple[object, str]:
@@ -604,8 +606,8 @@ def run_eval(cfg, req: RunRequest) -> RunSummary:
                     else:
                         planned.append(RunError(dept, name, "the candidate was not staged in the run schema"))
                     continue
-                exp_id = ensure_experiment(cfg, dept, name)
-                if prompts is None:  # after ensure_experiment, which points MLflow at the workspace
+                exp_id = eval_experiment(cfg, dept, name)
+                if prompts is None:  # after eval_experiment, which points MLflow at the workspace
                     prompts = _load_prompts(cfg)
                 if dept not in parents:
                     parents[dept] = _open_parent(req, scope, exp_id, prompts[1])

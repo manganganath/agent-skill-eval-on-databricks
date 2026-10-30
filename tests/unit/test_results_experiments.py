@@ -145,6 +145,70 @@ def test_ensure_experiment_refuses_existing_experiment_without_binding(monkeypat
         exp.ensure_experiment(cfg, "common", "earnings-preview")
 
 
+COMMON_TRACES = UnityCatalog("skill_hub", "common_evals", table_prefix="traces")
+UNRELEASED = "/Shared/skill-hub/skill_hub/common/_unreleased"
+
+
+def _no_create(**kw):
+    raise AssertionError("an eval or a Try must never create an experiment")
+
+
+def test_ensure_unreleased_experiment_creates_the_department_experiment_bound_to_its_traces(monkeypatch):
+    created = []
+    looks = iter([None, NS(experiment_id="8", trace_location=COMMON_TRACES)])
+    monkeypatch.setattr(exp.mlflow, "get_experiment_by_name", lambda path: next(looks))
+    monkeypatch.setattr(
+        exp.mlflow,
+        "set_experiment",
+        lambda experiment_name, trace_location: created.append((experiment_name, trace_location)),
+    )
+    assert exp.ensure_unreleased_experiment(make_cfg(), "common") == "8"
+    assert created == [(UNRELEASED, COMMON_TRACES)]
+
+
+def test_eval_experiment_uses_the_skill_experiment_when_it_exists(monkeypatch):
+    found = {
+        "/Shared/skill-hub/skill_hub/common/audit-xls": NS(experiment_id="7", trace_location=COMMON_TRACES)
+    }
+    found[UNRELEASED] = NS(experiment_id="8", trace_location=COMMON_TRACES)
+    monkeypatch.setattr(exp.mlflow, "get_experiment_by_name", found.get)
+    monkeypatch.setattr(exp.mlflow, "set_experiment", _no_create)
+    assert exp.eval_experiment(make_cfg(), "common", "audit-xls") == "7"
+
+
+def test_eval_experiment_falls_back_to_the_unreleased_experiment_for_a_new_skill(monkeypatch):
+    """A draft or a pull request that adds a skill: ci_eval and the app cannot create its experiment."""
+    looked = []
+    found = {UNRELEASED: NS(experiment_id="8", trace_location=COMMON_TRACES)}
+    monkeypatch.setattr(
+        exp.mlflow, "get_experiment_by_name", lambda path: looked.append(path) or found.get(path)
+    )
+    monkeypatch.setattr(exp.mlflow, "set_experiment", _no_create)
+    assert exp.eval_experiment(make_cfg(), "common", "estimate-revision") == "8"
+    assert looked == ["/Shared/skill-hub/skill_hub/common/estimate-revision", UNRELEASED]
+    assert exp.os.environ["MLFLOW_TRACING_SQL_WAREHOUSE_ID"] == "test-warehouse"
+
+
+def test_eval_experiment_fails_closed_without_the_unreleased_experiment(monkeypatch):
+    monkeypatch.setattr(exp.mlflow, "get_experiment_by_name", lambda path: None)
+    monkeypatch.setattr(exp.mlflow, "set_experiment", _no_create)
+    with pytest.raises(RuntimeError, match="Run bootstrap"):
+        exp.eval_experiment(make_cfg(), "common", "estimate-revision")
+
+
+@pytest.mark.parametrize(
+    "location", [None, UnityCatalog("skill_hub", "external_evals", table_prefix="traces")]
+)
+def test_eval_experiment_refuses_a_wrong_binding_instead_of_falling_back(monkeypatch, location):
+    found = {
+        "/Shared/skill-hub/skill_hub/common/audit-xls": NS(experiment_id="7", trace_location=location),
+        UNRELEASED: NS(experiment_id="8", trace_location=COMMON_TRACES),
+    }
+    monkeypatch.setattr(exp.mlflow, "get_experiment_by_name", found.get)
+    with pytest.raises(RuntimeError, match="audit-xls"):
+        exp.eval_experiment(make_cfg(), "common", "audit-xls")
+
+
 def test_derived_acl_maps_select_to_read_and_modify_to_edit():
     cfg = make_cfg()
     w = FakeW(grants=[grant("g-common-readers", "SELECT"), grant("ci-sp", "MODIFY", "SELECT")])
@@ -198,6 +262,12 @@ def test_apply_experiment_acl_resolves_sp_display_name():
     assert reqs[0].service_principal_name == SP_ID
 
 
+def _acl_drifts(cfg, w):
+    """check_permissions without the missing unreleased experiments, which tests that stub only skill experiments
+    would otherwise all report."""
+    return [d for d in exp.check_permissions(cfg, w) if d.kind != "missing_experiment"]
+
+
 def _two_experiments(monkeypatch, **tags):
     monkeypatch.setattr(
         exp,
@@ -221,7 +291,7 @@ def test_check_permissions_reports_missing_and_extra_readers(monkeypatch):
         "2": [entry(group="g-er"), entry(group="g-intruder")],  # extra reader
     }
     w = FakeW(grants=[grant("g-er", "SELECT")], acl=acl, groups=["g-er", "g-intruder"])
-    drifts = exp.check_permissions(cfg, w)
+    drifts = _acl_drifts(cfg, w)
     kinds = sorted((d.experiment.rsplit("/", 1)[1], d.principal, d.kind) for d in drifts)
     assert kinds == [("earnings-preview", "g-er", "missing"), ("model-update", "g-intruder", "unexpected")]
 
@@ -249,7 +319,46 @@ def test_check_permissions_clean_when_acl_matches(monkeypatch):
         ],
     )
     w = FakeW(grants=[grant("g-er", "SELECT")], acl={"1": [entry(group="g-er")]})
-    assert exp.check_permissions(cfg, w) == []
+    assert _acl_drifts(cfg, w) == []
+
+
+def _unreleased(cfg, first_id=50):
+    return [
+        NS(name=f"/Shared/skill-hub/skill_hub/{d}/_unreleased", experiment_id=str(first_id + i), tags={})
+        for i, d in enumerate(cfg.departments)
+    ]
+
+
+def test_check_permissions_reports_each_missing_unreleased_experiment(monkeypatch):
+    cfg = make_cfg()
+    present = _unreleased(cfg)
+    monkeypatch.setattr(exp, "skill_experiments", lambda cfg: present[1:])
+    w = FakeW(grants=[grant("g-er", "SELECT")], acl={e.experiment_id: [entry(group="g-er")] for e in present})
+    drifts = exp.check_permissions(cfg, w)
+    assert [(d.experiment, d.principal, d.kind) for d in drifts] == [
+        (present[0].name, "-", "missing_experiment")
+    ]
+    assert exp.fails_check(drifts[0])
+    monkeypatch.setattr(exp, "skill_experiments", lambda cfg: present)
+    assert exp.check_permissions(cfg, w) == []  # bootstrap's setup is clean
+
+
+def test_check_permissions_checks_the_unreleased_experiment_acl_like_a_skill_experiment(monkeypatch):
+    """ci_eval holds CAN_EDIT through the root; MANAGE on the unreleased experiment is drift, like anywhere else."""
+    cfg = make_cfg()
+    present = _unreleased(cfg)
+    monkeypatch.setattr(exp, "skill_experiments", lambda cfg: present)
+    acl = {e.experiment_id: [entry(group="g-er"), entry(sp=SP_ID, level="CAN_EDIT")] for e in present}
+    acl["50"] = [
+        entry(group="g-er"),
+        entry(sp=SP_ID, level="CAN_MANAGE"),
+        entry(group="users", level="CAN_EDIT"),
+    ]
+    w = FakeW(grants=[grant("g-er", "SELECT"), grant(SP_ID, "MODIFY")], acl=acl)
+    assert sorted((d.experiment, d.principal, d.kind) for d in exp.check_permissions(cfg, w)) == [
+        (present[0].name, SP_ID, "excessive"),
+        (present[0].name, "users", "unexpected"),
+    ]
 
 
 def test_check_permissions_flags_unknown_department(monkeypatch):
@@ -259,7 +368,7 @@ def test_check_permissions_flags_unknown_department(monkeypatch):
         "skill_experiments",
         lambda cfg: [NS(name="/Shared/skill-hub/skill_hub/ghost/x", experiment_id="3", tags={})],
     )
-    drifts = exp.check_permissions(cfg, FakeW())
+    drifts = _acl_drifts(cfg, FakeW())
     assert [d.kind for d in drifts] == ["unknown_department"]
 
 
@@ -270,7 +379,7 @@ def test_check_permissions_tolerates_experiment_directly_under_root(monkeypatch)
         "skill_experiments",
         lambda cfg: [NS(name="/Shared/skill-hub/skill_hub/stray", experiment_id="3", tags={})],
     )
-    assert [d.kind for d in exp.check_permissions(cfg, FakeW())] == ["unknown_department"]
+    assert [d.kind for d in _acl_drifts(cfg, FakeW())] == ["unknown_department"]
 
 
 def test_can_manage_is_flagged_except_for_owner_and_admins(monkeypatch):
@@ -286,7 +395,7 @@ def test_can_manage_is_flagged_except_for_owner_and_admins(monkeypatch):
         "2": [entry(group="g-er")],
     }
     w = FakeW(grants=[grant("g-er", "SELECT")], acl=acl)
-    drifts = exp.check_permissions(cfg, w)
+    drifts = _acl_drifts(cfg, w)
     assert [(d.experiment.rsplit("/", 1)[1], d.principal, d.kind) for d in drifts] == [
         ("earnings-preview", "users", "unexpected")
     ]
@@ -300,7 +409,7 @@ def test_can_edit_for_modify_holder_satisfied_only_by_edit_or_higher(monkeypatch
         lambda cfg: [NS(name="/Shared/skill-hub/skill_hub/equity_research/a", experiment_id="1", tags={})],
     )
     w = FakeW(grants=[grant(SP_ID, "MODIFY")], acl={"1": [entry(sp=SP_ID, level="CAN_READ")]})
-    drifts = exp.check_permissions(cfg, w)
+    drifts = _acl_drifts(cfg, w)
     assert [(d.principal, d.kind) for d in drifts] == [(SP_ID, "missing")]
 
 
@@ -351,7 +460,7 @@ def test_over_privileged_principal_is_flagged_excessive(monkeypatch, priv, held)
         lambda cfg: [NS(name="/Shared/skill-hub/skill_hub/equity_research/a", experiment_id="1", tags={})],
     )
     w = FakeW(grants=[grant("g-er", priv)], acl={"1": [entry(group="g-er", level=held)]})
-    assert [(d.principal, d.kind) for d in exp.check_permissions(cfg, w)] == [("g-er", "excessive")]
+    assert [(d.principal, d.kind) for d in _acl_drifts(cfg, w)] == [("g-er", "excessive")]
 
 
 def test_tag_claimed_owner_without_grant_is_flagged_unless_can_manage(monkeypatch):
@@ -368,9 +477,7 @@ def test_tag_claimed_owner_without_grant_is_flagged_unless_can_manage(monkeypatc
         ],
     )
     w = FakeW(acl={"1": [entry(user="mallory@example.com", level="CAN_EDIT")]})
-    assert [(d.principal, d.kind) for d in exp.check_permissions(cfg, w)] == [
-        ("mallory@example.com", "unexpected")
-    ]
+    assert [(d.principal, d.kind) for d in _acl_drifts(cfg, w)] == [("mallory@example.com", "unexpected")]
 
 
 def test_mlflow_env_does_not_leak_between_tests():
@@ -517,7 +624,7 @@ def test_check_permissions_reports_root_inheritance_once_not_per_experiment(monk
     ci = entry(sp=CI, level="CAN_MANAGE", inherited_from="/directories/300")
     acl = {"300": [users], "1": [entry(group="g-er"), users, ci], "2": [entry(group="g-er"), users, ci]}
     w = FakeW(grants=[grant("g-er", "SELECT")], acl=acl)
-    drifts = exp.check_permissions(cfg, w)
+    drifts = _acl_drifts(cfg, w)
     assert [(d.experiment, d.principal, d.kind) for d in drifts] == [(ROOT, "users", "inherited_access")]
 
 
@@ -526,7 +633,7 @@ def test_check_permissions_still_flags_grants_set_on_the_experiment(monkeypatch)
     _two_experiments(monkeypatch)
     acl = {"1": [entry(group="g-er"), entry(group="users", level="CAN_EDIT")], "2": [entry(group="g-er")]}
     w = FakeW(grants=[grant("g-er", "SELECT")], acl=acl)
-    assert [(d.principal, d.kind) for d in exp.check_permissions(cfg, w)] == [("users", "unexpected")]
+    assert [(d.principal, d.kind) for d in _acl_drifts(cfg, w)] == [("users", "unexpected")]
 
 
 def test_skill_experiments_ignore_other_catalogs(monkeypatch):
@@ -679,7 +786,7 @@ def test_per_experiment_checks_ignore_everything_inherited_from_the_root_and_its
     )
     from_home = entry(sp=CI, level="CAN_MANAGE", inherited_from="/directories/20")
     w = FakeW(dirs=HOME_DIRS, grants=[grant("g-er", "SELECT")], acl={"1": [entry(group="g-er"), from_home]})
-    assert exp.check_permissions(cfg, w) == []
+    assert _acl_drifts(cfg, w) == []
 
 
 def test_parent_folders_this_identity_cannot_see_are_skipped(monkeypatch):

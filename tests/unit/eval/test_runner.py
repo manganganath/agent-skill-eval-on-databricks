@@ -247,7 +247,7 @@ def wired(tmp_path, monkeypatch):
         ),
     }
 
-    def ensure_experiment(cfg, dept, skill):
+    def eval_experiment(cfg, dept, skill):  # the sqlite store stands in for the skill's experiment
         name = f"/t2-test/{tmp_path.name}/{dept}/{skill}"
         found = mlflow.get_experiment_by_name(name)
         if found:
@@ -306,7 +306,7 @@ def wired(tmp_path, monkeypatch):
     monkeypatch.setattr(
         runner, "record_rubric", lambda cfg, sql, dept, rubric: state["rubrics"].append((dept, rubric))
     )
-    monkeypatch.setattr(runner, "ensure_experiment", ensure_experiment)
+    monkeypatch.setattr(runner, "eval_experiment", eval_experiment)
     monkeypatch.setattr(
         runner, "sync_dataset", lambda cfg, dept, skill, ef, exp: (state["dataset"], "digest-1")
     )
@@ -1362,10 +1362,23 @@ def test_read_child_traces_stops_once_traces_stop_changing(monkeypatch, caplog):
     assert "traces still incomplete" in caplog.text
 
 
+def test_the_runner_finds_experiments_and_never_creates_them(monkeypatch):
+    """ci_eval cannot create an experiment: a new skill runs in its department's unreleased experiment."""
+    from skillhub.results import experiments
+
+    monkeypatch.setattr(experiments, "eval_experiment", lambda cfg, dept, skill: f"found-{dept}-{skill}")
+    monkeypatch.setattr(
+        experiments, "ensure_experiment", lambda *a: pytest.fail("the runner must not create")
+    )
+    assert runner.eval_experiment(CFG, "common", "estimate-revision") == "found-common-estimate-revision"
+    assert ("experiments", "eval_experiment") in runner._RESULTS
+    assert ("experiments", "ensure_experiment") not in runner._RESULTS
+
+
 def test_results_functions_fail_clearly_without_the_results_package(monkeypatch):
     monkeypatch.setitem(sys.modules, "skillhub.results.experiments", None)
     with pytest.raises(EvalRunError, match="skillhub.results.experiments"):
-        runner.ensure_experiment(CFG, "common", "audit-xls")
+        runner.eval_experiment(CFG, "common", "audit-xls")
 
 
 # --- skillhub eval ---------------------------------------------------------------------------------------
