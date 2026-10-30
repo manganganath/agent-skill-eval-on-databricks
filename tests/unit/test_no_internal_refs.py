@@ -1,4 +1,4 @@
-"""The repository is public: no file may cite internal documents, work tracks or milestones."""
+"""The repository is public: no file may cite internal documents, review findings, work tracks or milestones."""
 
 import re
 import subprocess
@@ -13,9 +13,12 @@ SPEC = "sp" + "ec" + r"\s+(?:§|section\s)\s*\d"
 CONTRACTS = "contr" + "acts" + r"\s+(?:§|section\s)\s*\d"
 TRACK = r"\bT" + "[1-6]" + r"\b"
 MILESTONE = r"\bM" + "[12]" + r"\b"
+# A review finding or decision cited by its ID: a letter and a number in parentheses, or at the start of a docstring.
+FINDING = r"\((?:re-review )?[CDMN]" + r"[0-9]{1,2}(?: open question)?\)"
+FINDING_PREFIX = '"""[CDMN]' + "[0-9]{1,2}:"
 
 CASE_INSENSITIVE = re.compile("|".join([RULING, SPEC, CONTRACTS]), re.IGNORECASE)
-CASE_SENSITIVE = re.compile("|".join([TRACK, MILESTONE]))
+CASE_SENSITIVE = re.compile("|".join([TRACK, MILESTONE, FINDING, FINDING_PREFIX]))
 
 PATHS = [
     "src",

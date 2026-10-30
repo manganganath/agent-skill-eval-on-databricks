@@ -37,7 +37,7 @@ def test_bad_config_exits_1_with_one_line(tmp_path, monkeypatch):
 
 
 def test_tracebacks_never_print_locals():
-    """pr-comment holds GITHUB_TOKEN in a local; older Typer releases printed locals by default (M8)."""
+    """pr-comment holds GITHUB_TOKEN in a local; older Typer releases printed locals by default."""
     from skillhub.cli import app
 
     assert app.pretty_exceptions_show_locals is False

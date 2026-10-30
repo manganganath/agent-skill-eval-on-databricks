@@ -27,6 +27,8 @@ class ChangedSkill:
     needs_rubric: bool = False  # no evals/rubric.json at head
     # Its files come from a skill in a quarantined department, and it is not in one. CI refuses it.
     moved_from_quarantine: bool = False
+    # Its department is quarantined. Pull requests evaluate it; the release never publishes or retires it.
+    quarantined: bool = False
 
     @property
     def needs_generation(self) -> bool:
@@ -152,7 +154,7 @@ def changed_skills(base_ref: str | None, head_ref: str, repo: Path = Path(".")) 
     moved_from_quarantine marks a skill outside the quarantined departments whose files git sees as
     renamed from a skill in one, or that is added under the name of a skill deleted from one in the same diff.
     A department counts as quarantined when config/hub.yaml says so at either ref, so a change that also
-    clears the flag is still caught.
+    clears the flag is still caught. quarantined marks every skill in such a department.
     """
     head_sha = _resolve(repo, head_ref)
     if base_ref is None:
@@ -188,5 +190,5 @@ def changed_skills(base_ref: str | None, head_ref: str, repo: Path = Path(".")) 
                 or (c.status == "added" and c.skill in deleted_quarantined)
             )
         )
-        out.append(replace(c, moved_from_quarantine=True) if moved else c)
+        out.append(replace(c, moved_from_quarantine=moved, quarantined=c.dept in quarantined))
     return out

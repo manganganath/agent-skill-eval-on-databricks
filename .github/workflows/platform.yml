@@ -2,12 +2,21 @@ name: platform
 
 # Uses `pull_request`, never `pull_request_target`. Code checks run for everyone and hold no secrets.
 # Deploys run in the `production` environment (ci credentials, reviewer approval): the prod deploy on
-# pushes to main, the dev deploy only when started by hand. No credential ever runs unreviewed PR code.
+# pushes to main or by hand from main, the dev deploy only by hand. No credential ever runs unreviewed PR code.
 on:
   pull_request:
   push:
     branches: [main]
+  # By hand: the checks, then the deploy that `deploy` names. GITHUB_TOKEN commits don't start pull_request
+  # runs, so the skills-pr bot dispatches this workflow with `none` to run the required check on its commit.
   workflow_dispatch:
+    inputs:
+      deploy:
+        description: Deploy after the checks (prod from main only)
+        required: false
+        type: choice
+        options: [none, dev, prod]
+        default: dev
 
 permissions:
   contents: read
@@ -53,7 +62,7 @@ jobs:
   deploy-dev:
     name: deploy (dev)
     needs: [platform]
-    if: ${{ github.event_name == 'workflow_dispatch' }}
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.deploy == 'dev' }}
     runs-on: ${{ vars.SKILLHUB_RUNNER || 'ubuntu-latest' }}
     timeout-minutes: 45
     environment: production
@@ -127,13 +136,15 @@ jobs:
           # A bundle deploy creates the app but neither starts it nor deploys its source; this does both.
           databricks bundle run skill_hub -t dev
 
-  # Pushes to main deploy prod after a reviewer approves the `production` environment (ci credentials).
-  # Shares the release group so a deploy never changes Jobs while a publish or switch is running. A pending
-  # member of the group can be replaced by a newer one; the next main push redoes a replaced deploy.
+  # Pushes to main, and a dispatch from main with deploy=prod, deploy prod after a reviewer approves the
+  # `production` environment (ci credentials). Shares the release group so a deploy never changes Jobs while a
+  # publish or switch is running. GitHub keeps one pending member of the group: a newer one (a skills-publish run,
+  # for example) cancels a pending deploy, which then shows as cancelled. The next main push redoes it, or
+  # `gh workflow run platform.yml --ref main -f deploy=prod` does at once.
   deploy-prod:
     name: deploy (prod)
     needs: [platform]
-    if: ${{ github.event_name == 'push' }}
+    if: ${{ github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.deploy == 'prod' && github.ref == 'refs/heads/main') }}
     runs-on: ${{ vars.SKILLHUB_RUNNER || 'ubuntu-latest' }}
     timeout-minutes: 45
     environment: production

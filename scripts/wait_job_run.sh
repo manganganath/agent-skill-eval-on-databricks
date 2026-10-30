@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Waits for a Databricks Job run that was started with `databricks jobs run-now --no-wait`.
 # Usage: wait_job_run.sh <run_id> <timeout_minutes>
-# The CI runner is a laptop and its network drops for minutes at a time. The CLI's own wait
+# A self-hosted runner's network can drop for minutes at a time. The CLI's own wait
 # (`run-now --timeout`) fails on the first failed poll, although the run itself carries on. Here a failed
 # poll is retried, so only a run that stays unreachable (or overruns the time limit) fails the step.
 # Never starts or cancels a run. Leaves the last get-run JSON in $RUNNER_TEMP/run.json and exits 0 once

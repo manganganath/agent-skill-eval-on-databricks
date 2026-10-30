@@ -227,7 +227,7 @@ def _run_switch_failed(rows):
 
 @pytest.mark.parametrize("later", ["published", "publish_refused", "drift_old"])
 def test_a_later_non_switch_row_never_hides_a_stuck_switch(later):
-    """N3: the latest switch-type row decides; published, publish_refused and drift rows are not switch rows."""
+    """The latest switch-type row decides; published, publish_refused and drift rows are not switch rows."""
     action, minutes = ("drift", 3000) if later == "drift_old" else (later, 30)
     rows = [("switched", 5000), ("switch_started", 4000), (action, minutes)]
     assert _run_switch_failed(rows) == 1
@@ -247,7 +247,7 @@ def test_a_young_switch_started_is_not_stuck_yet():
 
 
 def test_the_ci_job_leaves_an_alert_it_does_not_own_unchanged_with_a_warning(monkeypatch, caplog):
-    """N6: before the hand-over a person owns the alerts; the ci Job must not fail on them."""
+    """Before the hand-over a person owns the alerts; the ci Job must not fail on them."""
     monkeypatch.delenv("SKILLHUB_ALERT_DESTINATION_ID", raising=False)
     cfg = make_cfg()
     existing = _existing(cfg)

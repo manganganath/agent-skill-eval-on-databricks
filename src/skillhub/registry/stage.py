@@ -326,8 +326,8 @@ def cleanup_stale(
     """Drop run_* schemas older than `older_than_hours`, and candidate and draft folders older than 168 hours.
 
     Returns the schemas and folders removed. Only run schemas this principal owns and direct children of this
-    catalog's candidates root are touched: a shared catalog may hold other schemas that happen to match the name
-    (M3), and dev and prod keep their candidates apart.
+    catalog's candidates root are touched: a shared catalog may hold other schemas that happen to match the name,
+    and dev and prod keep their candidates apart.
     """
     cutoff_ms = time.time() * 1000 - older_than_hours * 3600 * 1000
     me = w.current_user.me().user_name

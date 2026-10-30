@@ -55,7 +55,7 @@ def _etag() -> str:
 
 
 class FakeUCSkills:
-    """In-memory UCSkills with the same methods. Uploads are visible at once (D1).
+    """In-memory UCSkills with the same methods. Uploads are visible at once, as in Unity Catalog.
 
     Etags change on metadata writes (create, finalize, update_comment) and not on uploads.
     Test controls:

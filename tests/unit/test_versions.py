@@ -323,6 +323,21 @@ def test_cli_publish_refuses_unevaluated_content_with_exit_2_and_a_journal_row(c
     assert row.content_hash.startswith("sha256:")
 
 
+def test_cli_publish_refuses_a_quarantined_department(cli_reg, make_bundle, tmp_path):
+    """The operator command refuses a quarantined department as the Job does, even for evaluated content."""
+    b = evaluated(cli_reg, make_bundle("external", "vendor"), run_key="run_1")
+    (tmp_path / "elsewhere" / "external").mkdir()
+    shutil.move(str(b.root), str(tmp_path / "elsewhere" / "external" / "vendor"))
+    args = ["publish", "--dept", "external", "--skill", "vendor", "--git-sha", SHA]
+    r = CliRunner().invoke(app, [*args, "--eval-run-id", "run-1", "--actor", "ci"])
+    assert r.exit_code == 1, r.output
+    assert r.output.startswith(
+        "error: refusing to publish external/vendor: department external is quarantined"
+    )
+    assert cli_reg.journal.history("external", "vendor") == []
+    assert cli_reg.uc.list("skill_hub.external_versions") == []
+
+
 def test_cli_publish_run_key_must_name_the_same_eval_as_eval_run_id(cli_reg):
     r = _invoke("--run-key", "pr9-other")
     assert r.exit_code == 2 and "different eval runs" in r.output
@@ -480,7 +495,7 @@ def test_cli_publish_reads_the_eval_inputs_of_the_local_checkout(cli_reg, tmp_pa
 
 
 def test_gate_refuses_when_a_failing_child_run_was_deleted_before_sync(reg, make_bundle):
-    """N4: the failing with_skill row is gone, the passing trigger row stays: the gate still refuses."""
+    """The failing with_skill row is gone, the passing trigger row stays: the gate still refuses."""
     b = evaluated(reg, make_bundle("common", "audit-xls"), cells=(("trigger", "pass"),))
     with pytest.raises(PublishRefused, match="no trusted result for planned cell.*gpt/with_skill"):
         _gate(reg, b)

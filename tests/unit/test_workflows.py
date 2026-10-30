@@ -90,10 +90,39 @@ def test_skills_pr_generate_commit_and_redispatch():
     assert "gh auth setup-git" not in run
     assert "credential.helper=!gh auth git-credential' push" in run  # scoped to the push
     assert "gh workflow run skills-pr.yml" in run and "pr_number" in run
-    assert "Co-authored-by: Isaac" in run
+    assert "Co-authored-by" not in run  # the bot's commit in the customer's repository carries no trailer
     for name in ("Install Databricks CLI", "Start skill-eval Job and wait"):
         assert "generated != 'true'" in step_named(wf, name)["if"]
     assert "non_deleted != ''" in step_named(wf, "Start skill-eval Job and wait")["if"]
+
+
+@pytest.mark.parametrize("platform_ok", [True, False])
+def test_the_bot_commit_starts_both_required_checks_without_a_deploy(tmp_path, platform_ok):
+    """A GITHUB_TOKEN push starts no pull_request run, and main requires skills-pr and platform: the bot dispatches
+    both on the PR branch after its push, platform with deploy=none so no deploy job asks for production. A branch
+    whose platform.yml has no deploy input refuses that dispatch: the step warns instead of failing."""
+    commit = step_named(load_workflow("skills-pr.yml"), "Commit generated files")
+    log = tmp_path / "calls"
+    stub = (
+        f'git() {{ echo "git $*" >> {log}; }}\n'
+        f'gh() {{ echo "gh $*" >> {log}; [ "$3" != platform.yml ] || {"true" if platform_ok else "false"}; }}\n'
+    )
+    env = {"PATH": "/usr/bin:/bin", "PR_NUMBER": "12", "HEAD_REF": "feature", "GITHUB_REPOSITORY": "o/r"}
+    proc = subprocess.run(["bash", "-e", "-c", stub + commit["run"]], env=env, capture_output=True, text=True)
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    calls = log.read_text().splitlines()
+    assert calls[-2:] == [
+        "gh workflow run skills-pr.yml --repo o/r --ref feature -f pr_number=12",
+        "gh workflow run platform.yml --repo o/r --ref feature -f deploy=none",
+    ]
+    assert any(c.startswith("git ") and " push origin HEAD:refs/heads/feature" in c for c in calls[:-2])
+    if platform_ok:
+        assert "::notice::Generated evals committed. New skills-pr and platform runs" in proc.stdout
+    else:
+        assert "::warning::" in proc.stdout and "the platform check did not start" in proc.stdout
+    assert load_workflow("skills-pr.yml")["jobs"]["skills-pr"]["permissions"]["actions"] == "write"
+    deploy = load_workflow(PLATFORM)["on"]["workflow_dispatch"]["inputs"]["deploy"]
+    assert "none" in deploy["options"]
 
 
 def test_skills_pr_eval_step_contract():
@@ -262,7 +291,7 @@ def test_skill_lists_use_dept_slash_name():
         assert "| .skill]" not in ln
 
 
-# --- skills-publish.yml and skills-switch.yml (Task 7) ---
+# --- skills-publish.yml and skills-switch.yml ---
 
 RELEASE_WORKFLOWS = ("skills-publish.yml", "skills-switch.yml")
 GATE_IF = (
@@ -495,15 +524,22 @@ def _uv_running_the_cli(tmp_path: Path) -> str:
     return str(bin_dir)
 
 
-def _plan(repo: Path, tmp_path: Path) -> dict[str, str]:
-    """Run the plan step on `repo` at HEAD and return its outputs."""
+def _plan_and_log(repo: Path, tmp_path: Path) -> tuple[dict[str, str], list[str]]:
+    """Run the plan step on `repo` at HEAD and return its outputs and its stdout lines."""
+    (tmp_path / "out").unlink(missing_ok=True)
     env = {"PATH": f"{_uv_running_the_cli(tmp_path)}:/usr/bin:/bin:/usr/local/bin:/opt/homebrew/bin"}
     env |= {"RUNNER_TEMP": str(tmp_path), "GITHUB_OUTPUT": str(tmp_path / "out"), "RUN_ATTEMPT": "1"}
     env |= {"HEAD_SHA": _git(repo, "rev-parse", "HEAD"), "HOME": str(tmp_path)}
     run = step_named(load_workflow("skills-publish.yml"), "Plan re-evaluation")["run"]
     proc = subprocess.run(["bash", "-e", "-c", run], cwd=repo, env=env, capture_output=True, text=True)
     assert proc.returncode == 0, proc.stdout + proc.stderr
-    return dict(ln.split("=", 1) for ln in (tmp_path / "out").read_text().splitlines())
+    outputs = dict(ln.split("=", 1) for ln in (tmp_path / "out").read_text().splitlines())
+    return outputs, proc.stdout.splitlines()
+
+
+def _plan(repo: Path, tmp_path: Path) -> dict[str, str]:
+    """Run the plan step on `repo` at HEAD and return its outputs."""
+    return _plan_and_log(repo, tmp_path)[0]
 
 
 def _git(repo: Path, *args: str) -> str:
@@ -512,9 +548,9 @@ def _git(repo: Path, *args: str) -> str:
     return proc.stdout.strip()
 
 
-def _add_skill(repo: Path, name: str) -> str:
-    """Commit skills/common/<name> with one trigger case. Returns the commit."""
-    root = repo / "skills" / "common" / name
+def _add_skill(repo: Path, name: str, dept: str = "common") -> str:
+    """Commit skills/<dept>/<name> with one trigger case. Returns the commit."""
+    root = repo / "skills" / dept / name
     (root / "evals").mkdir(parents=True)
     (root / "SKILL.md").write_text(f"---\nname: {name}\ndescription: Does {name}.\n---\nUse it.\n")
     evals = {"skill_name": name, "evals": [{"id": 1, "prompt": "do it", "should_trigger": True}]}
@@ -542,6 +578,70 @@ def test_plan_publishes_every_unreleased_skill_even_before_the_first_release(tmp
     (tmp_path / "out").unlink()
     out = _plan(repo, tmp_path)
     assert out["reeval"] == "common/beta" and out["has_changes"] == "true"
+
+
+QUARANTINE_NOTICE = "::notice::Not releasing skills in a quarantined department: "
+
+
+def test_plan_never_releases_a_quarantined_department(tmp_path):
+    """`external` is quarantined in the shipped config. Its added, changed and deleted skills are left out of the
+    re-evaluation, publish and retire, and a notice names them. The rest of the change is released as usual."""
+    repo = tmp_path / "repo"
+    (repo / "config").mkdir(parents=True)
+    (repo / "config" / "hub.yaml").write_text((ROOT / "config" / "hub.yaml").read_text())
+    _git(repo, "init", "-q", "-b", "main")
+    _add_skill(repo, "vendor", dept="external")
+    first = _add_skill(repo, "alpha")
+    out, log = _plan_and_log(repo, tmp_path)  # no release yet: every skill counts as added
+    assert f"{QUARANTINE_NOTICE}external/vendor" in log
+    assert out["reeval"] == "common/alpha" and out["retire"] == "[]"
+    assert [(r["dept"], r["skill"]) for r in json.loads(out["publish"])] == [("common", "alpha")]
+
+    _git(repo, "tag", "skillhub/released", first)
+    (repo / "skills" / "external" / "vendor" / "SKILL.md").write_text(
+        "---\nname: vendor\ndescription: Does more.\n---\nChanged.\n"
+    )
+    _add_skill(repo, "newcomer", dept="external")
+    out, log = _plan_and_log(repo, tmp_path)
+    assert f"{QUARANTINE_NOTICE}external/newcomer, external/vendor" in log
+    assert (out["reeval"], out["publish"], out["retire"], out["has_changes"]) == ("", "[]", "[]", "false")
+
+    _git(repo, "rm", "-r", "-q", "skills/external/vendor", "skills/common/alpha")
+    _git(repo, "commit", "-q", "-m", "delete vendor and alpha")
+    out, log = _plan_and_log(repo, tmp_path)
+    assert f"{QUARANTINE_NOTICE}external/newcomer, external/vendor" in log
+    assert json.loads(out["retire"]) == [{"dept": "common", "skill": "alpha"}]
+    assert out["reeval"] == "" and out["publish"] == "[]" and out["has_changes"] == "true"
+
+
+def test_the_quarantine_notice_is_one_workflow_command(tmp_path):
+    """Skill names come from folder names. They are escaped as command data, so a name can't start a command."""
+    script = step_named(load_workflow("skills-publish.yml"), "Plan re-evaluation")["run"]
+    start = script.index("skipped=")
+    block = script[start : script.index("fi\n", start) + 3]
+    rows = [
+        {"dept": "external", "skill": "a\n::error::b%", "status": "added", "quarantined": True},
+        {"dept": "common", "skill": "c", "status": "added", "quarantined": False},
+    ]
+    (tmp_path / "changed.json").write_text(json.dumps(rows))
+    env = {"PATH": "/usr/bin:/bin:/opt/homebrew/bin:/usr/local/bin", "RUNNER_TEMP": str(tmp_path)}
+    proc = subprocess.run(["bash", "-e", "-c", block], env=env, capture_output=True, text=True)
+    assert proc.returncode == 0, proc.stderr
+    assert proc.stdout.splitlines() == [f"{QUARANTINE_NOTICE}external/a%0A::error::b%25"]
+    (tmp_path / "changed.json").write_text(json.dumps(rows[1:]))
+    proc = subprocess.run(["bash", "-e", "-c", block], env=env, capture_output=True, text=True)
+    assert proc.returncode == 0 and proc.stdout == ""
+
+
+def test_the_quarantine_filter_comes_after_the_move_check_and_only_in_the_release():
+    """A move out of quarantine still fails the plan. Pull request gates still evaluate quarantined skills,
+    because reviewers read those results."""
+    plan = step_named(load_workflow("skills-publish.yml"), "Plan re-evaluation")["run"]
+    assert plan.index("moved_from_quarantine") < plan.index("skipped=") < plan.index("reeval=")
+    for name in ("reeval=", "retire="):
+        line = next(ln for ln in plan.splitlines() if ln.strip().startswith(name))
+        assert ".quarantined != true" in line, line
+    assert ".quarantined" not in step_named(load_workflow("skills-pr.yml"), "Find changed")["run"]
 
 
 def test_release_guard_is_first_and_tag_move_is_last_with_lease():
@@ -777,14 +877,25 @@ def test_hash_format_matches_content_hash():
 
 
 def test_concurrency_comment_mentions_replaced_pending_run():
-    text = (WORKFLOWS / "skills-publish.yml").read_text()
+    text = (WORKFLOWS / "skills-publish.yml").read_text().replace("\n# ", " ")
     assert (
-        "replaced by a manual skills-switch.yml dispatch publishes its changes on the next push"
-        in text.replace("\n# ", " ")
+        "replaced by a prod deploy or a manual skills-switch.yml dispatch publishes its changes on the next"
+        in text
     )
+    assert "shows as cancelled" in text
+    # Each replaced member names how to start it again at once.
+    assert "`gh workflow run skills-publish.yml --ref main`" in text
+    assert "`gh workflow run platform.yml --ref main -f deploy=prod`" in text
 
 
-# --- platform.yml (Task 8) and the ci-eval environment ---
+def test_the_deploy_prod_comment_says_how_to_redo_a_replaced_deploy():
+    text = (WORKFLOWS / PLATFORM).read_text()
+    comment = text[: text.index("  deploy-prod:")].rsplit("\n\n", 1)[1].replace("\n  # ", " ")
+    assert "shows as cancelled" in comment
+    assert "`gh workflow run platform.yml --ref main -f deploy=prod`" in comment
+
+
+# --- platform.yml and the ci-eval environment ---
 
 PLATFORM = "platform.yml"
 ENVIRONMENTS = {"skills-pr.yml": {"skills-pr": "ci-eval"}, "skills-publish.yml": {"eval-merge": "ci-eval"}}
@@ -819,22 +930,35 @@ def test_platform_cancels_superseded_pull_request_runs_on_the_check_job_only():
         assert wf["jobs"][name]["concurrency"]["cancel-in-progress"] is False
 
 
+def test_platform_dispatch_names_the_deploy_and_defaults_to_dev():
+    """`deploy` picks what a dispatch deploys after the checks. dev stays the default of a run started by hand;
+    none runs the checks only (the skills-pr bot's dispatch)."""
+    inputs = load_workflow(PLATFORM)["on"]["workflow_dispatch"]["inputs"]
+    assert set(inputs) == {"deploy"}
+    assert inputs["deploy"]["type"] == "choice"
+    assert inputs["deploy"]["options"] == ["none", "dev", "prod"]
+    assert inputs["deploy"]["default"] == "dev"
+
+
 def test_platform_dev_deploy_is_manual_and_approved_in_production():
     job = load_workflow(PLATFORM)["jobs"]["deploy-dev"]
     assert job["needs"] == ["platform"]
     assert job["environment"] == "production"
-    assert job["if"] == "${{ github.event_name == 'workflow_dispatch' }}"
+    assert job["if"] == "${{ github.event_name == 'workflow_dispatch' && inputs.deploy == 'dev' }}"
     assert job["concurrency"] == {"group": "skillhub-deploy-dev", "cancel-in-progress": False}
     runs = run_text(job)
     assert "bundle validate -t dev" in runs and "bundle deploy -t dev" in runs
     assert "-t prod" not in runs
 
 
-def test_platform_prod_deploy_is_main_pushes_in_the_release_group():
+def test_platform_prod_deploy_is_main_pushes_or_a_prod_dispatch_from_main_in_the_release_group():
     job = load_workflow(PLATFORM)["jobs"]["deploy-prod"]
     assert job["needs"] == ["platform"]
     assert job["environment"] == "production"
-    assert job["if"] == "${{ github.event_name == 'push' }}"
+    assert job["if"] == (
+        "${{ github.event_name == 'push' || (github.event_name == 'workflow_dispatch' "
+        "&& inputs.deploy == 'prod' && github.ref == 'refs/heads/main') }}"
+    )
     assert job["concurrency"] == {"group": "skillhub-release", "cancel-in-progress": False}
     runs = run_text(job)
     assert "bundle validate -t prod" in runs
@@ -997,7 +1121,7 @@ def test_no_workflow_uses_always():
 
 # ---- Cross-workflow invariants ----------------------------------------------------------
 # Already covered above, so not repeated here: no pull_request_target (skills-pr, platform and release
-# triggers), skills-pr concurrency and the required check names, the Isaac trailer, SHA pins, no `${{ }}`
+# triggers), skills-pr concurrency and the required check names, the bot commit's message, SHA pins, no `${{ }}`
 # or `always()` in run blocks, `bash -n` on run blocks, no bundle in ci-eval jobs, bundle deploy only in the
 # platform deploy jobs, and validated Job ID variables per job.
 

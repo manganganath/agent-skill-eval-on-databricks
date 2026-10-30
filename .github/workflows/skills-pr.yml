@@ -6,7 +6,8 @@ on:
   # No `paths:` filter: this check is required, and a required check that never starts blocks
   # every PR that doesn't touch skills. The job passes cheaply when no skill changed.
   pull_request:
-  # GITHUB_TOKEN commits don't start pull_request runs, so the bot re-dispatches this workflow.
+  # GITHUB_TOKEN commits don't start pull_request runs, so the bot dispatches this workflow (and platform.yml) on
+  # its commit.
   workflow_dispatch:
     inputs:
       pr_number:
@@ -28,7 +29,7 @@ jobs:
     permissions:
       contents: write # push generated files to the PR branch
       pull-requests: write
-      actions: write # re-dispatch this workflow after the push
+      actions: write # dispatch this workflow and platform.yml on the bot's commit
     env:
       PR_NUMBER: ${{ github.event.pull_request.number || inputs.pr_number }}
       ACTOR: ${{ github.actor }}
@@ -173,13 +174,18 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add -- skills
-          git commit -m "chore(evals): generate missing evals and rubrics for PR #${PR_NUMBER}
-
-          Co-authored-by: Isaac <no-reply@databricks.com>"
+          git commit -m "chore(evals): generate missing evals and rubrics for PR #${PR_NUMBER}"
           # The credential helper is scoped to this push; checkout kept no credentials.
           git -c credential.helper= -c 'credential.helper=!gh auth git-credential' push origin "HEAD:refs/heads/${HEAD_REF}"
+          # The push starts no pull_request run, so both required checks are started here. deploy=none: platform
+          # runs its checks and skips its deploy jobs. The dispatch runs the branch's platform.yml, and one from
+          # before the deploy input refuses it; a push by the author then starts both checks.
           gh workflow run skills-pr.yml --repo "$GITHUB_REPOSITORY" --ref "$HEAD_REF" -f pr_number="$PR_NUMBER"
-          echo "::notice::Generated evals committed. A new skills-pr run has started on the new commit."
+          if gh workflow run platform.yml --repo "$GITHUB_REPOSITORY" --ref "$HEAD_REF" -f deploy=none; then
+            echo "::notice::Generated evals committed. New skills-pr and platform runs have started on the new commit."
+          else
+            echo "::warning::Generated evals committed and a new skills-pr run has started, but the platform check did not start on the new commit. Update the branch from main, or push a commit, to start it."
+          fi
 
       - name: Install Databricks CLI
         if: ${{ steps.generate.outputs.generated != 'true' && steps.changed.outputs.non_deleted != '' && steps.pr.outputs.is_fork == 'false' }}
@@ -306,7 +312,7 @@ jobs:
           fi
           if [ "$GENERATED" = "true" ]; then
             if [ "$EVENT_NAME" = "pull_request" ]; then
-              echo "::notice::Generated files were committed. The check on the new commit decides the result."
+              echo "::notice::Generated files were committed. The checks on the new commit decide the result."
               exit 0
             fi
             echo "::error::The loop guard stopped this run: generation changed files on a dispatched run and nothing was committed."
