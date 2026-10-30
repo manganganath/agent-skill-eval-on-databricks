@@ -52,6 +52,8 @@ def test_app_env_comes_from_bundle_variables():
     assert env["SKILLHUB_JOB_ID_SWITCH"] == "${resources.jobs.skill_switch.id}"
     assert env["SKILLHUB_CI_EVAL_PRINCIPAL"] == "${var.ci_eval_principal}"
     assert env["SKILLHUB_WORKSPACE_ROOT"] == "${var.workspace_root}"  # The Jobs use the same folder
+    assert env["SKILLHUB_GITHUB_REPO"] == "${var.github_repo}"
+    assert env["SKILLHUB_GITHUB_TOKEN_SECRET"] == "${var.github_token_secret}"
     assert not [n for n in env if n.startswith("SKILLHUB_ENDPOINT_")]
 
 

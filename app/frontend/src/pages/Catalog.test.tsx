@@ -310,6 +310,18 @@ describe("Catalog drafts", () => {
     expect(within(link.closest(".skill-card") as HTMLElement).getByText("Draft")).toBeTruthy();
   });
 
+  it("badges a submitted draft with its pull request", async () => {
+    vi.mocked(api.me).mockResolvedValue(author);
+    vi.mocked(api.skills).mockResolvedValue(skills);
+    vi.mocked(api.candidates).mockResolvedValue([{ ...draft, submitted_pr: 7 }]);
+    renderCatalog();
+    const common = await screen.findByRole("region", { name: "common" });
+    const link = await within(common).findByRole("link", { name: "draft-skill" });
+    const card = link.closest(".skill-card") as HTMLElement;
+    expect(within(card).getByText("Submitted · PR #7")).toBeTruthy();
+    expect(within(card).getByText("Draft")).toBeTruthy();
+  });
+
   it("offers Upload draft to authors and reviewers only", async () => {
     vi.mocked(api.skills).mockResolvedValue(skills);
     vi.mocked(api.me).mockResolvedValue(author);

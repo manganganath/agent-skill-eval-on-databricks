@@ -320,6 +320,26 @@ fieldset { border: 0; margin: 0; padding: 0; min-width: 0; }
 .candidate-banner code { color: var(--ink); }
 .badge-draft { border-style: dashed; border-color: var(--review-line); }
 
+/* Release path: the five steps of a pull request's way to a live version, each with its state in words. */
+.release-path { display: grid; gap: 0.6rem; }
+.release-path h2 { margin: 0; }
+.release-path .muted { margin: 0; font-size: 0.875rem; }
+.release-steps { list-style: none; margin: 0; padding: 0; display: grid; gap: 0.4rem; }
+.release-step {
+  display: grid; grid-template-columns: minmax(10rem, max-content) minmax(0, 1fr) auto; gap: 0.25rem 0.9rem;
+  align-items: baseline; padding: 0.4rem 0.6rem; border-left: 3px solid var(--line); background: var(--mist);
+  border-radius: var(--radius-control); font-size: 0.9375rem;
+}
+.release-step-done { border-left-color: var(--accent); }
+.release-step-active, .release-step-waiting { border-left-color: var(--review); }
+.release-step-failed { border-left-color: var(--fail); background: var(--fail-wash); }
+.release-step-title { font-weight: 600; }
+.release-step-state { color: var(--ink); }
+.release-step-todo .release-step-state { color: var(--slate); }
+.release-merge { display: grid; gap: 0.5rem; justify-items: start; }
+.submit-draft { display: grid; gap: 0.5rem; justify-items: start; }
+.submitted-note { font-size: 0.875rem; font-weight: 600; color: var(--review); }
+
 /* Skill detail */
 .breadcrumb { display: flex; flex-wrap: wrap; gap: 0.4rem; font-size: 0.875rem; color: var(--slate); margin-bottom: 0.75rem; }
 .summary { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 1rem 2rem; padding: 1.5rem; }

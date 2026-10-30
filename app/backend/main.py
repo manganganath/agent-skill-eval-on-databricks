@@ -6,7 +6,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-from backend import queries
+from backend import github, queries
 from backend.authz import Forbidden, Reason
 from backend.data import SqlDenied, SqlError
 
@@ -20,6 +20,7 @@ def _include_routers(app: FastAPI) -> None:
     from backend.api import config as config_api
     from backend.api import drafts as drafts_api
     from backend.api import me as me_api
+    from backend.api import pulls as pulls_api
     from backend.api import results as results_api
     from backend.api import runs as runs_api
     from backend.api import skills as skills_api
@@ -30,6 +31,7 @@ def _include_routers(app: FastAPI) -> None:
     app.include_router(skills_api.router, prefix="/api")
     app.include_router(candidates_api.router, prefix="/api")
     app.include_router(drafts_api.router, prefix="/api")
+    app.include_router(pulls_api.router, prefix="/api")
     app.include_router(results_api.router, prefix="/api")
     app.include_router(runs_api.router, prefix="/api")
     app.include_router(try_api.router, prefix="/api")
@@ -52,6 +54,18 @@ def create_app(static_dir: Path = DEFAULT_STATIC) -> FastAPI:
     @app.exception_handler(SqlError)
     async def _sql_error(_request, _exc: SqlError):
         return _problem(502, Reason.SQL_FAILED)  # never echo server text
+
+    @app.exception_handler(github.GitHubNotConfigured)
+    async def _github_not_configured(_request, _exc: github.GitHubNotConfigured):
+        return _problem(503, Reason.GITHUB_NOT_CONFIGURED)
+
+    @app.exception_handler(github.GitHubError)
+    async def _github_error(_request, exc: github.GitHubError):
+        # The error type only: GitHub's message and the request are never sent to the browser.
+        return JSONResponse(
+            status_code=502,
+            content={"detail": {"reason": Reason.GITHUB_FAILED.value, "error": type(exc).__name__}},
+        )
 
     @app.exception_handler(queries.UnknownDepartment)
     async def _unknown_department(_request, _exc: queries.UnknownDepartment):
