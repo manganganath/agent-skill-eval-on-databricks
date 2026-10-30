@@ -111,7 +111,7 @@ flowchart TB
   gh -->|"starts"| jeval
   gh -->|"starts after production approval"| jswitch
   app -->|"starts"| jeval
-  app -->|"starts: switch, retire"| jswitch
+  app -->|"starts: switch"| jswitch
   jeval -->|"call skills and models"| ug
   jeval -->|"traces, verdicts"| ml
   jeval -->|"sync results"| uc
@@ -129,7 +129,7 @@ flowchart TB
 | `<d>_versions` | Every published version, as `<skill>-v<N>`. | Authors and reviewers |
 | `<d>_evals` | OTel trace tables, `eval_runs`, `eval_cases`, `skill_versions`, evaluation datasets `ds_<skill>` (they mirror `evals.json` for lineage and the Skill Hub; scoring never reads labels from them), `rubrics` (insert-only, one row per rubric per run) and the `eval_matrix` view. | `SELECT` for readers, reviewers and both CI principals. Table-level `MODIFY`: `skillhub-ci` on `skill_versions`; `skillhub-ci-eval` on `eval_runs`, `eval_cases`, `rubrics` and the trace tables, plus `CREATE TABLE` for the `ds_<skill>` tables |
 | `eval` | The `matrix_all`, `runs_all`, `cases_all` and `versions_all` views across departments. | Reviewers |
-| `run_<key>_<schema_base>` | Temporary schema for one department's skills in one eval run. | `skillhub-ci-eval` only. Dropped when the run ends; a cleanup Job drops any older than 24 hours. |
+| `run_<key>_<schema_base>` | Temporary schema for one department's skills in one eval run. A Try of a skill under review uses its own `run_try_<id>_<dept>` schema instead. | `skillhub-ci-eval` only; a Try schema, which the app creates, only the requester. Dropped when the run ends. The nightly cleanup drops the eval run schemas it owns that are older than 24 hours, and the app drops its own Try schemas after an hour. |
 
 Bootstrap creates all schemas. `ensure_tables` and `ensure_views` create none. After the first bootstrap, `skillhub-ci` owns the schemas, tables and views.
 
@@ -153,7 +153,7 @@ Naming rules:
 | Upload a draft | The user must be an author or reviewer, and an author may upload only to a department they can read. The app checks the upload as `skillhub lint` does and stores it in `<workspace_root>/<catalog>/drafts` as its service principal. A draft is never published: publish accepts only rows of the merge eval or of a pull request gate run that the release reuses (`trigger_source` `merge` or `pr`) |
 | Switch a version | The app checks that the user is in the reviewers group, then starts `skill-switch` as the app's service principal |
 
-- Only `skillhub-ci-eval` and the app service principal may run `skill-eval`. Only `skillhub-ci` and the app service principal may run `skill-switch`, and a publish runs only in a `skill-switch` run that `skillhub-ci` started. Users cannot start these Jobs directly.
+- Only the two CI principals and the app service principal may run `skill-eval`; `skillhub-ci` can because it manages every bundle resource. Only `skillhub-ci` and the app service principal may run `skill-switch`, and a publish runs only in a `skill-switch` run that `skillhub-ci` started. Other users, except workspace admins, cannot start these Jobs directly.
 - If a check cannot be made, the request is refused (fail closed).
 - If user authorisation does not cover the skills API in a workspace (the user-token call answers permission denied), the app lists skills as its service principal and filters them with the effective-permissions API for the signed-in user. After a fallback "yes", the app reads the skill files as its service principal. That principal therefore needs `READ VOLUME` on the live skill schemas and access to the effective-permissions API. If the fallback also fails, browsing is refused.
 - The app is open to the group `users` (`CAN_USE`).
@@ -166,12 +166,12 @@ Naming rules:
 
 - **Content hash.** The hash is SHA-256 over every file in the bundle except `evals/`, in sorted path order. Publishing identical content does nothing. Version numbers only increase.
 - **Test cases and rubrics.** They are never uploaded to the skill bundle and do not create a skill version. The gates bind them separately: `rubric_hash` covers `rubric.json`, and `dataset_digest` covers the `evals.json` bytes and the bytes of every fixture its cases use (their `fixtures`, the search indexes, and the planted-bug manifest for the planted workbook).
-- **Single writer.** CI and the Skill Hub publish, switch and retire only through the `skill-switch` Job (`skillhub job-switch`). The Job has `max_concurrent_runs: 1` with queueing, so two changes never interleave. The operator commands `skillhub switch` and `skillhub retire` bypass the queue and the approval. Use them only when the Job is unavailable (break-glass).
+- **Single writer.** CI publishes, switches and retires, and the Skill Hub switches, only through the `skill-switch` Job (`skillhub job-switch`). The Job has `max_concurrent_runs: 1` with queueing, so two changes never interleave. The operator commands `skillhub switch` and `skillhub retire` bypass the queue and the approval. Use them only when the Job is unavailable (break-glass).
 - **Publish gate.** `job-switch --action publish` refuses unless `skillhub-ci` started the Job run and the eval for its run key evaluated exactly this content and these eval inputs in every planned cell (see Data flow). A refusal journals `publish_refused`.
 - **Steps.** Before any file is touched, the Job journals `switch_started`. It then uploads the changed reference files, uploads `SKILL.md`, deletes files that are not in the target version, finalises, reads the files back and compares hashes (one attempt and up to three retries). It ends by writing `switched` or `switch_failed`.
 - **Which version is live.** Only a `switched` row makes a version live. A `published` row does not. A later `retired` row ends it.
 - **Limitation.** File uploads take effect as they happen. For a few seconds during a switch, an agent can see a mix of old and new files.
-- **Reconcile.** `skillhub reconcile` runs nightly and at the start of every switch. It alerts on hash drift, an unfinished switch and files changed after the last finalise. A `switch_failed` row also fires the `switch-failed` SQL alert. It never repairs anything by itself.
+- **Reconcile.** `skillhub reconcile` runs nightly and at the start of every switch. It alerts on hash drift, an unfinished switch, files changed after the last finalise, and a published skill with no live copy. A `switch_failed` row also fires the `switch-failed` SQL alert. It never repairs anything by itself.
 - **Pinning.** A pin is `dept/name=N`, so the same skill name can be pinned in two departments. A team that needs a fixed version gets `READ VOLUME` on `<d>_versions.<skill>-v<N>` and loads it by name.
 - **Events.** Each publish, switch and retire writes a row to `skill_versions`, so a Databricks Job can subscribe with a table update trigger. Webhooks are planned.
 
@@ -195,7 +195,7 @@ Naming rules:
 - Code scorers read the tool spans of the trace.
 - `ExpectationsGuidelines` checks each case's assertions.
 - One `make_judge` per rubric criterion uses only inputs and outputs. A `make_judge` with the trace checks skill use. Built-in tool-call and safety scorers run on effectiveness cases.
-- Judges form a panel (`judges`, which by default is every configured judge model; PR runs use `judges_pr`). Every judge's assessment is kept. A criterion passes only with a strict majority of the whole configured panel, for example 2 of 3. If at least one judge answered but there is no such majority, the criterion is not met. If no judge answered, the criterion is an error. Judge prompts mark the agent output and the skill text as data and tell the judge to ignore instructions inside them. Bootstrap registers only the skill-use judge of the first judge model. The rest of the panel runs at eval time.
+- Judges form a panel (`judges` in `config/hub.yaml`, three models in the shipped config; PR runs use `judges_pr`). Every judge's assessment is kept. A criterion passes only with a strict majority of the whole configured panel, for example 2 of 3. If at least one judge answered but there is no such majority, the criterion is not met. If no judge answered, the criterion is an error. Judge prompts mark the agent output and the skill text as data and tell the judge to ignore instructions inside them. Bootstrap registers only the skill-use judge of the first judge model. The rest of the panel runs at eval time.
 - Verdict rules: a pass rate below `fail_rate` is `fail`; below `warn_rate` is `warn`; otherwise `pass`. An error rate above `max_error_rate`, or most of the panel not responding, is `inconclusive`. Fewer than `min_reviewed_cases` reviewed cases is `advisory` and does not gate. Only reviewed cases count toward a gating verdict. A reviewed case with no dataset row counts as an error.
 - Thresholds: a skill may set its own `fail_rate`, `warn_rate` (`evals.json`) and `pass_score` (`rubric.json`), but only to tighten the defaults in `config/hub.yaml`. A looser value is ignored with a warning, and lint reports it. `max_error_rate` and `min_reviewed_cases` are not per skill.
 - Repeats: each case runs `repeats` times (default 3).
@@ -231,4 +231,4 @@ MLflow is the source of truth. Delta is synced from it.
 - **Compliance Security Profile.** Workspaces with this profile block skill writes, so skill publishing is not supported there.
 - **External skills.** Skills in the `external` department are readable by reviewers only, and nothing from that department can be released in this release.
 - **Reviewed cases.** Generated cases are advisory until a member of the reviewers group marks them reviewed.
-- **Planned for later releases (not in this release):** authoring in the Skill Hub through pull requests, security scanning before release, approve-and-publish in the app, external agent evaluation, GitHub OIDC federation, judge alignment, webhooks, and model routing through the Unity Gateway for Claude.
+- **Planned for later releases (not in this release):** editing skills in the Skill Hub, security scanning before release, approve-and-publish in the app, external agent evaluation, GitHub OIDC federation, judge alignment, webhooks, and model routing through the Unity Gateway for Claude.
