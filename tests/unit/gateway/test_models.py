@@ -330,3 +330,34 @@ def test_a_caller_can_bound_tries_and_timeout():
     with pytest.raises(openai.APIStatusError):
         client.chat(MSGS, [])
     assert len(wire.requests) == 1 and client._client.timeout == 12
+
+
+def test_usage_context_is_sent_as_a_top_level_body_key_on_every_request():
+    context = {"skillhub_source": "try", "skillhub_skill": "dept_x/earnings-preview"}
+    wire = Wire(httpx2.Response(200, json=load("claude_text.json")))
+    make_client(wire, usage_context=context).chat(MSGS, [TOOL], trigger=True)
+    assert wire.bodies[0]["usage_context"] == context
+    assert wire.bodies[0]["messages"] == MSGS
+
+
+def test_unset_usage_context_sends_no_key():
+    wire = Wire(httpx2.Response(200, json=load("claude_text.json")))
+    make_client(wire).chat(MSGS, [])
+    assert "usage_context" not in wire.bodies[0]
+    assert "usage_context" not in adapt(CLAUDE, usage_context=None)
+    assert "usage_context" not in adapt_request(
+        profile(CLAUDE), MSGS, [], max_tokens=None, trigger=False, usage_context={}
+    )
+
+
+def test_usage_context_survives_the_gpt_max_completion_tokens_retry():
+    wire = Wire(
+        httpx2.Response(
+            400, json={"error": "Unsupported parameter: 'max_tokens'; use 'max_completion_tokens'"}
+        ),
+        httpx2.Response(200, json=load("gpt_tool_call.json")),
+    )
+    make_client(wire, GPT, usage_context={"skillhub_source": "eval", "skillhub_skill": "d/s"}).chat(
+        MSGS, [], max_tokens=64
+    )
+    assert wire.bodies[1]["usage_context"] == {"skillhub_source": "eval", "skillhub_skill": "d/s"}

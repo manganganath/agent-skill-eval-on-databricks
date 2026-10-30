@@ -140,7 +140,15 @@ def common_data():
 
 
 def tokens_rows():
-    return [{"endpoint_name": "ep-claude", "day": "2026-10-01", "input_tokens": 120, "output_tokens": 30}]
+    return [
+        {
+            "endpoint_name": "ep-claude",
+            "day": "2026-10-01",
+            "source": "eval",
+            "input_tokens": 120,
+            "output_tokens": 30,
+        }
+    ]
 
 
 def test_dashboard_returns_every_section_tagged_with_its_department(make_client):
@@ -184,6 +192,7 @@ def test_dashboard_returns_every_section_tagged_with_its_department(make_client)
             "model_profile": "claude-sonnet",
             "endpoint_name": "ep-claude",
             "day": "2026-10-01",
+            "source": "eval",
             "input_tokens": 120,
             "output_tokens": 30,
         }
@@ -301,10 +310,82 @@ def test_tokens_are_empty_without_serving_models_and_never_queried(make_client):
 
 
 def test_tokens_statement_binds_endpoints_and_the_window():
-    stmt, params = queries.tokens_sql(["ep-claude", "ep-gemini"])
-    assert params == {"e0": "ep-claude", "e1": "ep-gemini"}
+    stmt, params = queries.tokens_sql(["ep-claude", "ep-gemini"], "ci-eval-app-id")
+    assert params == {"e0": "ep-claude", "e1": "ep-gemini", "ci_eval_principal": "ci-eval-app-id"}
     assert "IN (:e0, :e1)" in stmt and "ep-claude" not in stmt
     assert "INTERVAL 30 DAYS" in stmt and "system.serving.endpoint_usage" in stmt
+
+
+def test_tokens_statement_splits_try_from_eval_by_usage_context_and_requester():
+    stmt, _ = queries.tokens_sql(["ep-claude"], "ci-eval-app-id")
+    assert "usage_context['skillhub_source'] = 'try' THEN 'try'" in stmt
+    assert "usage_context['skillhub_source'] = 'eval' OR u.requester = :ci_eval_principal THEN 'eval'" in stmt
+    assert "WHERE s.source IS NOT NULL" in stmt  # other rows are left out
+    assert "GROUP BY l.endpoint_name, CAST(s.request_time AS DATE), s.source" in stmt
+
+
+def test_tokens_statement_never_interpolates_the_principal():
+    stmt, params = queries.tokens_sql(["ep-claude"], "ci'-eval; DROP")
+    assert "ci'-eval" not in stmt and "DROP" not in stmt
+    assert params["ci_eval_principal"] == "ci'-eval; DROP"
+
+
+def test_tokens_statement_without_a_principal_counts_only_tagged_rows():
+    stmt, params = queries.tokens_sql(["ep-claude"], None)
+    assert "ci_eval_principal" not in stmt and "requester" not in stmt
+    assert set(params) == {"e0"}
+    assert "usage_context['skillhub_source'] = 'eval' THEN 'eval'" in stmt
+
+
+def test_tokens_read_binds_the_configured_principal_from_the_app_env(make_client, monkeypatch):
+    monkeypatch.setenv("SKILLHUB_CI_EVAL_PRINCIPAL", "  ci-eval-app-id  ")
+    sql = DashSql({COMMON: common_data(), SERVING: {"tokens": tokens_rows()}})
+    c = make_client(user_w=FakeWorkspace(), cfg=make_cfg(), sql=sql)
+    assert c.get("/api/results/dashboard").status_code == 200
+    stmt, params = next((s, p) for s, p in sql.calls if "endpoint_usage" in s)
+    assert params["ci_eval_principal"] == "ci-eval-app-id"
+    assert "ci-eval-app-id" not in stmt
+
+
+def test_tokens_read_without_the_principal_env_leaves_it_out(make_client, monkeypatch):
+    monkeypatch.delenv("SKILLHUB_CI_EVAL_PRINCIPAL", raising=False)
+    sql = DashSql({COMMON: common_data(), SERVING: {"tokens": tokens_rows()}})
+    c = make_client(user_w=FakeWorkspace(), cfg=make_cfg(), sql=sql)
+    assert c.get("/api/results/dashboard").json()["tokens"][0]["source"] == "eval"
+    stmt, params = next((s, p) for s, p in sql.calls if "endpoint_usage" in s)
+    assert "ci_eval_principal" not in params and "requester" not in stmt
+
+
+def test_tokens_rows_keep_their_source_for_both_sources(make_client, monkeypatch):
+    monkeypatch.setenv("SKILLHUB_CI_EVAL_PRINCIPAL", "ci-eval-app-id")
+    rows = [
+        {
+            "endpoint_name": "ep-claude",
+            "day": "2026-10-01",
+            "source": "eval",
+            "input_tokens": 120,
+            "output_tokens": 30,
+        },
+        {
+            "endpoint_name": "ep-claude",
+            "day": "2026-10-01",
+            "source": "try",
+            "input_tokens": 40,
+            "output_tokens": 9,
+        },
+    ]
+    sql = DashSql({COMMON: common_data(), SERVING: {"tokens": rows}})
+    c = make_client(user_w=FakeWorkspace(), cfg=make_cfg(), sql=sql)
+    tokens = c.get("/api/results/dashboard").json()["tokens"]
+    assert [(t["source"], t["input_tokens"]) for t in tokens] == [("eval", 120), ("try", 40)]
+
+
+def test_tokens_statement_for_a_refused_read_is_still_null_with_a_principal(make_client, monkeypatch):
+    monkeypatch.setenv("SKILLHUB_CI_EVAL_PRINCIPAL", "ci-eval-app-id")
+    sql = DashSql({COMMON: common_data()}, denied={SERVING})
+    c = make_client(user_w=FakeWorkspace(), cfg=make_cfg(), sql=sql)
+    r = c.get("/api/results/dashboard")
+    assert r.status_code == 200 and r.json()["tokens"] is None and r.json()["verdicts"]
 
 
 def test_dashboard_statements_bind_values_and_name_only_the_department_schema():
