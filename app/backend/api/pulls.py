@@ -24,6 +24,7 @@ from backend.schemas import (
     ReleaseStatusOut,
 )
 from skillhub.config import HubConfig
+from skillhub.naming import live_schema
 
 router = APIRouter(tags=["pulls"])
 
@@ -89,6 +90,7 @@ def release_status(
         merged=ReleaseMerged(merged=pull.merged, sha=merged_sha, at=merged_at),
         release=ReleaseRelease(state=release.release_state(run), url=run.url if run else None),
         live=ReleaseLive(
+            fqn=f"{live_schema(cfg, dept)}.{skill}",
             version=skill_ref.live_version(rows) if access == "ok" else None,
             switched_after_merge=access == "ok" and _switched_after(rows, merged_at),
             eval_access=access,

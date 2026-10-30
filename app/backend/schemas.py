@@ -265,8 +265,10 @@ class ReleaseRelease(BaseModel):
 
 
 class ReleaseLive(BaseModel):
-    """The skill's live version from the journal, and whether a switch to it came after the merge."""
+    """The skill's live version from the journal, and whether a switch to it came after the merge. `fqn` is the skill's
+    name in Unity Catalog, for its page."""
 
+    fqn: str
     version: int | None
     switched_after_merge: bool
     eval_access: EvalAccess

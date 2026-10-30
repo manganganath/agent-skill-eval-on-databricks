@@ -14,6 +14,7 @@ from test_app_drafts import ME, app, author, reviewer, skill_files, stored_draft
 from test_app_github import TOKEN, app_with_secret, http_error, recording_opener
 
 HUB = release.HUB_MARKER
+FQN = "skill_hub.common.new-skill"  # the skill's name in Unity Catalog, as its live page is named
 HEAD = "H5"
 MAIN = {}  # a new skill: the repository has no folder for it
 
@@ -254,7 +255,7 @@ def test_release_status_before_the_gate_has_run(make_client, gh):
     assert body["gate"]["state"] == "none"
     assert body["merged"] == {"merged": False, "sha": None, "at": None}
     assert body["release"] == {"state": "not_started", "url": None}
-    assert body["live"] == {"version": None, "switched_after_merge": False, "eval_access": "ok"}
+    assert body["live"] == {"fqn": FQN, "version": None, "switched_after_merge": False, "eval_access": "ok"}
 
 
 @pytest.mark.parametrize(
@@ -308,7 +309,7 @@ def test_release_status_shows_the_live_version_and_a_switch_after_the_merge(make
         },
     ]
     body = status(make_client, gh, sql=RowsSql(journal={"common": journal})).json()
-    assert body["live"] == {"version": 2, "switched_after_merge": True, "eval_access": "ok"}
+    assert body["live"] == {"fqn": FQN, "version": 2, "switched_after_merge": True, "eval_access": "ok"}
 
 
 def test_a_switch_before_the_merge_is_not_a_switch_after_it(make_client, gh):
@@ -323,13 +324,18 @@ def test_a_switch_before_the_merge_is_not_a_switch_after_it(make_client, gh):
         }
     ]
     body = status(make_client, gh, sql=RowsSql(journal={"common": journal})).json()
-    assert body["live"] == {"version": 1, "switched_after_merge": False, "eval_access": "ok"}
+    assert body["live"] == {"fqn": FQN, "version": 1, "switched_after_merge": False, "eval_access": "ok"}
 
 
 def test_the_journal_denied_hides_the_live_version_only(make_client, gh):
     put_pull(gh)
     body = status(make_client, gh, sql=RowsSql(denied=("common",))).json()
-    assert body["live"] == {"version": None, "switched_after_merge": False, "eval_access": "denied"}
+    assert body["live"] == {
+        "fqn": FQN,
+        "version": None,
+        "switched_after_merge": False,
+        "eval_access": "denied",
+    }
     assert body["gate"]["state"] == "none"
 
 
