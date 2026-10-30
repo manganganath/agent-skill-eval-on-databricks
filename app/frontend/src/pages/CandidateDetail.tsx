@@ -1,12 +1,13 @@
 import { useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { api, ApiError } from "../api/client";
-import type { CandidateDetail as CandidateDetailT, CandidateResult, Me } from "../api/types";
+import type { CandidateDetail as CandidateDetailT, CandidateResult, Me, SubmitOut } from "../api/types";
 import { runCandidatePath } from "../candidates";
 import { CandidateBadge } from "../components/CandidateBadge";
 import { EmptyState } from "../components/EmptyState";
 import { ErrorState } from "../components/ErrorState";
 import { Loading } from "../components/Loading";
+import { ReleasePath } from "../components/ReleasePath";
 import { EvalEmpty, FilesSection, RubricSection, SkillMdSection, TestCasesSection } from "../components/SkillParts";
 import { TryPanel } from "../components/TryPanel";
 import { VerdictChip } from "../components/VerdictChip";
@@ -67,6 +68,49 @@ function Results({ s }: { s: CandidateDetailT }) {
   );
 }
 
+// The uploader, or a reviewer, opens a pull request with the draft. Two steps, as for discard: a click never opens one.
+function SubmitDraftButton({ runKey, onSubmitted, onAlreadySubmitted }: {
+  runKey: string; onSubmitted: (out: SubmitOut) => void; onAlreadySubmitted: () => void;
+}) {
+  const [asking, setAsking] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<unknown>(null);
+
+  async function submit() {
+    setBusy(true);
+    setError(null);
+    try {
+      onSubmitted(await api.submitDraft(runKey));
+    } catch (err) {
+      setError(err);
+      setBusy(false);
+      if (err instanceof ApiError && err.reason === "already_submitted") onAlreadySubmitted();
+    }
+  }
+
+  return (
+    <div className="submit-draft">
+      {asking ? (
+        <div role="group" aria-label="Submit this draft for review" className="discard-confirm">
+          <p>
+            Open a pull request with this draft? Its eval gate runs automatically, a reviewer merges it, and the
+            release is approved in GitHub.
+          </p>
+          <div className="discard-buttons">
+            <button type="button" className="btn btn-primary" disabled={busy} onClick={submit}>
+              {busy ? "Opening" : "Open pull request"}
+            </button>
+            <button type="button" disabled={busy} onClick={() => setAsking(false)}>Cancel</button>
+          </div>
+        </div>
+      ) : (
+        <button type="button" className="btn btn-primary" onClick={() => setAsking(true)}>Submit for review</button>
+      )}
+      {error ? <ErrorState error={error} /> : null}
+    </div>
+  );
+}
+
 // A draft's uploader, or a reviewer, can remove it before its 7 days are up. Two steps, so a click never deletes.
 function DiscardDraft({ runKey, name, uploader }: { runKey: string; name: string; uploader: string | null }) {
   const me = useAsync<Me>(() => api.me(), []);
@@ -113,6 +157,8 @@ function DiscardDraft({ runKey, name, uploader }: { runKey: string; name: string
 export default function CandidateDetail() {
   const { runKey = "", dept = "", skill = "" } = useParams(); // react-router has already decoded the params
   const candidate = useAsync<CandidateDetailT>(() => api.candidate(runKey, dept, skill), [runKey, dept, skill]);
+  const me = useAsync<Me>(() => api.me(), []);
+  const [submitted, setSubmitted] = useState<SubmitOut | null>(null); // this visit's submission, until the page reloads
 
   if (candidate.loading) return <Loading label="Loading candidate" />;
   if (candidate.error) {
@@ -131,6 +177,12 @@ export default function CandidateDetail() {
   const { kind, pr_number: pr, git_sha: sha, run_key: key, uploaded_at: uploaded, uploaded_by: uploader } = s.candidate;
   const verdicts = Object.entries(s.verdicts);
   const draft = kind === "draft";
+  // A draft's pull request: recorded on the draft, or the one this visit has just opened.
+  const submittedPr = draft ? s.candidate.submitted_pr ?? submitted?.pr_number ?? null : null;
+  const submittedUrl = draft ? s.candidate.submitted_url ?? submitted?.url ?? null : null;
+  const canSubmit = me.data !== undefined
+    && (me.data.is_reviewer || (uploader ?? "").toLowerCase() === me.data.user.toLowerCase());
+  const releasePr = draft ? submittedPr : pr;
 
   return (
     <article>
@@ -144,7 +196,9 @@ export default function CandidateDetail() {
             <p className="candidate-banner-title"><strong>Not released.</strong> Draft uploaded by {uploader ?? "unknown"}.</p>
             <p className="candidate-banner-meta">
               Uploaded {utcMinute(uploaded)}. Run key <code>{key}</code>. A draft is never released and is removed 7 days
-              after upload. To release the skill, open a pull request.
+              after upload. {submittedPr !== null
+                ? "It is in a pull request, and it is released only after a reviewer merges that."
+                : "To release the skill, open a pull request."}
             </p>
           </>
         ) : (
@@ -169,6 +223,11 @@ export default function CandidateDetail() {
         </div>
         <div className="summary-actions">
           <Link className="btn btn-primary" to={runCandidatePath(key, s.dept, s.name)}>Run eval</Link>
+          {draft && (submittedPr !== null ? (
+            <a className="submitted-note" href={submittedUrl ?? undefined} target="_blank" rel="noreferrer">
+              Submitted as PR #{submittedPr}
+            </a>
+          ) : canSubmit && <SubmitDraftButton runKey={key} onSubmitted={setSubmitted} onAlreadySubmitted={candidate.reload} />)}
           {draft && <DiscardDraft runKey={key} name={s.name} uploader={uploader} />}
           {!s.rubric && <p className="hint summary-hint">This skill has no rubric, so it can run in trigger mode only.</p>}
         </div>
@@ -190,6 +249,9 @@ export default function CandidateDetail() {
         </section>
       </header>
 
+      {releasePr !== null && (
+        <ReleasePath pr={releasePr} dept={s.dept} skill={s.name} isReviewer={me.data?.is_reviewer === true} />
+      )}
       <SkillMdSection source={s.files["SKILL.md"]} />
       <FilesSection files={s.files} />
       <div className="panel">

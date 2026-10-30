@@ -45,6 +45,16 @@ variables:
       is the ci principal's home folder, which `users` cannot reach; every folder under /Workspace/Shared inherits
       users CAN_MANAGE. CI sets it with BUNDLE_VAR_workspace_root from vars.SKILLHUB_WORKSPACE_ROOT
     default: /Users/${var.ci_principal}/skill-hub
+  github_repo:
+    description: >-
+      owner/name of the repository whose pull requests the Skill Hub opens and reads (SKILLHUB_GITHUB_REPO). CI sets it
+      with BUNDLE_VAR_github_repo from github.repository. Empty: the pull request features answer 503 until it is set
+    default: ""
+  github_token_secret:
+    description: >-
+      Databricks secret, as scope/key, that holds the Skill Hub's GitHub token (SKILLHUB_GITHUB_TOKEN_SECRET). The app
+      principal needs READ on its scope. See the operations guide
+    default: skillhub/github-token
   alert_destination_id:
     description: >-
       Notification destination ID for the SQL alerts (SKILLHUB_ALERT_DESTINATION_ID). CI sets it with
