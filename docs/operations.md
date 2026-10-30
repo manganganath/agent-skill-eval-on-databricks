@@ -106,6 +106,29 @@ The script sets these variables:
 | `SKILL_HUB_URL` | `production`, `ci-eval` | Address of the Skill Hub, used in PR comment links (with `--skill-hub-url`) |
 | `SKILLHUB_PR_LINKS` | Repository | `true` or `false` (with `--pr-links`). See below. |
 
+### GitHub token for the Skill Hub
+
+The Skill Hub opens pull requests from drafts, shows their gate and release, and merges them for reviewers. It calls the GitHub REST API with one token, which the app reads at runtime from a Databricks secret. Create a fine-grained personal access token for this repository only, with these repository permissions:
+
+| Permission | Level | Used for |
+|---|---|---|
+| Contents | Read and write | The branch, commit and tree of a submitted draft |
+| Pull requests | Read and write | Opening, reading and merging the pull request |
+| Actions | Read | The `skills-publish` run that waits for the production approval |
+| Commit statuses | Read | The eval gate (the `skills-pr` check) of a pull request |
+
+Store it as the secret `skillhub/github-token`: the scope `skillhub`, the key `github-token`. The bundle variable `github_token_secret` sets that name, and the platform workflow sets `github_repo` from `github.repository`, so each fork names its own repository. The app principal needs READ on the scope:
+
+```bash
+databricks secrets create-scope skillhub
+read -rs GITHUB_TOKEN && databricks secrets put-secret skillhub github-token --string-value "$GITHUB_TOKEN" && unset GITHUB_TOKEN
+databricks secrets put-acl skillhub <app-service-principal-application-id> READ
+```
+
+Until both the repository and the secret are in place, the pull request features answer 503 `github_not_configured`, and the Skill Hub says so. The token is read at most once a minute, and it is never logged or returned.
+
+A pull request opened from the Skill Hub shows the token's owner as its author. The person who submitted it is named in the commit's `Submitted-by` trailer and in the pull request body. A GitHub App is the production choice: its bot is the author, its permissions are narrower, and no one person's account has to hold the token.
+
 ### Approval gates
 
 The script sets these gates and no others. Read this section before you rely on them.

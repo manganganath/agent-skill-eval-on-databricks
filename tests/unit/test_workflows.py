@@ -934,6 +934,14 @@ def test_every_bundle_step_passes_the_workspace_root_the_workflows_upload_to():
         )
 
 
+def test_every_bundle_step_passes_the_repository_the_app_opens_pull_requests_in():
+    """The app's SKILLHUB_GITHUB_REPO is the repository the workflows run in, so a fork's deploy names its own."""
+    steps = list(bundle_steps())
+    assert len(steps) == 4
+    for name, step in steps:
+        assert step["env"]["BUNDLE_VAR_github_repo"] == "${{ github.repository }}", (name, step["name"])
+
+
 @pytest.mark.parametrize(("root", "ok"), [("", False), ("/Users/ci-app/skill-hub", True)])
 def test_bundle_steps_stop_without_a_workspace_root(root, ok):
     for _, step in bundle_steps():

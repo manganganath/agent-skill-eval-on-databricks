@@ -97,6 +97,7 @@ jobs:
           BUNDLE_VAR_catalog: ${{ vars.SKILLHUB_CATALOG }}
           BUNDLE_VAR_workspace_root: ${{ vars.SKILLHUB_WORKSPACE_ROOT }}
           BUNDLE_VAR_alert_destination_id: ${{ vars.SKILLHUB_ALERT_DESTINATION_ID }}
+          BUNDLE_VAR_github_repo: ${{ github.repository }}
         run: |
           # The Jobs and the app use the catalog CI reads; never the bundle default.
           [ -n "$BUNDLE_VAR_catalog" ] || { echo "::error::Set the SKILLHUB_CATALOG variable in the production environment."; exit 1; }
@@ -116,6 +117,7 @@ jobs:
           BUNDLE_VAR_catalog: ${{ vars.SKILLHUB_CATALOG }}
           BUNDLE_VAR_workspace_root: ${{ vars.SKILLHUB_WORKSPACE_ROOT }}
           BUNDLE_VAR_alert_destination_id: ${{ vars.SKILLHUB_ALERT_DESTINATION_ID }}
+          BUNDLE_VAR_github_repo: ${{ github.repository }}
         run: |
           # The Jobs and the app use the catalog CI reads; never the bundle default.
           [ -n "$BUNDLE_VAR_catalog" ] || { echo "::error::Set the SKILLHUB_CATALOG variable in the production environment."; exit 1; }
@@ -189,6 +191,7 @@ jobs:
           BUNDLE_VAR_catalog: ${{ vars.SKILLHUB_CATALOG }}
           BUNDLE_VAR_workspace_root: ${{ vars.SKILLHUB_WORKSPACE_ROOT }}
           BUNDLE_VAR_alert_destination_id: ${{ vars.SKILLHUB_ALERT_DESTINATION_ID }}
+          BUNDLE_VAR_github_repo: ${{ github.repository }}
         run: |
           # The Jobs and the app use the catalog CI reads; never the bundle default.
           [ -n "$BUNDLE_VAR_catalog" ] || { echo "::error::Set the SKILLHUB_CATALOG variable in the production environment."; exit 1; }
@@ -211,6 +214,7 @@ jobs:
           BUNDLE_VAR_catalog: ${{ vars.SKILLHUB_CATALOG }}
           BUNDLE_VAR_workspace_root: ${{ vars.SKILLHUB_WORKSPACE_ROOT }}
           BUNDLE_VAR_alert_destination_id: ${{ vars.SKILLHUB_ALERT_DESTINATION_ID }}
+          BUNDLE_VAR_github_repo: ${{ github.repository }}
           SWITCH_JOB_ID: ${{ vars.SKILLHUB_JOB_ID_SWITCH }}
         run: |
           # The Jobs and the app use the catalog CI reads; never the bundle default.
