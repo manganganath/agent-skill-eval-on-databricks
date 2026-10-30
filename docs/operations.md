@@ -292,7 +292,9 @@ The normal path goes through review and approval:
 
 ### Move a skill out of a quarantined department
 
-A department with `quarantine: true` in `config/hub.yaml` (for example `external`) is readable by reviewers only. Nothing in it can be released. CI blocks a change that moves a skill out of such a department, for example a rename to another department folder. The `skills-pr` and `skills-publish` checks fail with "moving a skill out of a quarantined department needs an operator". Do not merge such a change.
+A department with `quarantine: true` in `config/hub.yaml` (for example `external`) is readable by reviewers only. Its skills are evaluated in pull requests, because reviewers read those results, but they are never published. The `skills-publish` plan leaves the department out: it re-evaluates, publishes and retires nothing there, and a notice names the skills it skipped. `skillhub publish` and the `skill-switch` Job also refuse to publish a skill in it. Retire stays allowed.
+
+CI blocks a change that moves a skill out of such a department, for example a rename to another department folder. The `skills-pr` and `skills-publish` checks fail with "moving a skill out of a quarantined department needs an operator". Do not merge such a change.
 
 CI never promotes content out of quarantine. An operator does it, outside the pipeline:
 

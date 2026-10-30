@@ -78,10 +78,16 @@ jobs:
             echo "::error::Moving a skill out of a quarantined department needs an operator: see docs. The rows with moved_from_quarantine true are listed above."
             exit 1
           fi
+          # A quarantined department is evaluated in pull requests but never released: its skills are not
+          # re-evaluated, published or retired. Escaped as workflow command data, so the names stay one notice.
+          skipped=$(jq -r '[.[] | select(.quarantined == true) | "\(.dept)/\(.skill)"] | join(", ") | gsub("%"; "%25") | gsub("\r"; "%0D") | gsub("\n"; "%0A")' "$RUNNER_TEMP/changed.json")
+          if [ -n "$skipped" ]; then
+            echo "::notice::Not releasing skills in a quarantined department: $skipped"
+          fi
           label="merge-${HEAD_SHA:0:7}-${RUN_TAG}a${RUN_ATTEMPT}"
           key=$(RUN_LABEL="$label" uv run python -c 'import os; from skillhub.naming import make_run_key; print(make_run_key(os.environ["RUN_LABEL"]))')
-          reeval=$(jq -r '[.[] | select(.status != "deleted") | "\(.dept)/\(.skill)"] | join(",")' "$RUNNER_TEMP/changed.json")
-          retire=$(jq -c '[.[] | select(.status == "deleted") | {dept, skill}]' "$RUNNER_TEMP/changed.json")
+          reeval=$(jq -r '[.[] | select(.status != "deleted" and .quarantined != true) | "\(.dept)/\(.skill)"] | join(",")' "$RUNNER_TEMP/changed.json")
+          retire=$(jq -c '[.[] | select(.status == "deleted" and .quarantined != true) | {dept, skill}]' "$RUNNER_TEMP/changed.json")
           # What each skill's eval must have read, from the merge commit: its content hash, which
           # publish must produce exactly, its rubric_hash, and the dataset_digest of evals.json and the fixtures
           # its cases use. The gates compare every eval row with these, and need a row for each planned

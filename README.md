@@ -194,7 +194,7 @@ Everything customer-specific is in `config/hub.yaml`. `${VAR}` values come from 
 | Key | What it sets |
 |---|---|
 | `catalog`, `workspace_root` | The catalog for every schema, and the workspace folder for experiments, CI candidates and drafts. Never use `/Shared`: every user can edit it. |
-| `departments` | One key per folder under `skills/`, with its reader groups. `common` is read by everyone. `quarantine: true` makes a department reviewer-only and never releasable, as `external` is for partner-built skills. |
+| `departments` | One key per folder under `skills/`, with its reader groups. `common` is read by everyone. `quarantine: true` makes a department reviewer-only. Its skills are evaluated in pull requests but never published. `external` is quarantined, for partner-built skills. |
 | `roles` | The author, reviewer and CI group or principal names |
 | `models` | Model profiles: a name, a serving endpoint and a class. Add your own endpoints here. |
 | `judges`, `judges_pr`, `generator` | The judge panel for full runs, the single judge for pull request runs, and the model that drafts test cases and rubrics. |

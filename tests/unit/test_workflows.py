@@ -524,15 +524,22 @@ def _uv_running_the_cli(tmp_path: Path) -> str:
     return str(bin_dir)
 
 
-def _plan(repo: Path, tmp_path: Path) -> dict[str, str]:
-    """Run the plan step on `repo` at HEAD and return its outputs."""
+def _plan_and_log(repo: Path, tmp_path: Path) -> tuple[dict[str, str], list[str]]:
+    """Run the plan step on `repo` at HEAD and return its outputs and its stdout lines."""
+    (tmp_path / "out").unlink(missing_ok=True)
     env = {"PATH": f"{_uv_running_the_cli(tmp_path)}:/usr/bin:/bin:/usr/local/bin:/opt/homebrew/bin"}
     env |= {"RUNNER_TEMP": str(tmp_path), "GITHUB_OUTPUT": str(tmp_path / "out"), "RUN_ATTEMPT": "1"}
     env |= {"HEAD_SHA": _git(repo, "rev-parse", "HEAD"), "HOME": str(tmp_path)}
     run = step_named(load_workflow("skills-publish.yml"), "Plan re-evaluation")["run"]
     proc = subprocess.run(["bash", "-e", "-c", run], cwd=repo, env=env, capture_output=True, text=True)
     assert proc.returncode == 0, proc.stdout + proc.stderr
-    return dict(ln.split("=", 1) for ln in (tmp_path / "out").read_text().splitlines())
+    outputs = dict(ln.split("=", 1) for ln in (tmp_path / "out").read_text().splitlines())
+    return outputs, proc.stdout.splitlines()
+
+
+def _plan(repo: Path, tmp_path: Path) -> dict[str, str]:
+    """Run the plan step on `repo` at HEAD and return its outputs."""
+    return _plan_and_log(repo, tmp_path)[0]
 
 
 def _git(repo: Path, *args: str) -> str:
@@ -541,9 +548,9 @@ def _git(repo: Path, *args: str) -> str:
     return proc.stdout.strip()
 
 
-def _add_skill(repo: Path, name: str) -> str:
-    """Commit skills/common/<name> with one trigger case. Returns the commit."""
-    root = repo / "skills" / "common" / name
+def _add_skill(repo: Path, name: str, dept: str = "common") -> str:
+    """Commit skills/<dept>/<name> with one trigger case. Returns the commit."""
+    root = repo / "skills" / dept / name
     (root / "evals").mkdir(parents=True)
     (root / "SKILL.md").write_text(f"---\nname: {name}\ndescription: Does {name}.\n---\nUse it.\n")
     evals = {"skill_name": name, "evals": [{"id": 1, "prompt": "do it", "should_trigger": True}]}
@@ -571,6 +578,70 @@ def test_plan_publishes_every_unreleased_skill_even_before_the_first_release(tmp
     (tmp_path / "out").unlink()
     out = _plan(repo, tmp_path)
     assert out["reeval"] == "common/beta" and out["has_changes"] == "true"
+
+
+QUARANTINE_NOTICE = "::notice::Not releasing skills in a quarantined department: "
+
+
+def test_plan_never_releases_a_quarantined_department(tmp_path):
+    """`external` is quarantined in the shipped config. Its added, changed and deleted skills are left out of the
+    re-evaluation, publish and retire, and a notice names them. The rest of the change is released as usual."""
+    repo = tmp_path / "repo"
+    (repo / "config").mkdir(parents=True)
+    (repo / "config" / "hub.yaml").write_text((ROOT / "config" / "hub.yaml").read_text())
+    _git(repo, "init", "-q", "-b", "main")
+    _add_skill(repo, "vendor", dept="external")
+    first = _add_skill(repo, "alpha")
+    out, log = _plan_and_log(repo, tmp_path)  # no release yet: every skill counts as added
+    assert f"{QUARANTINE_NOTICE}external/vendor" in log
+    assert out["reeval"] == "common/alpha" and out["retire"] == "[]"
+    assert [(r["dept"], r["skill"]) for r in json.loads(out["publish"])] == [("common", "alpha")]
+
+    _git(repo, "tag", "skillhub/released", first)
+    (repo / "skills" / "external" / "vendor" / "SKILL.md").write_text(
+        "---\nname: vendor\ndescription: Does more.\n---\nChanged.\n"
+    )
+    _add_skill(repo, "newcomer", dept="external")
+    out, log = _plan_and_log(repo, tmp_path)
+    assert f"{QUARANTINE_NOTICE}external/newcomer, external/vendor" in log
+    assert (out["reeval"], out["publish"], out["retire"], out["has_changes"]) == ("", "[]", "[]", "false")
+
+    _git(repo, "rm", "-r", "-q", "skills/external/vendor", "skills/common/alpha")
+    _git(repo, "commit", "-q", "-m", "delete vendor and alpha")
+    out, log = _plan_and_log(repo, tmp_path)
+    assert f"{QUARANTINE_NOTICE}external/newcomer, external/vendor" in log
+    assert json.loads(out["retire"]) == [{"dept": "common", "skill": "alpha"}]
+    assert out["reeval"] == "" and out["publish"] == "[]" and out["has_changes"] == "true"
+
+
+def test_the_quarantine_notice_is_one_workflow_command(tmp_path):
+    """Skill names come from folder names. They are escaped as command data, so a name can't start a command."""
+    script = step_named(load_workflow("skills-publish.yml"), "Plan re-evaluation")["run"]
+    start = script.index("skipped=")
+    block = script[start : script.index("fi\n", start) + 3]
+    rows = [
+        {"dept": "external", "skill": "a\n::error::b%", "status": "added", "quarantined": True},
+        {"dept": "common", "skill": "c", "status": "added", "quarantined": False},
+    ]
+    (tmp_path / "changed.json").write_text(json.dumps(rows))
+    env = {"PATH": "/usr/bin:/bin:/opt/homebrew/bin:/usr/local/bin", "RUNNER_TEMP": str(tmp_path)}
+    proc = subprocess.run(["bash", "-e", "-c", block], env=env, capture_output=True, text=True)
+    assert proc.returncode == 0, proc.stderr
+    assert proc.stdout.splitlines() == [f"{QUARANTINE_NOTICE}external/a%0A::error::b%25"]
+    (tmp_path / "changed.json").write_text(json.dumps(rows[1:]))
+    proc = subprocess.run(["bash", "-e", "-c", block], env=env, capture_output=True, text=True)
+    assert proc.returncode == 0 and proc.stdout == ""
+
+
+def test_the_quarantine_filter_comes_after_the_move_check_and_only_in_the_release():
+    """A move out of quarantine still fails the plan. Pull request gates still evaluate quarantined skills,
+    because reviewers read those results."""
+    plan = step_named(load_workflow("skills-publish.yml"), "Plan re-evaluation")["run"]
+    assert plan.index("moved_from_quarantine") < plan.index("skipped=") < plan.index("reeval=")
+    for name in ("reeval=", "retire="):
+        line = next(ln for ln in plan.splitlines() if ln.strip().startswith(name))
+        assert ".quarantined != true" in line, line
+    assert ".quarantined" not in step_named(load_workflow("skills-pr.yml"), "Find changed")["run"]
 
 
 def test_release_guard_is_first_and_tag_move_is_last_with_lease():
