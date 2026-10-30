@@ -45,7 +45,8 @@ function data(over: Partial<DashboardData> = {}): DashboardData {
       { dept: "common", model_profile: "claude-sonnet", cells: 4, error_rate: 0.05, inconclusive_rate: 0.25 },
     ],
     tokens: [
-      { model_profile: "claude-sonnet", endpoint_name: "ep-claude", day: "2026-10-01", input_tokens: 1200, output_tokens: 300 },
+      { model_profile: "claude-sonnet", endpoint_name: "ep-claude", day: "2026-10-01", source: "eval", input_tokens: 1200, output_tokens: 300 },
+      { model_profile: "claude-sonnet", endpoint_name: "ep-claude", day: "2026-10-01", source: "try", input_tokens: 400, output_tokens: 100 },
     ],
     deniedDepartments: [],
     ...over,
@@ -104,7 +105,37 @@ describe("Dashboard", () => {
     renderPage();
     await screen.findByRole("heading", { name: "Token usage" });
     fireEvent.change(screen.getByLabelText("Model"), { target: { value: "gemini-flash" } });
-    expect(screen.getByText("No token usage in the last 30 days for this selection.")).toBeTruthy();
+    expect(screen.getByText("No evaluation or Try token usage in the last 30 days for this selection.")).toBeTruthy();
+  });
+
+  it("totals the tokens of each source, and the source filter narrows the chart and table only", async () => {
+    renderPage();
+    await screen.findByRole("heading", { name: "Token usage" });
+    const totals = screen.getByRole("region", { name: "Token totals by source" });
+    expect(within(totals).getByText("Evaluation tokens")).toBeTruthy();
+    expect(within(totals).getByText("1,500")).toBeTruthy();
+    expect(within(totals).getByText("Try tokens")).toBeTruthy();
+    expect(within(totals).getByText("500")).toBeTruthy();
+
+    const rows = screen.getByRole("region", { name: "Token usage rows" });
+    expect(within(rows).getAllByRole("row")).toHaveLength(3); // header and two rows
+    fireEvent.change(screen.getByLabelText("Source"), { target: { value: "try" } });
+    expect(within(rows).getAllByRole("row")).toHaveLength(2);
+    expect(within(rows).getByText("Try")).toBeTruthy();
+    expect(within(rows).getByText("400")).toBeTruthy();
+    expect(within(totals).getByText("1,500")).toBeTruthy(); // the totals keep both sources
+    expect(screen.getByRole("img", { name: "Input tokens per day, by model" })).toBeTruthy();
+  });
+
+  it("says so when the chosen source has no tokens in the period", async () => {
+    vi.mocked(api.dashboard).mockResolvedValue(data({
+      tokens: [{ model_profile: "claude-sonnet", endpoint_name: "ep-claude", day: "2026-10-01", source: "eval", input_tokens: 5, output_tokens: 1 }],
+    }));
+    renderPage();
+    await screen.findByRole("heading", { name: "Token usage" });
+    fireEvent.change(screen.getByLabelText("Source"), { target: { value: "try" } });
+    expect(screen.getByText("No Try token usage in the last 30 days for this selection.")).toBeTruthy();
+    expect(screen.queryByRole("img", { name: "Input tokens per day, by model" })).toBeNull();
   });
 
   it("links a skill to its matrix rows for its department", async () => {
@@ -143,6 +174,7 @@ describe("Dashboard", () => {
     const note = await screen.findByText(/needs access to the system\.serving tables/i);
     expect(note.closest("p")?.getAttribute("role")).toBe("note");
     expect(screen.queryByRole("img", { name: "Input tokens per day, by model" })).toBeNull();
+    expect(screen.queryByLabelText("Source")).toBeNull();
   });
 
   it("shows an error with a retry when the dashboard fails", async () => {
