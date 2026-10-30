@@ -431,7 +431,7 @@ def test_cli_check_permissions_exit_codes(monkeypatch):
 
 
 def test_cli_check_permissions_reports_inherited_users_access_without_failing(monkeypatch):
-    """N5: with workspace_root under /Workspace/Shared, `users` inherits access. It is reported every night, but
+    """With workspace_root under /Workspace/Shared, `users` inherits access. It is reported every night, but
     the nightly Job does not fail on it, so a real eval or reconcile failure is not hidden."""
     from skillhub.results import experiments
 

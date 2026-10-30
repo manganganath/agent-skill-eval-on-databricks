@@ -17,7 +17,7 @@ from skillhub.config import HubConfig, load_config
 app = typer.Typer(
     no_args_is_help=True,
     add_completion=False,
-    pretty_exceptions_show_locals=False,  # a traceback must never print locals such as tokens (M8)
+    pretty_exceptions_show_locals=False,  # a traceback must never print locals such as tokens
     help="Skill Hub: registry, versions, switch, reconcile, eval and bootstrap.",
 )
 
@@ -60,7 +60,7 @@ def config_show(ctx: typer.Context) -> None:
 @app.command("check-permissions")
 def check_permissions_cmd(ctx: typer.Context) -> None:
     """Report experiment ACL drift against UC grants. Exit 1 on drift, except `users` inheriting
-    access from above the workspace root, which is reported only (re-review N5)."""
+    access from above the workspace root, which is reported only."""
     from skillhub.auth import workspace_client
     from skillhub.results.experiments import check_permissions, fails_check
 

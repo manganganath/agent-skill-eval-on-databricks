@@ -174,9 +174,7 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add -- skills
-          git commit -m "chore(evals): generate missing evals and rubrics for PR #${PR_NUMBER}
-
-          Co-authored-by: Isaac <no-reply@databricks.com>"
+          git commit -m "chore(evals): generate missing evals and rubrics for PR #${PR_NUMBER}"
           # The credential helper is scoped to this push; checkout kept no credentials.
           git -c credential.helper= -c 'credential.helper=!gh auth git-credential' push origin "HEAD:refs/heads/${HEAD_REF}"
           # The push starts no pull_request run, so both required checks are started here. deploy=none: platform

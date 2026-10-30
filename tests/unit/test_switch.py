@@ -871,7 +871,7 @@ def test_job_run_creator_reads_creator_user_name():
 def test_job_switch_publish_refuses_eval_inputs_swapped_during_the_eval(
     reg, make_bundle, monkeypatch, tmp_path, rubric, dataset, message
 ):
-    """N2: an evals.json, rubric or fixture replaced in the candidate folder during the eval gives rows with
+    """An evals.json, rubric or fixture replaced in the candidate folder during the eval gives rows with
     other digests than the merge plan's, so publish refuses although the content hash matches."""
     monkeypatch.setenv("SKILLHUB_SKILLS", str(tmp_path / "skills"))
     evaluated(reg, make_bundle(DEPT, SKILL))

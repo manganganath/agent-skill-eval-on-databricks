@@ -90,7 +90,7 @@ def test_skills_pr_generate_commit_and_redispatch():
     assert "gh auth setup-git" not in run
     assert "credential.helper=!gh auth git-credential' push" in run  # scoped to the push
     assert "gh workflow run skills-pr.yml" in run and "pr_number" in run
-    assert "Co-authored-by: Isaac" in run
+    assert "Co-authored-by" not in run  # the bot's commit in the customer's repository carries no trailer
     for name in ("Install Databricks CLI", "Start skill-eval Job and wait"):
         assert "generated != 'true'" in step_named(wf, name)["if"]
     assert "non_deleted != ''" in step_named(wf, "Start skill-eval Job and wait")["if"]
@@ -291,7 +291,7 @@ def test_skill_lists_use_dept_slash_name():
         assert "| .skill]" not in ln
 
 
-# --- skills-publish.yml and skills-switch.yml (Task 7) ---
+# --- skills-publish.yml and skills-switch.yml ---
 
 RELEASE_WORKFLOWS = ("skills-publish.yml", "skills-switch.yml")
 GATE_IF = (
@@ -895,7 +895,7 @@ def test_the_deploy_prod_comment_says_how_to_redo_a_replaced_deploy():
     assert "`gh workflow run platform.yml --ref main -f deploy=prod`" in comment
 
 
-# --- platform.yml (Task 8) and the ci-eval environment ---
+# --- platform.yml and the ci-eval environment ---
 
 PLATFORM = "platform.yml"
 ENVIRONMENTS = {"skills-pr.yml": {"skills-pr": "ci-eval"}, "skills-publish.yml": {"eval-merge": "ci-eval"}}
@@ -1121,7 +1121,7 @@ def test_no_workflow_uses_always():
 
 # ---- Cross-workflow invariants ----------------------------------------------------------
 # Already covered above, so not repeated here: no pull_request_target (skills-pr, platform and release
-# triggers), skills-pr concurrency and the required check names, the Isaac trailer, SHA pins, no `${{ }}`
+# triggers), skills-pr concurrency and the required check names, the bot commit's message, SHA pins, no `${{ }}`
 # or `always()` in run blocks, `bash -n` on run blocks, no bundle in ci-eval jobs, bundle deploy only in the
 # platform deploy jobs, and validated Job ID variables per job.
 

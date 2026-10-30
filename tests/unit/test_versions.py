@@ -495,7 +495,7 @@ def test_cli_publish_reads_the_eval_inputs_of_the_local_checkout(cli_reg, tmp_pa
 
 
 def test_gate_refuses_when_a_failing_child_run_was_deleted_before_sync(reg, make_bundle):
-    """N4: the failing with_skill row is gone, the passing trigger row stays: the gate still refuses."""
+    """The failing with_skill row is gone, the passing trigger row stays: the gate still refuses."""
     b = evaluated(reg, make_bundle("common", "audit-xls"), cells=(("trigger", "pass"),))
     with pytest.raises(PublishRefused, match="no trusted result for planned cell.*gpt/with_skill"):
         _gate(reg, b)

@@ -191,7 +191,8 @@ resources:
       max_concurrent_runs: 1
       # A failed eval, reconcile or permission check notifies the alert destination when one is set.
       webhook_notifications: ${var.job_failure_notifications}
-      # pause_status is left unset: prod runs the schedule, and development mode pauses it (D1).
+      # pause_status is left unset, so prod runs the schedule. The dev target is in development mode, which
+      # pauses every schedule that does not set UNPAUSED itself: setting it here would run the nightly in dev.
       schedule:
         quartz_cron_expression: "0 0 2 * * ?"
         timezone_id: UTC

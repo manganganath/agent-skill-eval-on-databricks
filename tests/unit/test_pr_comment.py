@@ -436,7 +436,7 @@ def test_parse_expectations_reads_eval_digests_output_and_refuses_bad_entries():
 
 
 def test_check_verdict_binds_the_eval_inputs_from_the_expect_file(cli_env, tmp_path):
-    """N2: rows that evaluated a swapped evals.json, rubric or fixture fail the gate."""
+    """Rows that evaluated a swapped evals.json, rubric or fixture fail the gate."""
     import json
 
     cfg_path, state = cli_env
@@ -479,7 +479,7 @@ def test_missing_cells_name_every_planned_gating_cell_without_a_row():
 
 
 def test_check_verdict_fails_when_a_planned_cell_has_no_row(cli_env, tmp_path):
-    """N4: a failing child run deleted before sync leaves its cell empty; a passing row elsewhere is not enough."""
+    """A failing child run deleted before sync leaves its cell empty; a passing row elsewhere is not enough."""
     import json
 
     cfg_path, state = cli_env
