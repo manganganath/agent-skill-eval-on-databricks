@@ -293,7 +293,10 @@ def test_a_release_can_be_started_again_by_hand_from_main_only():
     assert wf["jobs"]["plan"]["if"] == "github.ref == 'refs/heads/main'"
     env = step_named(wf, "Plan re-evaluation")["env"]
     # A dispatch on a commit that a push run already evaluated gets its own run keys.
-    assert env["RUN_TAG"] == "${{ github.event_name == 'workflow_dispatch' && format('r{0}-', github.run_number) || '' }}"
+    assert (
+        env["RUN_TAG"]
+        == "${{ github.event_name == 'workflow_dispatch' && format('r{0}-', github.run_number) || '' }}"
+    )
 
 
 def test_release_workflows_share_one_serialised_concurrency_group():
