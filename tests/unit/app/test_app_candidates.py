@@ -467,6 +467,8 @@ def test_candidate_detail_has_the_files_cases_rubric_results_and_candidate_block
         "git_sha": SHA,
         "uploaded_at": body["candidate"]["uploaded_at"],
         "uploaded_by": None,
+        "submitted_pr": None,
+        "submitted_url": None,
     } and body["candidate"]["uploaded_at"].startswith("2026-09-21")
     assert body["verdicts"] == {"claude-sonnet": "pass"}
     assert [(x["skill"], x["run_key"], x["verdict"]) for x in body["results"]] == [("new-skill", KEY, "pass")]

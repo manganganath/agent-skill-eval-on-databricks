@@ -64,7 +64,8 @@ def _stamp(value: object) -> str:
 
 def is_live_row(row: Mapping[str, object], version: int | None, content_hash: str | None) -> bool:
     """Whether a matrix row was run on the live version: its skill_version is the live one, or its content is the live
-    content. A release's merge re-evaluation runs before publishing, so its rows are version 0 with the live hash."""
+    content. A release's eval (the merge re-evaluation, or a reused pull request gate run) runs before publishing,
+    so its rows are version 0 with the live hash."""
     return row.get("skill_version") == version or (
         content_hash is not None and row.get("content_hash") == content_hash
     )

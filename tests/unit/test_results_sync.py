@@ -818,3 +818,58 @@ def test_list_and_dict_assessment_values_are_stored_as_json():
     assert sync_mod._value(a) == '["c1", "c2"]'
     assert sync_mod._value(b) == '{"found": 2}'
     assert sync_mod._value(NS(value=0.5, source=None)) == "0.5"
+
+
+class ConflictingSql(ScriptedSql):
+    """Fails the first `conflicts` INSERTs with `error`, as the warehouse does for a concurrent Delta write."""
+
+    def __init__(
+        self,
+        conflicts,
+        error="statement failed: [DELTA_CONCURRENT_APPEND.WHOLE_TABLE_READ] Transaction conflict detected.",
+    ):
+        super().__init__()
+        self.conflicts = conflicts
+        self.error = error
+
+    def execute(self, statement, params=None):
+        if statement.lstrip().upper().startswith("INSERT") and self.conflicts > 0:
+            from skillhub.sql import SqlError
+
+            self.conflicts -= 1
+            self.calls.append((statement, params))
+            raise SqlError(self.error)
+        return super().execute(statement, params)
+
+
+ROWS = [{"run_id": "r1"}]
+FIELDS = [("run_id", "string")]
+
+
+def test_a_concurrent_write_conflict_is_retried_until_the_insert_succeeds(monkeypatch):
+    pauses = []
+    monkeypatch.setattr(sync_mod.time, "sleep", pauses.append)
+    sql = ConflictingSql(conflicts=2)
+    assert sync_mod.insert_missing(sql, "c.e", "eval_cases", FIELDS, ROWS, ["run_id"]) == 1
+    assert len(sql.inserts("eval_cases")) == 3
+    assert pauses == [sync_mod.CONFLICT_BACKOFF_S, sync_mod.CONFLICT_BACKOFF_S * 2]
+
+
+def test_a_conflict_that_outlasts_the_retries_is_raised(monkeypatch):
+    from skillhub.sql import SqlError
+
+    monkeypatch.setattr(sync_mod.time, "sleep", lambda s: None)
+    sql = ConflictingSql(conflicts=sync_mod.CONFLICT_RETRIES + 1)
+    with pytest.raises(SqlError, match="DELTA_CONCURRENT_APPEND"):
+        sync_mod.insert_missing(sql, "c.e", "eval_cases", FIELDS, ROWS, ["run_id"])
+    assert len(sql.inserts("eval_cases")) == sync_mod.CONFLICT_RETRIES + 1
+
+
+def test_any_other_sql_error_is_raised_at_once(monkeypatch):
+    from skillhub.sql import SqlError
+
+    monkeypatch.setattr(sync_mod.time, "sleep", lambda s: pytest.fail("no retry for other errors"))
+    sql = ConflictingSql(conflicts=1, error="statement failed: [TABLE_OR_VIEW_NOT_FOUND] c.e.eval_cases")
+    with pytest.raises(SqlError, match="TABLE_OR_VIEW_NOT_FOUND"):
+        sync_mod.insert_missing(sql, "c.e", "eval_cases", FIELDS, ROWS, ["run_id"])
+    assert len(sql.inserts("eval_cases")) == 1

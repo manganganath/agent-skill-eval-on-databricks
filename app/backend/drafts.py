@@ -1,5 +1,6 @@
 """Skill Hub drafts: a skill uploaded in the Hub, to evaluate it before any pull request. A draft is never published:
-only the merge eval releases content (skillhub.registry.versions.MERGE_TRIGGER_SOURCE).
+only the merge eval, or a pull request gate run that a release reuses, releases content
+(skillhub.registry.versions.PUBLISH_TRIGGER_SOURCES).
 
 An upload is a zip of the skill folder, or the folder's files. It needs SKILL.md with frontmatter (name, description)
 and evals/evals.json; evals/rubric.json is optional, and without it a draft runs trigger mode only. A top-level

@@ -22,8 +22,10 @@ The Skill Hub shows the same table on its Access page, with your own roles marke
 | See skills under review | No | Own departments | All departments |
 | Upload a draft | No | Yes | Yes |
 | Discard a draft | No | Their own | Any draft |
+| Submit a draft for review | No | Their own | Any draft |
 | Try a skill under review | No | Own departments | All departments |
 | Run an eval on a candidate or draft | No | Yes | Yes |
+| Merge a pull request from the Hub | No | No | Yes, when its gate passed |
 | Switch the live version | No | No | Yes |
 | Add or edit a skill | No | Through a pull request | Through a pull request |
 | Approve a release | In GitHub: the required reviewers of the `production` environment, not a Skill Hub role | | |
@@ -42,7 +44,7 @@ Nobody publishes a version from the app, and skills are not edited in it. To cha
 7. Add a unit test for the skill's files if it needs one. For example, `tests/unit/test_skill_<name>.py` asserts that the skill's cases load and that the rubric has 5 to 10 criteria.
 8. Run `uv run pytest tests/unit -q`.
 9. Open a pull request. Its description must say what the skill is for. The PR pipeline runs lint, the trigger tests, and the effectiveness tests for skills that have them. It then posts a matrix comment. A `fail` blocks merge. An `inconclusive` check needs a re-run. An `advisory` note means the skill lacks enough reviewed cases. While the pull request is open, the skill is also a candidate in the Skill Hub; see [Evaluate a new skill](#evaluate-a-new-skill).
-10. After merge to `main`, the publish workflow re-evaluates every changed skill, and stops on `fail` or `inconclusive`. Otherwise it waits for approval in the `production` environment. After approval it starts the `skill-switch` Job, which registers a new version and switches it live. The Job publishes only content that the merge eval evaluated.
+10. After merge to `main`, the publish workflow re-evaluates every changed skill, and stops on `fail` or `inconclusive`. Otherwise it waits for approval in the `production` environment. After approval it starts the `skill-switch` Job, which registers a new version and switches it live. The Job publishes only content that the cited eval evaluated. When the pull request changed only `skills/`, was up to date with `main`, only trigger verdicts gate (`defaults.gating_modes: [trigger]`), and its gate passed on its last commit, the workflow reuses that gate's results instead of evaluating again, so the approval request comes a few minutes after the merge (see [Architecture](architecture.md#data-flow)).
 
 ## Evaluate a new skill
 
@@ -68,7 +70,17 @@ Who sees a candidate: reviewers see every department. An author sees a candidate
 2. The Skill Hub checks the skill as `uv run skillhub lint` does. If something is wrong, the form lists every problem; fix them and upload again.
 3. The draft's page opens, with a **Draft** badge and the banner **Not released. Draft uploaded by ...**. Select **Run eval** to evaluate it.
 
-A draft is never released. To release the skill, add it to `skills/` in a pull request, as in [Add a skill](#add-a-skill).
+A draft is never released. To release the skill, submit the draft for review from its page, or add it to `skills/` in a pull request, as in [Add a skill](#add-a-skill).
+
+**Submit a draft for review.** On the draft's page, select **Submit for review**, then confirm. The Skill Hub opens a pull request that puts the draft's files under `skills/<department>/<name>/`, replacing what is there. The page then shows **Submitted as PR #N** and the release path, with five steps:
+
+1. **Pull request opened.** The link opens it on GitHub.
+2. **Eval gate.** The `skills-pr` check runs on the pull request by itself. A failed trigger eval blocks the merge.
+3. **Merged.** Once the gate has passed, a reviewer selects **Merge pull request** on the release path and confirms. The merge is a merge commit.
+4. **Release approved in GitHub.** The `production` environment's required reviewers approve the release in GitHub. The step links to the waiting run.
+5. **Live.** When the switch has run, the step shows the live version and links to the skill.
+
+If the draft has no `evals/rubric.json`, CI generates it in the eval gate, and the pull request says so. The release path refreshes by itself while a step is pending. If GitHub is not set up for the Skill Hub yet, the page says so, and an administrator sets it up as described in [GitHub token](operations.md#github-token-for-the-skill-hub).
 
 ## Retire a skill
 

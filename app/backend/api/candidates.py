@@ -134,7 +134,11 @@ def list_candidates(
             if item.content_hash is not None and item.content_hash == live.get(dept, {}).get(name):
                 continue  # released: the live version has this content, and the Catalog lists it
             out.append(item)
+        # A submitted draft is listed as its pull request, so it is left out once that pull request is listed.
+        listed = {item.pr_number for item in out}
         for key, meta in drafts:
+            if meta.submitted_pr in listed:
+                continue
             out.append(
                 summary(
                     key,
@@ -144,6 +148,7 @@ def list_candidates(
                     description=meta.description,
                     uploaded_by=meta.uploaded_by,
                     has_rubric=meta.has_rubric,
+                    submitted_pr=meta.submitted_pr,
                 )
             )
     return sorted(out, key=_order)
@@ -206,5 +211,7 @@ def candidate_detail(
             git_sha=candidates.commit(key, owned),
             uploaded_at=stamp,
             uploaded_by=meta.uploaded_by if meta is not None else None,
+            submitted_pr=meta.submitted_pr if meta is not None else None,
+            submitted_url=meta.submitted_url if meta is not None else None,
         ),
     )

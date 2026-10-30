@@ -231,8 +231,15 @@ jobs:
               modes: "trigger,effectiveness", source: $source, trigger_source: "pr",
               requested_by: $actor, skills_root: $skills_root, fixtures_root: $fixtures_root}}')
           # Skills run in parallel worker processes, but a PR with many skills still takes hours.
-          databricks jobs run-now --timeout 300m --json "$params" -o json > "$RUNNER_TEMP/run.json"
-          echo "Job run: $(jq -r '.run_page_url // "unknown"' "$RUNNER_TEMP/run.json")"
+          if ! databricks jobs run-now --no-wait --json "$params" -o json > "$RUNNER_TEMP/run.json"; then
+            url=$(jq -r '.run_page_url // empty' "$RUNNER_TEMP/run.json" 2>/dev/null || true)
+            echo "::error::run-now failed. ${url:-Job: $DATABRICKS_HOST/jobs/$SKILLHUB_JOB_ID_EVAL}"
+            exit 1
+          fi
+          run_id=$(jq -r '.run_id // empty' "$RUNNER_TEMP/run.json")
+          [ -n "$run_id" ] || { echo "::error::run-now returned no run ID. Job: $DATABRICKS_HOST/jobs/$SKILLHUB_JOB_ID_EVAL"; exit 1; }
+          # Never retry the start (a second start would launch a second run); the wait retries failed polls.
+          JOB_ID=$SKILLHUB_JOB_ID_EVAL bash scripts/wait_job_run.sh "$run_id" 300
           jq -e '.state.result_state == "SUCCESS"' "$RUNNER_TEMP/run.json" > /dev/null
 
       # The comment must appear even when the run failed. check-verdict below is the gate,

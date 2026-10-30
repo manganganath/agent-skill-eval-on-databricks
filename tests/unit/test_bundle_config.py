@@ -51,6 +51,13 @@ def test_endpoint_variables_are_gone():
     assert not [v for v in load_bundle()["variables"] if v.startswith("endpoint_")]
 
 
+def test_github_variables_name_the_token_secret_and_leave_the_repository_to_ci():
+    """The repository is the one the workflow runs in (BUNDLE_VAR_github_repo); the token is a secret the app reads."""
+    variables = load_bundle()["variables"]
+    assert variables["github_token_secret"]["default"] == "skillhub/github-token"
+    assert variables["github_repo"]["default"] == ""
+
+
 def test_prod_meets_production_mode_prerequisites():
     prod = load_bundle()["targets"]["prod"]
     assert prod["workspace"]["root_path"] == "~/.bundle/${bundle.name}/${bundle.target}"
@@ -100,6 +107,7 @@ SWITCH_PARAMS = [
     "expect_rubric_hash",
     "expect_dataset_digest",
     "expect_cells",
+    "trigger_source",
 ]
 
 

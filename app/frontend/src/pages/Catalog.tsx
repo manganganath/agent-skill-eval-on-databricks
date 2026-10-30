@@ -111,7 +111,7 @@ export function CandidateCard({ c, showDept = true }: { c: CandidateSummary; sho
     <li className="skill-card skill-card-candidate">
       <div className="skill-card-head">
         <h3><Link className="card-link" to={candidatePath(c)}>{c.name}</Link></h3>
-        <CandidateBadge kind={c.kind} pr={c.pr_number} />
+        <CandidateBadge kind={c.kind} pr={c.pr_number} submittedPr={c.submitted_pr} />
       </div>
       {showDept && <p className="skill-card-dept">{c.dept}</p>}
       {c.description && <p className="skill-card-desc">{c.description}</p>}

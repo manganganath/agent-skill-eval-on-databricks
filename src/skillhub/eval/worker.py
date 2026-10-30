@@ -42,7 +42,8 @@ def _rebuild(spec: dict) -> tuple[tuple, dict]:
     ):
         raise runner.EvalRunError(f"{dept}/{name}: evals.json changed while the run was in progress")
     plan.dataset_digest = spec["dataset_digest"]  # of the parent's fixture snapshot, which the agent reads
-    scope = RunScope(**{**spec["scope"], "skills": [StagedSkill(**s) for s in spec["scope"]["skills"]]})
+    copies = {k: [StagedSkill(**s) for s in spec["scope"][k]] for k in ("skills", "hidden")}
+    scope = RunScope(**{**spec["scope"], **copies})
     skill = next(s for s in scope.skills if s.dept == dept and s.name == name)
     system_prompt, prompt_versions = spec["prompts"]
     kwargs = {

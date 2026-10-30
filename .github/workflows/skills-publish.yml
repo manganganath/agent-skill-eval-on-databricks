@@ -2,11 +2,16 @@ name: skills-publish
 
 # On merge to main: re-evaluate the merged skills, gate on the verdict, then (after approval in the
 # `production` environment) publish an immutable UC version and switch it live. Deleted skills are retired.
+# A merge of exactly the pull request head that the skills-pr gate evaluated, which changed only skills/, reuses
+# that gate's eval instead of re-evaluating (see the reuse step in eval-merge).
 on:
   push:
     branches: [main]
     paths:
       - "skills/**"
+  # Starts a release again after a run failed outside the eval (for example the runner lost the workspace). The plan
+  # diffs from the skillhub/released tag, so it picks up every unreleased change. main only: see the plan job.
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -23,6 +28,8 @@ concurrency:
 jobs:
   plan:
     name: plan
+    # A dispatch from another branch plans nothing; the production environment also takes deployments from main only.
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     outputs:
@@ -49,6 +56,8 @@ jobs:
         env:
           HEAD_SHA: ${{ github.sha }}
           RUN_ATTEMPT: ${{ github.run_attempt }}
+          # A dispatch can run on a commit a push run already evaluated: its run number keeps the run keys apart.
+          RUN_TAG: ${{ github.event_name == 'workflow_dispatch' && format('r{0}-', github.run_number) || '' }}
         run: |
           # Diff from the last released commit so a failed, rejected or replaced release loses no changes.
           # Without the tag nothing is released yet: every skill counts as added, not only those of this push.
@@ -67,7 +76,7 @@ jobs:
             echo "::error::Moving a skill out of a quarantined department needs an operator: see docs. The rows with moved_from_quarantine true are listed above."
             exit 1
           fi
-          label="merge-${HEAD_SHA:0:7}-a${RUN_ATTEMPT}"
+          label="merge-${HEAD_SHA:0:7}-${RUN_TAG}a${RUN_ATTEMPT}"
           key=$(RUN_LABEL="$label" uv run python -c 'import os; from skillhub.naming import make_run_key; print(make_run_key(os.environ["RUN_LABEL"]))')
           reeval=$(jq -r '[.[] | select(.status != "deleted") | "\(.dept)/\(.skill)"] | join(",")' "$RUNNER_TEMP/changed.json")
           retire=$(jq -c '[.[] | select(.status == "deleted") | {dept, skill}]' "$RUNNER_TEMP/changed.json")
@@ -97,6 +106,9 @@ jobs:
     environment: ci-eval # no reviewers; holds the Databricks secrets for the gate
     outputs:
       skills_root: ${{ steps.upload.outputs.skills_root }}
+      # The eval that publish must cite: the reused pull request gate run, else the merge eval.
+      eval_run_key: ${{ steps.reuse.outputs.reuse == 'true' && steps.reuse.outputs.run_key || needs.plan.outputs.run_key }}
+      eval_trigger_source: ${{ steps.reuse.outputs.reuse == 'true' && 'pr' || 'merge' }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
@@ -149,7 +161,48 @@ jobs:
             echo "fixtures_root=$fixtures_root"
           } >> "$GITHUB_OUTPUT"
 
+      # Reuse the skills-pr gate's eval when the merge is exactly the head it evaluated and only skills changed;
+      # `skillhub reuse-pr-gate` holds the rule and runs check-verdict's check on the gate's rows. In any other
+      # case, and on any error here, the merged content is evaluated as before: this step never fails the release.
+      - name: Reuse the pull request gate's eval
+        id: reuse
+        continue-on-error: true
+        env:
+          DATABRICKS_HOST: ${{ secrets.DATABRICKS_HOST }}
+          DATABRICKS_CLIENT_ID: ${{ secrets.DATABRICKS_CLIENT_ID }}
+          DATABRICKS_CLIENT_SECRET: ${{ secrets.DATABRICKS_CLIENT_SECRET }}
+          SQL_WAREHOUSE_ID: ${{ secrets.SQL_WAREHOUSE_ID }}
+          SKILLHUB_CATALOG: ${{ vars.SKILLHUB_CATALOG }}
+          SKILLHUB_CI_EVAL_PRINCIPAL: ${{ vars.CI_EVAL_PRINCIPAL }}
+          HEAD_SHA: ${{ github.sha }}
+          SKILLS: ${{ needs.plan.outputs.reeval }}
+          EXPECT: ${{ needs.plan.outputs.publish }}
+        run: |
+          reuse=false
+          key=""
+          printf '%s' "$EXPECT" > "$RUNNER_TEMP/expect.json"
+          if uv run skillhub reuse-pr-gate --merge-sha "$HEAD_SHA" --skills "$SKILLS" \
+            --expect-file "$RUNNER_TEMP/expect.json" > "$RUNNER_TEMP/reuse.json" </dev/null; then
+            if jq -e '.reuse == true and (.run_key | type == "string" and test("^pr[0-9]+_[0-9a-f]{7}_a[0-9]+$"))' \
+              "$RUNNER_TEMP/reuse.json" > /dev/null; then
+              reuse=true
+              key=$(jq -r .run_key "$RUNNER_TEMP/reuse.json")
+              echo "::notice::Reusing the pull request gate's eval $key: the merge is the head it evaluated, and only skills changed."
+            else
+              # Escaped as workflow command data, so the reason stays one notice.
+              reason=$(jq -r '.reason // "" | gsub("%"; "%25") | gsub("\r"; "%0D") | gsub("\n"; "%0A")' "$RUNNER_TEMP/reuse.json" 2>/dev/null || true)
+              echo "::notice::Re-evaluating the merged content: ${reason:-the reuse check gave no decision}."
+            fi
+          else
+            echo "::notice::Re-evaluating the merged content: the reuse check failed (see the error above)."
+          fi
+          {
+            echo "reuse=$reuse"
+            echo "run_key=$key"
+          } >> "$GITHUB_OUTPUT"
+
       - name: Start skill-eval Job and wait (5 h)
+        if: ${{ steps.reuse.outputs.reuse != 'true' }}
         env:
           DATABRICKS_HOST: ${{ secrets.DATABRICKS_HOST }}
           DATABRICKS_CLIENT_ID: ${{ secrets.DATABRICKS_CLIENT_ID }}
@@ -164,14 +217,17 @@ jobs:
         run: |
           # CLI v1.20 refuses a positional JOB_ID next to --json, so the ID goes in the request body.
           run_job() {
-            local body
+            local body run_id
             body=$(jq -c --argjson job_id "$JOB_ID" '{job_id: $job_id} + .' <<<"$1")
-            if ! databricks jobs run-now --timeout 300m --json "$body" -o json > "$RUNNER_TEMP/run.json" </dev/null; then
+            if ! databricks jobs run-now --no-wait --json "$body" -o json > "$RUNNER_TEMP/run.json" </dev/null; then
               url=$(jq -r '.run_page_url // empty' "$RUNNER_TEMP/run.json" 2>/dev/null || true)
               echo "::error::run-now failed. ${url:-Job: $DATABRICKS_HOST/jobs/$JOB_ID}"
               exit 1
             fi
-            echo "Job run: $(jq -r '.run_page_url // "unknown"' "$RUNNER_TEMP/run.json")"
+            run_id=$(jq -r '.run_id // empty' "$RUNNER_TEMP/run.json")
+            [ -n "$run_id" ] || { echo "::error::run-now returned no run ID. Job: $DATABRICKS_HOST/jobs/$JOB_ID"; exit 1; }
+            # Never retry the start (a second start would launch a second run); the wait retries failed polls.
+            bash scripts/wait_job_run.sh "$run_id" 300 </dev/null
             jq -e '.state.result_state == "SUCCESS"' "$RUNNER_TEMP/run.json" > /dev/null
           }
           [[ "$JOB_ID" =~ ^[0-9]+$ ]] || { echo "::error::The SKILLHUB_JOB_ID_EVAL variable must be a numeric Job ID."; exit 1; }
@@ -185,7 +241,9 @@ jobs:
 
       # Bound to plan's digests: the evaluated content, rubric, cases and fixtures must be the merged
       # ones, so a candidate folder swapped during the eval, or a row for other inputs, fails the gate.
+      # A reused pull request gate run has passed the same check in the reuse step.
       - name: check-verdict
+        if: ${{ steps.reuse.outputs.reuse != 'true' }}
         env:
           DATABRICKS_HOST: ${{ secrets.DATABRICKS_HOST }}
           DATABRICKS_CLIENT_ID: ${{ secrets.DATABRICKS_CLIENT_ID }}
@@ -250,35 +308,43 @@ jobs:
           JOB_ID: ${{ vars.SKILLHUB_JOB_ID_SWITCH }}
           ROWS: ${{ needs.plan.outputs.publish }}
           MERGE_SHA: ${{ github.sha }}
-          EVAL_RUN_ID: ${{ needs.plan.outputs.run_key }}
+          EVAL_RUN_ID: ${{ needs.eval-merge.outputs.eval_run_key }}
+          EVAL_TRIGGER_SOURCE: ${{ needs.eval-merge.outputs.eval_trigger_source }}
           SKILLS_ROOT: ${{ needs.eval-merge.outputs.skills_root }}
           ACTOR: ${{ github.actor }}
         run: |
           [ -n "$SKILLS_ROOT" ] || { echo "::error::No evaluated skills folder to publish from."; exit 1; }
+          [ -n "$EVAL_RUN_ID" ] || { echo "::error::No eval run key to publish with."; exit 1; }
+          [[ "$EVAL_TRIGGER_SOURCE" =~ ^(merge|pr)$ ]] || { echo "::error::The eval's trigger source must be merge or pr."; exit 1; }
           jq -e 'type == "array" and all(.[]; (.dept | type) == "string" and (.skill | type) == "string" and (.hash | test("^sha256:[0-9a-f]{64}$")) and (.rubric_hash | test("^(none|sha256:[0-9a-f]{64})$")) and (.dataset_digest | test("^sha256:[0-9a-f]{64}$")) and ((.cells | type) == "array") and all(.cells[]; type == "string" and test("^[A-Za-z0-9_.-]+/(trigger|with_skill)$")))' <<<"$ROWS" > /dev/null || { echo "::error::The plan output is not a valid list of skills."; exit 1; }
           # CLI v1.20 refuses a positional JOB_ID next to --json, so the ID goes in the request body.
           run_job() {
-            local body
+            local body run_id
             body=$(jq -c --argjson job_id "$JOB_ID" '{job_id: $job_id} + .' <<<"$1")
-            if ! databricks jobs run-now --timeout 30m --json "$body" -o json > "$RUNNER_TEMP/run.json" </dev/null; then
+            if ! databricks jobs run-now --no-wait --json "$body" -o json > "$RUNNER_TEMP/run.json" </dev/null; then
               url=$(jq -r '.run_page_url // empty' "$RUNNER_TEMP/run.json" 2>/dev/null || true)
               echo "::error::run-now failed. ${url:-Job: $DATABRICKS_HOST/jobs/$JOB_ID}"
               exit 1
             fi
-            echo "Job run: $(jq -r '.run_page_url // "unknown"' "$RUNNER_TEMP/run.json")"
+            run_id=$(jq -r '.run_id // empty' "$RUNNER_TEMP/run.json")
+            [ -n "$run_id" ] || { echo "::error::run-now returned no run ID. Job: $DATABRICKS_HOST/jobs/$JOB_ID"; exit 1; }
+            # Never retry the start (a second start would launch a second run); the wait retries failed polls.
+            bash scripts/wait_job_run.sh "$run_id" 30 </dev/null
             jq -e '.state.result_state == "SUCCESS"' "$RUNNER_TEMP/run.json" > /dev/null
           }
           [[ "$JOB_ID" =~ ^[0-9]+$ ]] || { echo "::error::The SKILLHUB_JOB_ID_SWITCH variable must be a numeric Job ID."; exit 1; }
           while IFS= read -r row; do
             # Publish the exact folder that was evaluated; expect_hash makes the Job check it matches the merge,
-            # and run_key makes it check that the merge eval passed for that content with the merge's
-            # rubric, cases and fixtures, in every planned model and gating mode.
+            # and run_key with trigger_source makes it check that the cited eval (the merge eval, or the reused
+            # pull request gate) passed for that content with the merge's rubric, cases and fixtures, in every
+            # planned model and gating mode.
             params=$(jq -n --argjson r "$row" --arg sha "$MERGE_SHA" --arg eval "$EVAL_RUN_ID" --arg actor "$ACTOR" \
-              --arg skills_root "$SKILLS_ROOT" \
+              --arg skills_root "$SKILLS_ROOT" --arg source "$EVAL_TRIGGER_SOURCE" \
               '{job_parameters: {action: "publish", dept: $r.dept, skill: $r.skill, version: "",
                 git_sha: $sha, eval_run_id: $eval, actor: $actor, skills_root: $skills_root,
                 expect_hash: $r.hash, run_key: $eval, expect_rubric_hash: $r.rubric_hash,
-                expect_dataset_digest: $r.dataset_digest, expect_cells: ($r.cells | join(","))}}')
+                expect_dataset_digest: $r.dataset_digest, expect_cells: ($r.cells | join(",")),
+                trigger_source: $source}}')
             run_job "$params"
           done < <(jq -c '.[]' <<<"$ROWS")
 
@@ -291,7 +357,7 @@ jobs:
           JOB_ID: ${{ vars.SKILLHUB_JOB_ID_SWITCH }}
           ROWS: ${{ needs.plan.outputs.publish }}
           MERGE_SHA: ${{ github.sha }}
-          EVAL_RUN_ID: ${{ needs.plan.outputs.run_key }}
+          EVAL_RUN_ID: ${{ needs.eval-merge.outputs.eval_run_key }}
           SKILLS_ROOT: ${{ needs.eval-merge.outputs.skills_root }}
           ACTOR: ${{ github.actor }}
         run: |
@@ -299,14 +365,17 @@ jobs:
           jq -e 'type == "array" and all(.[]; (.dept | type) == "string" and (.skill | type) == "string" and (.hash | test("^sha256:[0-9a-f]{64}$")) and (.rubric_hash | test("^(none|sha256:[0-9a-f]{64})$")) and (.dataset_digest | test("^sha256:[0-9a-f]{64}$")) and ((.cells | type) == "array") and all(.cells[]; type == "string" and test("^[A-Za-z0-9_.-]+/(trigger|with_skill)$")))' <<<"$ROWS" > /dev/null || { echo "::error::The plan output is not a valid list of skills."; exit 1; }
           # CLI v1.20 refuses a positional JOB_ID next to --json, so the ID goes in the request body.
           run_job() {
-            local body
+            local body run_id
             body=$(jq -c --argjson job_id "$JOB_ID" '{job_id: $job_id} + .' <<<"$1")
-            if ! databricks jobs run-now --timeout 30m --json "$body" -o json > "$RUNNER_TEMP/run.json" </dev/null; then
+            if ! databricks jobs run-now --no-wait --json "$body" -o json > "$RUNNER_TEMP/run.json" </dev/null; then
               url=$(jq -r '.run_page_url // empty' "$RUNNER_TEMP/run.json" 2>/dev/null || true)
               echo "::error::run-now failed. ${url:-Job: $DATABRICKS_HOST/jobs/$JOB_ID}"
               exit 1
             fi
-            echo "Job run: $(jq -r '.run_page_url // "unknown"' "$RUNNER_TEMP/run.json")"
+            run_id=$(jq -r '.run_id // empty' "$RUNNER_TEMP/run.json")
+            [ -n "$run_id" ] || { echo "::error::run-now returned no run ID. Job: $DATABRICKS_HOST/jobs/$JOB_ID"; exit 1; }
+            # Never retry the start (a second start would launch a second run); the wait retries failed polls.
+            bash scripts/wait_job_run.sh "$run_id" 30 </dev/null
             jq -e '.state.result_state == "SUCCESS"' "$RUNNER_TEMP/run.json" > /dev/null
           }
           [[ "$JOB_ID" =~ ^[0-9]+$ ]] || { echo "::error::The SKILLHUB_JOB_ID_SWITCH variable must be a numeric Job ID."; exit 1; }
@@ -334,14 +403,17 @@ jobs:
           jq -e 'type == "array" and all(.[]; (.dept | type) == "string" and (.skill | type) == "string")' <<<"$ROWS" > /dev/null || { echo "::error::The plan output is not a valid list of skills."; exit 1; }
           # CLI v1.20 refuses a positional JOB_ID next to --json, so the ID goes in the request body.
           run_job() {
-            local body
+            local body run_id
             body=$(jq -c --argjson job_id "$JOB_ID" '{job_id: $job_id} + .' <<<"$1")
-            if ! databricks jobs run-now --timeout 30m --json "$body" -o json > "$RUNNER_TEMP/run.json" </dev/null; then
+            if ! databricks jobs run-now --no-wait --json "$body" -o json > "$RUNNER_TEMP/run.json" </dev/null; then
               url=$(jq -r '.run_page_url // empty' "$RUNNER_TEMP/run.json" 2>/dev/null || true)
               echo "::error::run-now failed. ${url:-Job: $DATABRICKS_HOST/jobs/$JOB_ID}"
               exit 1
             fi
-            echo "Job run: $(jq -r '.run_page_url // "unknown"' "$RUNNER_TEMP/run.json")"
+            run_id=$(jq -r '.run_id // empty' "$RUNNER_TEMP/run.json")
+            [ -n "$run_id" ] || { echo "::error::run-now returned no run ID. Job: $DATABRICKS_HOST/jobs/$JOB_ID"; exit 1; }
+            # Never retry the start (a second start would launch a second run); the wait retries failed polls.
+            bash scripts/wait_job_run.sh "$run_id" 30 </dev/null
             jq -e '.state.result_state == "SUCCESS"' "$RUNNER_TEMP/run.json" > /dev/null
           }
           [[ "$JOB_ID" =~ ^[0-9]+$ ]] || { echo "::error::The SKILLHUB_JOB_ID_SWITCH variable must be a numeric Job ID."; exit 1; }

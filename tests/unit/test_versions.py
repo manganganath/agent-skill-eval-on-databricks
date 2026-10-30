@@ -216,7 +216,7 @@ def test_cli_lint_refusal_exits_1_with_one_line(cli_reg, make_bundle, tmp_path):
 # --- publish gate: published content must equal evaluated content ---
 
 
-def _gate(reg, bundle, run_key="r", trusted=(TRUSTED,), rubric=RUBRIC, dataset=DATASET, cells=CELLS):
+def _gate(reg, bundle, run_key="r", trusted=(TRUSTED,), rubric=RUBRIC, dataset=DATASET, cells=CELLS, **kw):
     require_evaluated(
         reg.cfg,
         reg.sql,
@@ -228,6 +228,7 @@ def _gate(reg, bundle, run_key="r", trusted=(TRUSTED,), rubric=RUBRIC, dataset=D
         rubric_hash=rubric,
         dataset_digest=dataset,
         cells=cells,
+        **kw,
     )
 
 
@@ -341,23 +342,52 @@ def test_gate_ignores_rows_from_untrusted_run_authors(reg, make_bundle):
     _gate(reg, swapped)
 
 
-@pytest.mark.parametrize("source", ["manual", "hub", "pr", "nightly", None])
+@pytest.mark.parametrize("source", ["manual", "hub", "hub-try", "pr", "nightly", None])
 def test_gate_accepts_only_rows_of_the_merge_eval(reg, make_bundle, source):
     """A Skill Hub run (manual or hub), a pull request eval or a nightly run evaluates the same content with a
-    trusted author, but only the merge eval releases: its rows never satisfy publish, even under the gate's key."""
+    trusted author, but by default only the merge eval releases: its rows never satisfy publish, even under the
+    gate's key."""
     b = evaluated(reg, make_bundle("common", "audit-xls"), trigger_source=source)
     with pytest.raises(PublishRefused, match="no gating eval result"):
         _gate(reg, b)
+
+
+def test_gate_accepts_pull_request_gate_rows_when_the_release_reuses_them(reg, make_bundle):
+    b = evaluated(reg, make_bundle("common", "audit-xls"), run_key="pr12_abc1234_a1", trigger_source="pr")
+    _gate(reg, b, run_key="pr12_abc1234_a1", trigger_source="pr")
+    with pytest.raises(PublishRefused, match="no gating eval result"):
+        _gate(reg, b, run_key="pr12_abc1234_a1")  # a release that cites the merge eval never counts them
+
+
+@pytest.mark.parametrize("source", ["manual", "hub", "hub-try", "nightly", "merge", None])
+def test_a_reused_pull_request_gate_counts_only_its_own_rows(reg, make_bundle, source):
+    """With trigger source pr, rows of any other eval under the same key do not count, the merge eval's included."""
+    b = evaluated(reg, make_bundle("common", "audit-xls"), trigger_source=source)
+    with pytest.raises(PublishRefused, match="no gating eval result"):
+        _gate(reg, b, trigger_source="pr")
+
+
+@pytest.mark.parametrize("source", ["manual", "hub", "hub-try", "nightly", "", "PR", "merge "])
+def test_no_other_trigger_source_can_authorize_a_publish(reg, make_bundle, source):
+    """Asking for another eval's rows is refused before any row is read, even when such rows exist and pass."""
+    b = evaluated(reg, make_bundle("common", "audit-xls"), trigger_source=source)
+    reg.sql.calls.clear()
+    with pytest.raises(PublishRefused, match="cannot authorize a publish"):
+        _gate(reg, b, trigger_source=source)
+    assert reg.sql.calls == []
 
 
 def test_the_gate_takes_its_trigger_source_from_the_merge_eval():
     """The value the publish gate accepts is the one the merge eval in skills-publish.yml sets."""
     from pathlib import Path
 
-    from skillhub.registry.versions import MERGE_TRIGGER_SOURCE
+    from skillhub.registry.versions import MERGE_TRIGGER_SOURCE, PR_TRIGGER_SOURCE, PUBLISH_TRIGGER_SOURCES
 
     text = (Path(__file__).resolve().parents[2] / ".github" / "workflows" / "skills-publish.yml").read_text()
     assert f'trigger_source: "{MERGE_TRIGGER_SOURCE}"' in text
+    pr = (Path(__file__).resolve().parents[2] / ".github" / "workflows" / "skills-pr.yml").read_text()
+    assert f'trigger_source: "{PR_TRIGGER_SOURCE}"' in pr  # the gate a release may reuse
+    assert PUBLISH_TRIGGER_SOURCES == {"merge", "pr"}
 
 
 def test_gate_fails_closed_without_trusted_authors(reg, make_bundle):

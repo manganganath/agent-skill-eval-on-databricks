@@ -10,6 +10,7 @@ from typer.testing import CliRunner
 from skillhub import cli
 from skillhub.lint import LintRefused
 from skillhub.registry.stage import (
+    RUN_SCHEMA_RE,
     StageError,
     cleanup_stale,
     cleanup_try_schemas,
@@ -626,3 +627,66 @@ def test_cleanup_try_schemas_skips_a_schema_that_is_gone_or_refused(cfg):
     )
     w.schemas.delete.side_effect = [NotFound("gone"), PermissionDenied("no"), None]
     assert cleanup_try_schemas(cfg, w) == ["skill_hub.run_try_c_common"]
+
+
+# --- one run schema per department ----------------------------------------------------------------------------
+
+
+def test_each_department_is_staged_into_its_own_run_schema(reg, live, make_bundle):
+    live(make_bundle("equity_research", "morning-note", body="m"))
+    live(make_bundle("common", "audit-xls", body="a"))
+    cand = make_bundle("equity_research", "earnings-preview", body="c")
+    (scope,) = stage(reg.cfg, reg.uc, reg.journal, "pr3_sc", [cand])
+    own, common = "skill_hub.run_pr3_sc_dept_equity_research", "skill_hub.run_pr3_sc_common"
+    assert scope.schemas == [own, common]
+    assert all(RUN_SCHEMA_RE.fullmatch(sch.partition(".")[2]) for sch in scope.schemas)
+    by_name = {s.name: s for s in scope.skills}
+    assert by_name["earnings-preview"].staged_fqn == f"{own}.earnings-preview"
+    assert by_name["morning-note"].staged_fqn == f"{own}.morning-note"
+    assert by_name["audit-xls"].staged_fqn == f"{common}.audit-xls"
+    assert scope.hidden == []
+    assert sorted(x.name for x in reg.uc.list(own)) == ["earnings-preview", "morning-note"]
+    assert [x.name for x in reg.uc.list(common)] == ["audit-xls"]
+
+
+def test_common_is_staged_once_for_every_scope_that_reads_it(reg, make_bundle):
+    cand_ops = make_bundle("operations", "ops-thing", body="o")
+    cand_eq = make_bundle("equity_research", "eq-thing", body="e")
+    cand_common = make_bundle("common", "audit-xls", body="a")
+    scopes = {
+        s.dept: s for s in stage(reg.cfg, reg.uc, reg.journal, "pr3_co", [cand_ops, cand_eq, cand_common])
+    }
+    common_copies = {x.staged_fqn for sc in scopes.values() for x in sc.skills if x.dept == "common"}
+    assert common_copies == {"skill_hub.run_pr3_co_common.audit-xls"}
+    assert [x.name for x in reg.uc.list("skill_hub.run_pr3_co_common")] == ["audit-xls"]
+
+
+def test_a_department_copy_shadows_common_and_common_copy_is_hidden_from_that_scope(reg, live, make_bundle):
+    live(make_bundle("common", "audit-xls", body="common"))
+    live(make_bundle("equity_research", "audit-xls", body="equity"))
+    (scope,) = stage(reg.cfg, reg.uc, reg.journal, "pr3_sh", [], scope_depts=["equity_research"])
+    (offered,) = scope.skills
+    assert (offered.dept, offered.origin) == ("equity_research", "live")
+    assert [h.staged_fqn for h in scope.hidden] == ["skill_hub.run_pr3_sh_common.audit-xls"]
+
+
+def test_a_common_candidate_beats_the_department_live_copy_in_that_scope(reg, live, make_bundle):
+    live(make_bundle("equity_research", "audit-xls", body="equity live"))
+    cand = make_bundle("common", "audit-xls", body="common candidate")
+    scopes = {
+        s.dept: s
+        for s in stage(reg.cfg, reg.uc, reg.journal, "pr3_cc", [cand], scope_depts=["equity_research"])
+    }
+    (offered,) = scopes["equity_research"].skills
+    assert (offered.dept, offered.origin) == ("common", "candidate")
+    assert [h.staged_fqn for h in scopes["equity_research"].hidden] == [
+        "skill_hub.run_pr3_cc_dept_equity_research.audit-xls"
+    ]
+    assert scopes["common"].hidden == []
+
+
+def test_a_name_that_is_a_candidate_in_two_visible_departments_is_refused_before_any_write(reg, make_bundle):
+    cands = [make_bundle("equity_research", "audit-xls"), make_bundle("common", "audit-xls")]
+    with pytest.raises(StageError, match="more than one visible department"):
+        stage(reg.cfg, reg.uc, reg.journal, "pr3_cx", cands)
+    assert reg.uc.schemas == set()

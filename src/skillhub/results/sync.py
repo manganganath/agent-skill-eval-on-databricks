@@ -25,6 +25,13 @@ PARENT_TAG = "parent_run_id"  # The runner sets it on each child run
 POLL_S = 5
 STALL_S = 60  # how long a scored run's trace count may stay unchanged before sync writes what it has
 CHUNK = 500
+# A Delta write that conflicts with a concurrent one (another run, the nightly job or a Hub eval writing the same
+# table) is retried: insert_missing only adds the rows still missing, so a retry is safe.
+CONFLICT_RETRIES = 5
+CONFLICT_BACKOFF_S = 2.0
+_CONFLICT = re.compile(
+    r"DELTA_CONCURRENT|Concurrent(Append|Delete|Transaction)Exception|Transaction conflict detected"
+)
 
 RUN_FIELDS: list[tuple[str, str]] = [
     ("run_id", "string"),
@@ -518,9 +525,26 @@ def insert_missing(
     )
     done = 0
     for i in range(0, len(rows), CHUNK):
-        res = sql.execute(stmt, {"rows": json.dumps(rows[i : i + CHUNK])})
+        res = _execute_retrying_conflicts(sql, stmt, {"rows": json.dumps(rows[i : i + CHUNK])})
         done += int(res[0]["num_affected_rows"])
     return done
+
+
+def _execute_retrying_conflicts(sql: SqlClient, stmt: str, params: dict) -> list[dict]:
+    """Run an idempotent write, again after a Delta concurrent-write conflict, with a growing pause. Any other error,
+    or a conflict on the last attempt, is raised."""
+    from skillhub.sql import SqlError
+
+    for attempt in range(CONFLICT_RETRIES + 1):
+        try:
+            return sql.execute(stmt, params)
+        except SqlError as e:
+            if attempt == CONFLICT_RETRIES or not _CONFLICT.search(str(e)):
+                raise
+            pause = CONFLICT_BACKOFF_S * 2**attempt
+            log.warning("write conflicted with a concurrent write; retrying in %.0f s", pause)
+            time.sleep(pause)
+    raise AssertionError("unreachable")
 
 
 def _count_runs(sql: SqlClient, ev: str, run_id: str) -> int:

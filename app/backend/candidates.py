@@ -44,7 +44,7 @@ from typing import Literal
 
 from databricks.sdk import WorkspaceClient
 from databricks.sdk.errors import DatabricksError, NotFound
-from databricks.sdk.service.workspace import ObjectType
+from databricks.sdk.service.workspace import ImportFormat, ObjectType
 
 from backend import authz, jobs, skill_ref
 from backend.authz import MeProfile, Reason, RequestMemo
@@ -101,7 +101,7 @@ class CandidateKey:
 
 @dataclass(frozen=True)
 class DraftMeta:
-    """draft.json, written by the app when it stores a draft."""
+    """draft.json: written by the app when it stores a draft, and again when the draft is submitted for review."""
 
     dept: str
     skill: str
@@ -109,6 +109,8 @@ class DraftMeta:
     uploaded_at: datetime | None
     description: str | None
     has_rubric: bool
+    submitted_pr: int | None = None
+    submitted_url: str | None = None
 
 
 @dataclass
@@ -359,6 +361,10 @@ def _text(value: object) -> str | None:
     return value if isinstance(value, str) and value else None
 
 
+def _pr_number(value: object) -> int | None:
+    return value if isinstance(value, int) and not isinstance(value, bool) and value > 0 else None
+
+
 def read_meta(
     app_w: WorkspaceClient, cfg: HubConfig, key: CandidateKey, depts: Collection[str]
 ) -> DraftMeta | None:
@@ -376,6 +382,8 @@ def read_meta(
             uploaded_at=datetime.fromtimestamp(int(stamp), UTC) if isinstance(stamp, int) else None,
             description=_text(raw.get("description")),
             has_rubric=raw.get("has_rubric") is True,
+            submitted_pr=_pr_number(raw.get("submitted_pr")),
+            submitted_url=_text(raw.get("submitted_url")),
         )
     except (ValueError, TypeError, KeyError, AttributeError, OverflowError, OSError):
         log.warning("ignored the unreadable draft.json of %s", key.run_key)
@@ -387,6 +395,27 @@ def read_meta(
 
 def is_uploader(meta: DraftMeta, me: MeProfile) -> bool:
     return meta.uploaded_by.casefold() == me.user.casefold()
+
+
+def record_submission(
+    app_w: WorkspaceClient, cfg: HubConfig, key: CandidateKey, *, pr_number: int, url: str, submitted_by: str
+) -> None:
+    """Write the pull request into the draft's draft.json, so the Hub lists the draft as submitted. The other fields are
+    kept. A failure is only logged: the pull request exists, and a second submit finds it by its branch."""
+    path = f"{folder(cfg, key)}/{DRAFT_META}"
+    try:
+        raw = json.loads(_download(app_w, path, MAX_META) or b"{}")
+        raw.update(
+            submitted_pr=pr_number,
+            submitted_url=url,
+            submitted_by=submitted_by,
+            submitted_at=int(time.time()),
+        )
+        app_w.workspace.upload(
+            path, json.dumps(raw, indent=2).encode(), format=ImportFormat.RAW, overwrite=True
+        )
+    except (DatabricksError, ValueError) as exc:
+        log.warning("could not record the submission of %s: %s", key.run_key, type(exc).__name__)
 
 
 def authorize(

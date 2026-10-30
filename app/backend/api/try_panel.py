@@ -192,7 +192,7 @@ def _load_engine() -> SimpleNamespace:
         import mlflow
 
         from skillhub.agent.fixtures import FixtureStore
-        from skillhub.agent.loop import SkillsBridge, run_agent
+        from skillhub.agent.loop import MultiSkillsBridge, run_agent
         from skillhub.gateway.models import model_client
         from skillhub.gateway.skills_mcp import SkillsMcpClient, SkillToolError
         from skillhub.gateway.toolnames import ToolNameMap
@@ -204,7 +204,7 @@ def _load_engine() -> SimpleNamespace:
     return SimpleNamespace(
         mlflow=mlflow,
         FixtureStore=FixtureStore,
-        SkillsBridge=SkillsBridge,
+        MultiSkillsBridge=MultiSkillsBridge,
         run_agent=run_agent,
         model_client=model_client,
         SkillsMcpClient=SkillsMcpClient,
@@ -234,8 +234,8 @@ def _run_config(cfg: HubConfig) -> HubConfig:
 
 
 def _live_schemas(cfg: HubConfig, dept: str) -> list[str]:
-    """The department's live schema, then common's. The order matters: the skills server offers a capped number of
-    skill tools per connection (20 in this release), in the order of its schemas, and leaves out the rest."""
+    """The department's live schema, then common's. Each schema is one skills server connection, since the server
+    offers at most 20 skill tools per connection and leaves out the rest."""
     return list(dict.fromkeys([live_schema(cfg, dept), live_schema(cfg, "common")]))
 
 
@@ -300,14 +300,20 @@ def _close_client(model: Any) -> None:
 
 
 def _open_bridge(run: _TryRun) -> Any:
-    """The skills bridge for one agent run. A staged skill is listed only once its grant has reached the skills
-    server, so for a candidate the bridge is reopened until that tool is listed, for up to READY_WAIT_S."""
+    """The skills bridge for one agent run: one connection per schema. A staged skill is listed only once its grant
+    has reached the skills server, so for a candidate the bridge is reopened until that tool is listed, for up to
+    READY_WAIT_S."""
     eng, lease = run.eng, run.lease
+    host = run.cfg.workspace.host
+
+    def connect(schema: str) -> Any:  # one connection per schema
+        return eng.SkillsMcpClient(host, [schema], run.headers)
+
     until = time.monotonic() + READY_WAIT_S
     pause = READY_STEP_S
     while True:
         lease.check()
-        bridge = eng.SkillsBridge(eng.SkillsMcpClient(run.cfg.workspace.host, run.schemas, run.headers))
+        bridge = eng.MultiSkillsBridge(run.schemas, connect)
         if run.ready_tool is None:
             return bridge
         try:
@@ -614,7 +620,7 @@ def try_candidate(
         models=models,
         token=token,
         requester=me.user,
-        schemas=[schema, *_live_schemas(cfg, dept)],  # the upload first, so the tool cap never leaves it out
+        schemas=[schema, *_live_schemas(cfg, dept)],  # the upload first: its connection is opened first
         hidden=frozenset({production, live_fqn(cfg, "common", skill)}),
         rewrite={staged: production},
         ready_fqn=staged,

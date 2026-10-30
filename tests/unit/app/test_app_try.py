@@ -27,10 +27,11 @@ class FakeMcp:
 
 
 class FakeBridge:
-    """Stands in for the sync SkillsBridge: records that it was closed."""
+    """Stands in for the sync MultiSkillsBridge: records the schemas it connects to, and that it was closed."""
 
-    def __init__(self, client):
-        self.client = client
+    def __init__(self, schemas, connect):
+        self.schemas = list(schemas)
+        self.clients = [connect(s) for s in self.schemas]
         self.closed = 0
 
     def close(self):
@@ -124,8 +125,8 @@ def wired(monkeypatch):
                 comment=None,
             )
 
-    def make_bridge(client):
-        b = FakeBridge(client)
+    def make_bridge(schemas, connect):
+        b = FakeBridge(schemas, connect)
         calls["bridges"].append(b)
         return b
 
@@ -167,7 +168,7 @@ def wired(monkeypatch):
     engine = SimpleNamespace(
         mlflow=FakeMlflow(calls),
         FixtureStore=lambda: None,
-        SkillsBridge=make_bridge,
+        MultiSkillsBridge=make_bridge,
         run_agent=fake_run_agent,
         model_client=fake_model_client,
         SkillsMcpClient=lambda h, s, hd: FakeMcp(h, s, hd),
@@ -214,10 +215,10 @@ def test_try_closes_the_bridge(make_client, wired):
 def test_try_uses_the_user_token_and_scopes_to_dept_and_common(make_client, wired):
     post(make_client, body())
     bridge = wired["bridges"][0]
-    assert bridge.client.headers() == {"Authorization": "Bearer user-token-123"}
-    # The department first: the skills server offers a capped number of skill tools, in schema order.
-    assert bridge.client.schemas == ["skill_hub.dept_equity_research", "skill_hub.common"]
-    assert bridge.client.host == "https://ws.example.test"  # workspace_host(), like the user client
+    assert bridge.clients[0].headers() == {"Authorization": "Bearer user-token-123"}
+    # One connection per schema, the department's first.
+    assert bridge.schemas == ["skill_hub.dept_equity_research", "skill_hub.common"]
+    assert bridge.clients[0].host == "https://ws.example.test"  # workspace_host(), like the user client
     assert wired["models"] == [("claude-sonnet", {"Authorization": "Bearer user-token-123"})]
 
 
@@ -232,7 +233,7 @@ def test_try_uses_the_normalised_host_for_the_model_client_skills_server_and_tra
     r = c.post("/api/try", json=body(), headers=HDR)
     assert r.status_code == 200
     assert wired["model_hosts"] == ["https://ws.example.test"]
-    assert wired["bridges"][0].client.host == "https://ws.example.test"
+    assert wired["bridges"][0].clients[0].host == "https://ws.example.test"
     assert r.json()[0]["trace_url"].startswith("https://ws.example.test/ml/experiments/exp-9/traces?")
     assert cfg.workspace.host == "ws.example.test"  # the shared config is not changed
 
@@ -386,10 +387,10 @@ def test_try_failure_is_502_without_raw_text_and_still_closes_the_bridge(make_cl
 def test_try_bridge_start_failure_is_502(make_client, wired, monkeypatch):
     eng = try_panel._load_engine()
 
-    def bad(client):
+    def bad(schemas, connect):
         raise ConnectionError("gateway down at https://internal.example")
 
-    eng.SkillsBridge = bad
+    eng.MultiSkillsBridge = bad
     r = post(make_client, body())
     assert r.status_code == 502 and r.json() == {"detail": {"reason": "try_failed"}}
     assert "internal" not in r.text
@@ -457,8 +458,8 @@ class StepModel:
 class StepBridge(FakeBridge):
     """A skills bridge with one skill tool. Blocks on `gate` in the call_tool named `block_call`."""
 
-    def __init__(self, client, steps, gate, block_call):
-        super().__init__(client)
+    def __init__(self, schemas, connect, steps, gate, block_call):
+        super().__init__(schemas, connect)
         self.steps, self.gate, self.block_call = steps, gate, block_call
 
     def list_tools(self):
@@ -494,12 +495,12 @@ def real_loop(wired, monkeypatch):
         state.steps, state.gate, state.block_turn
     )
 
-    def bridge(client):
-        b = StepBridge(client, state.steps, state.gate, state.block_call)
+    def bridge(schemas, connect):
+        b = StepBridge(schemas, connect, state.steps, state.gate, state.block_call)
         state.bridges.append(b)
         return b
 
-    eng.SkillsBridge = bridge
+    eng.MultiSkillsBridge = bridge
     yield state
     state.gate.set()
 
@@ -640,23 +641,23 @@ def staging(wired, monkeypatch):
     ]  # the agent loads the candidate under the name the model sees: the live FQN
 
     class _Listing(FakeBridge):
-        def __init__(self, client):
-            super().__init__(client)
+        def __init__(self, schemas, connect):
+            super().__init__(schemas, connect)
             self.index = len(wired["bridges"])  # the bridges opened before this one
 
         def list_tools(self):
             names = [f"skill_{LIVE_SAME}", f"skill_{LIVE_OTHER}"]
             if self.index >= wired["ready_after"]:
-                names += [f"skill_{s}.new-skill" for s in self.client.schemas if ".run_try_" in s]
+                names += [f"skill_{s}.new-skill" for s in self.schemas if ".run_try_" in s]
             return [SimpleNamespace(name=n, description="d", input_schema={}) for n in names]
 
-    def make_bridge(client):
-        b = _Listing(client)
+    def make_bridge(schemas, connect):
+        b = _Listing(schemas, connect)
         wired["bridges"].append(b)
         return b
 
     eng = try_panel._load_engine()
-    eng.SkillsBridge = make_bridge
+    eng.MultiSkillsBridge = make_bridge
     return SimpleNamespace(uc=uc)
 
 
@@ -692,7 +693,7 @@ def test_candidate_try_stages_the_upload_into_a_private_schema_and_grants_only_t
         ("ana@example.com", ["USE_SCHEMA", "READ_VOLUME"])
     ]
     # The agent's scope: the private schema first, then live dept and common, so the tool cap never drops it.
-    assert wired["bridges"][-1].client.schemas == [schema, "skill_hub.common"]
+    assert wired["bridges"][-1].schemas == [schema, "skill_hub.common"]
 
 
 def test_candidate_try_hides_the_live_skill_of_the_same_name_from_list_and_call(make_client, wired, staging):

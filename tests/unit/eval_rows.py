@@ -60,9 +60,11 @@ def add_rows(
     rubric: str = RUBRIC,
     dataset: str = DATASET,
     trigger_source: str | None = "merge",
+    git_sha: str | None = None,
 ) -> None:
     """One child row per (mode, verdict) cell, plus the parent row the runner writes (mode NULL). The rows come
-    from the merge eval (`trigger_source` merge) unless a test says otherwise."""
+    from the merge eval (`trigger_source` merge) unless a test says otherwise; `git_sha` is the commit of the
+    `git:<sha>` source."""
     ensure_eval_runs(sql, cfg)
     t = f"{evals_schema(cfg, dept)}.eval_runs"
     rows = [(None, None, None)] + [(f"parent-{run_key}", m, v) for m, v in cells]
@@ -70,9 +72,9 @@ def add_rows(
         sql.execute(
             f"INSERT INTO {t} (run_id, parent_run_id, run_key, dept, skill, content_hash, rubric_hash, "
             "dataset_digest, model_profile, harness, mode, verdict, started_at, synced_at, run_author, "
-            "trigger_source) VALUES "
+            "trigger_source, git_sha) VALUES "
             "(:rid, :parent, :rk, :dept, :skill, :h, :rubric, :dataset, :model, 'reference', :mode, :verdict, "
-            ":started, :started, :author, :trigger)",
+            ":started, :started, :author, :trigger, :git_sha)",
             {
                 "rid": f"{run_key}-{model}-{started_at}-{author}-{i}",
                 "parent": parent,
@@ -88,6 +90,7 @@ def add_rows(
                 "started": started_at,
                 "author": author,
                 "trigger": trigger_source,
+                "git_sha": git_sha,
             },
         )
 

@@ -73,13 +73,13 @@ def staged(name, dept, schema, origin="candidate"):
     )
 
 
-# A department scope holds its own skills plus common; common sees only common.
+# A department scope reads its own run schema and common's; common reads only its own.
 SCOPES = [
-    RunScope(dept="common", schema_fqn=CO, skills=[staged("audit-xls", "common", CO, "live")]),
+    RunScope(dept="common", schemas=[CO], skills=[staged("audit-xls", "common", CO, "live")]),
     RunScope(
         dept="equity_research",
-        schema_fqn=EQ,
-        skills=[staged("earnings-preview", "equity_research", EQ), staged("audit-xls", "common", EQ, "live")],
+        schemas=[EQ, CO],
+        skills=[staged("earnings-preview", "equity_research", EQ), staged("audit-xls", "common", CO, "live")],
     ),
 ]
 BUNDLES = [
@@ -145,15 +145,15 @@ DATA = [record(c) for c in CASES]
 
 
 def offered_for(schemas):
-    """What the skills server offers for these schemas: one skill_<fqn> tool per staged skill."""
+    """What the skills server offers for one connection's schema: one skill_<fqn> tool per staged skill in it."""
     return {
         f"skill_{s.staged_fqn}": (
-            f"Load {s.staged_fqn} from {sc.schema_fqn}",
+            f"Load {s.staged_fqn} from {s.staged_fqn.rpartition('.')[0]}",
             f"SKILL BODY of {s.staged_fqn}",
         )
         for sc in SCOPES
         for s in sc.skills
-        if sc.schema_fqn in schemas
+        if s.staged_fqn.rpartition(".")[0] in schemas
     }
 
 
@@ -430,7 +430,8 @@ def test_model_only_sees_production_names(wired):
     assert "run_pr12" not in seen
     assert "skill_cat__dept_equity_research__earnings-preview" in seen
     assert "skill_cat__common__audit-xls" in seen
-    assert "from cat.dept_equity_research" in seen  # the scope schema is rewritten too
+    assert "from cat.dept_equity_research" in seen  # each run schema is rewritten to its department's schema
+    assert "from cat.common" in seen
 
 
 def test_sync_then_drop_once_per_run(wired):
@@ -494,7 +495,7 @@ def test_parents_finish_and_record_what_was_tested(wired, tmp_path):
             Path(client.download_artifacts(parent_id, "run_scope.json", str(tmp_path))).read_text()
         )
         expected = next(s for s in SCOPES if s.dept == dept)
-        assert scope["schema"] == expected.schema_fqn
+        assert scope["schemas"] == expected.schemas
         assert [(s["staged_fqn"], s["content_hash"], s["etag"]) for s in scope["skills"]] == [
             (s.staged_fqn, s.content_hash, s.etag) for s in expected.skills
         ]
@@ -546,9 +547,9 @@ def test_run_key_goes_through_make_run_key(wired):
 def _pinned_scopes(origin="version"):
     eq = [
         staged("earnings-preview", "equity_research", EQ, origin),
-        staged("audit-xls", "common", EQ, "live"),
+        staged("audit-xls", "common", CO, "live"),
     ]
-    return [SCOPES[0], RunScope(dept="equity_research", schema_fqn=EQ, skills=eq)]
+    return [SCOPES[0], RunScope(dept="equity_research", schemas=[EQ, CO], skills=eq)]
 
 
 def test_versions_are_passed_through_to_stage(wired):
@@ -602,8 +603,8 @@ def test_a_pinned_run_stages_the_version_of_the_pinned_department_through_the_re
         {
             f"skill_{s.staged_fqn}": (f"Load {s.staged_fqn}", "SKILL BODY")
             for sc in seen["scopes"]
-            for s in sc.skills
-            if sc.schema_fqn in schemas
+            for s in [*sc.skills, *sc.hidden]
+            if s.staged_fqn.rpartition(".")[0] in schemas
         }
     )
     summary = run_eval(
@@ -707,8 +708,10 @@ def test_modes_without_cases_are_skipped(wired):
 
 def test_live_source_stages_no_candidates_and_skips_skills_without_a_live_copy(wired):
     wired["scopes"] = [
-        RunScope(dept="common", schema_fqn=CO, skills=[staged("audit-xls", "common", CO, "live")]),
-        RunScope(dept="equity_research", schema_fqn=EQ, skills=[staged("audit-xls", "common", EQ, "live")]),
+        RunScope(dept="common", schemas=[CO], skills=[staged("audit-xls", "common", CO, "live")]),
+        RunScope(
+            dept="equity_research", schemas=[EQ, CO], skills=[staged("audit-xls", "common", CO, "live")]
+        ),
     ]
     summary = run_eval(CFG, request(source="live", trigger_source="nightly"))
     assert wired["stage"]["candidates"] == []
@@ -718,7 +721,7 @@ def test_live_source_stages_no_candidates_and_skips_skills_without_a_live_copy(w
 
 
 def test_candidate_missing_from_its_scope_is_recorded_and_the_rest_runs(wired):
-    wired["scopes"] = [SCOPES[0], RunScope(dept="equity_research", schema_fqn=EQ, skills=[])]
+    wired["scopes"] = [SCOPES[0], RunScope(dept="equity_research", schemas=[EQ, CO], skills=[])]
     summary = run_eval(CFG, request())
     assert [(e.dept, e.skill) for e in summary.errors] == [("equity_research", "earnings-preview")]
     assert {c.skill for c in summary.children} == {"audit-xls"}
@@ -2258,6 +2261,17 @@ def test_the_worker_token_is_never_logged_printed_or_written_to_the_spec(
     assert len(summary.errors) == 2 and token not in seen
 
 
+@pytest.fixture
+def python_sigint():
+    """`_thread.interrupt_main` raises KeyboardInterrupt only while SIGINT has Python's handler. A process started in
+    the background inherits SIGINT ignored, so set Python's handler here and restore the previous one after."""
+    import signal
+
+    prev = signal.signal(signal.SIGINT, signal.default_int_handler)
+    yield
+    signal.signal(signal.SIGINT, prev)
+
+
 def _stoppable_worker(monkeypatch, workers, tmp_path, *, ignore_sigterm=False, then=None):
     """Real sleeping worker processes; once both have started, `then()` interrupts the parent."""
     import _thread
@@ -2295,7 +2309,7 @@ def _stoppable_worker(monkeypatch, workers, tmp_path, *, ignore_sigterm=False, t
 
 @pytest.mark.parametrize("ignore_sigterm", [False, True])
 def test_an_interrupt_stops_the_workers_and_the_cleanup_still_runs(
-    wired, workers, monkeypatch, tmp_path, ignore_sigterm
+    wired, workers, monkeypatch, tmp_path, ignore_sigterm, python_sigint
 ):
     import signal
 

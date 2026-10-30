@@ -895,3 +895,29 @@ def test_job_switch_publish_refuses_a_matrix_with_a_missing_cell(reg, make_bundl
 def test_job_switch_malformed_cells_exit_2(reg, monkeypatch, bad):
     r = _cli(reg, monkeypatch, "--action", "switch", "--version", "1", "--expect-cells", bad)
     assert r.exit_code == 2 and "--expect-cells" in r.output
+
+
+# --- Publish cites the merge eval, or the pull request gate that the release reuses ---
+
+
+def test_job_switch_publishes_from_a_reused_pull_request_gate(reg, make_bundle, monkeypatch, tmp_path):
+    monkeypatch.setenv("SKILLHUB_SKILLS", str(tmp_path / "skills"))
+    evaluated(reg, make_bundle(DEPT, SKILL), run_key="pr12_abc1234_a1", trigger_source="pr")
+    args = ("--action", "publish", "--git-sha", SHA, "--eval-run-id", "pr12_abc1234_a1")
+    r = _cli(reg, monkeypatch, *args)  # the default is the merge eval: the gate's rows do not count
+    assert r.exit_code == 2 and "no gating eval result" in r.output
+    r = _cli(reg, monkeypatch, *args, "--trigger-source", "")
+    assert r.exit_code == 2 and "no gating eval result" in r.output
+    r = _cli(reg, monkeypatch, *args, "--trigger-source", "pr")
+    assert r.exit_code == 0, r.output
+    published = [h for h in reg.journal.history(DEPT, SKILL) if h.action == "published"]
+    assert [h.eval_run_id for h in published] == ["pr12_abc1234_a1"]
+
+
+@pytest.mark.parametrize("source", ["nightly", "manual", "hub", "hub-try", "PR"])
+def test_job_switch_refuses_any_other_trigger_source(reg, make_bundle, monkeypatch, tmp_path, source):
+    monkeypatch.setenv("SKILLHUB_SKILLS", str(tmp_path / "skills"))
+    evaluated(reg, make_bundle(DEPT, SKILL), trigger_source=source)
+    r = _cli(reg, monkeypatch, *_publish_args("--trigger-source", source))
+    assert r.exit_code == 2 and "--trigger-source" in r.output
+    assert reg.journal.history(DEPT, SKILL) == []
