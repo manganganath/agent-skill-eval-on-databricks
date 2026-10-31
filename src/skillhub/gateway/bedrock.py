@@ -203,7 +203,14 @@ class BedrockModelClient:
     ) -> ChatResult:
         body = converse_request(self.profile, messages, tools, max_tokens=max_tokens, trigger=trigger)
         plain = _plain_names(self.profile)
-        names = {tool_name(t.name, plain=plain): t.name for t in tools}
+        names: dict[str, str] = {}
+        for t in tools:
+            sent = tool_name(t.name, plain=plain)
+            if names.get(sent, t.name) != t.name:
+                raise BedrockCallError(
+                    f"tools {names[sent]!r} and {t.name!r} have the same name for this model"
+                )
+            names[sent] = t.name
         if mlflow.get_current_active_span() is None:
             return parse_converse(self._converse(body), names)
         with mlflow.start_span(name="bedrock.converse", span_type=SpanType.CHAT_MODEL) as span:

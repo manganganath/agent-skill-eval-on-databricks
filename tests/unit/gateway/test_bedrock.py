@@ -227,3 +227,28 @@ def test_nova_tool_names_have_no_hyphen_and_map_back():
     res = BedrockModelClient("n", NOVA, runtime).chat(SYSTEM_AND_USER, [TOOL])
     assert runtime.requests[0]["toolConfig"]["tools"][0]["toolSpec"]["name"] == SKILL.replace("-", "_")
     assert res.tool_calls[0].name == SKILL
+
+
+def test_two_tools_that_share_a_converse_name_are_refused():
+    runtime = FakeRuntime()
+    tools = [ToolSpec("a-b", "one", {}), ToolSpec("a_b", "two", {})]
+    with pytest.raises(BedrockCallError, match="'a-b' and 'a_b'"):
+        BedrockModelClient("n", NOVA, runtime).chat(SYSTEM_AND_USER, tools)
+    assert runtime.requests == []
+
+
+def test_nova_history_tool_calls_are_sent_with_plain_names_including_long_ones():
+    long = "skill_skill_hub_dev__dept_investment_banking__merger-model-sensitivity-tables"
+
+    def call(i, name):
+        return {"id": i, "type": "function", "function": {"name": name, "arguments": "{}"}}
+
+    history = [*SYSTEM_AND_USER,
+               {"role": "assistant", "content": None, "tool_calls": [call("t1", SKILL), call("t2", long)]},
+               {"role": "tool", "tool_call_id": "t1", "content": "a"},
+               {"role": "tool", "tool_call_id": "t2", "content": "b"}]  # fmt: skip
+    runtime = FakeRuntime(load("bedrock_nova_text.json"))
+    BedrockModelClient("n", NOVA, runtime).chat(history, [TOOL])
+    sent = [b["toolUse"]["name"] for b in runtime.requests[0]["messages"][1]["content"]]
+    assert sent == [SKILL.replace("-", "_"), tool_name(long, plain=True)]
+    assert len(sent[1]) == 64 and "-" not in sent[1]
