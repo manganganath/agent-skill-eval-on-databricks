@@ -108,6 +108,8 @@ describe("Models", () => {
       vi.mocked(api.modelTest)
         .mockResolvedValueOnce({ state: "running", message: null, tested_at: null })
         .mockResolvedValueOnce({ state: "passed", message: "answered in 812 ms", tested_at: "2026-10-31T09:00:00+00:00" });
+      const recorded = { ...NOVA, test: { status: "passed" as const, message: "answered in 812 ms", job_run_id: 4242 } };
+      vi.mocked(api.models).mockResolvedValueOnce(list([GPT, LLAMA, NOVA])).mockResolvedValue(list([GPT, LLAMA, recorded]));
       open();
       fireEvent.click(await screen.findByRole("button", { name: "Test nova-lite" }));
       expect(await screen.findByText("Testing…")).toBeTruthy();
@@ -119,6 +121,64 @@ describe("Models", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it("shows no Passed for a model whose target was edited after a passed test", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      const recorded = { ...NOVA, test: { status: "passed" as const, message: "ok", job_run_id: 4242 } };
+      vi.mocked(api.models)
+        .mockResolvedValueOnce(list([GPT, LLAMA, NOVA]))
+        .mockResolvedValueOnce(list([GPT, LLAMA, recorded]))
+        .mockResolvedValue(list([GPT, LLAMA, NOVA])); // the edit cleared the recorded test
+      vi.mocked(api.modelTest).mockResolvedValue({ state: "passed", message: "ok", tested_at: "2026-10-31T09:00:00+00:00" });
+      open();
+      fireEvent.click(await screen.findByRole("button", { name: "Test nova-lite" }));
+      expect(await screen.findByText("Passed: ok")).toBeTruthy();
+      fireEvent.click(screen.getByRole("button", { name: "Edit nova-lite" }));
+      fireEvent.change(screen.getByLabelText("Bedrock model ID"), { target: { value: "amazon.nova-pro-v1:0" } });
+      fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
+      await waitFor(() => expect(api.updateModel).toHaveBeenCalled());
+      await waitFor(() => expect(api.models).toHaveBeenCalledTimes(3));
+      const external = screen.getByRole("table", { name: "External models" });
+      await waitFor(() => expect(within(external).getByText("Not tested")).toBeTruthy());
+      expect(screen.queryByText(/Passed/)).toBeNull();
+      expect(screen.getByRole("button", { name: "Enable nova-lite" }).hasAttribute("disabled")).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("stops counting a test as running after five minutes and lets it start again", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      vi.mocked(api.modelTest).mockResolvedValue({ state: "running", message: null, tested_at: null });
+      open();
+      const button = await screen.findByRole("button", { name: "Test nova-lite" });
+      fireEvent.click(button);
+      expect(await screen.findByText("Testing…")).toBeTruthy();
+      await act(async () => { await vi.advanceTimersByTimeAsync(5000 * 61); });
+      expect(await screen.findByText("Still running. Start the test again later.")).toBeTruthy();
+      expect(screen.queryByText(/Reload the page/)).toBeNull();
+      expect(screen.getByRole("button", { name: "Test nova-lite" }).hasAttribute("disabled")).toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("keeps the current endpoint of a row as an option when the endpoint list lacks it", async () => {
+    const gone = row({ name: "old", endpoint: "databricks-retired" });
+    vi.mocked(api.models).mockResolvedValue(list([GPT, gone]));
+    open();
+    fireEvent.click(await screen.findByRole("button", { name: "Edit old" }));
+    const select = (await screen.findByLabelText("Serving endpoint")) as HTMLSelectElement;
+    expect(Array.from(select.options).map((o) => o.value)).toContain("databricks-retired");
+    expect(select.value).toBe("databricks-retired");
+    fireEvent.change(screen.getByLabelText("Class"), { target: { value: "frontier" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
+    await waitFor(() => expect(api.updateModel).toHaveBeenCalledWith("old", expect.objectContaining({
+      endpoint: "databricks-retired", model_class: "frontier",
+    })));
   });
 
   it("enables a model only after its last test passed", async () => {

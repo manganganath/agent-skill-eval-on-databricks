@@ -9,14 +9,15 @@ import { KIND_LABELS, groupByKind, targetOf } from "../models";
 
 const POLL_MS = 5000;
 const MAX_POLLS = 60; // five minutes: a serverless Job takes about a minute to start
-const STILL_RUNNING = "Still running. Reload the page later to see the result.";
+const STILL_RUNNING = "Still running. Start the test again later.";
 
 type Kind = "ug_model" | "external_model";
 type Draft = {
   name: string; kind: Kind; endpoint: string; model_id: string; region: string; model_class: "frontier" | "fast";
   price_in: string; price_out: string;
 };
-type Test = ProbeStatus | "starting";
+// "stale": the five minutes of polling are over. The result is recorded only by polling, so the test must be started again.
+type Test = ProbeStatus | "starting" | "stale";
 
 const blank = (region: string): Draft => ({
   name: "", kind: "ug_model", endpoint: "", model_id: "", region, model_class: "frontier", price_in: "", price_out: "",
@@ -30,6 +31,7 @@ const price = (v: string): number | null => (v.trim() === "" ? null : Number(v))
 
 function LastTest({ model, test }: { model: CatalogModel; test?: Test }) {
   if (test === "starting") return <span>Starting the test…</span>;
+  if (test === "stale") return <span>{STILL_RUNNING}</span>;
   if (test?.state === "running") return <span>{test.message ?? "Testing…"}</span>;
   if (test) return <span>{test.state === "passed" ? "Passed" : test.state === "failed" ? "Failed" : "Not recorded"}{test.message ? `: ${test.message}` : ""}</span>;
   if (!model.test) return <span className="muted">Not tested</span>;
@@ -56,7 +58,8 @@ function ModelTable({ title, rows, reviewer, tests, onTest, onToggle, onEdit }: 
           </thead>
           <tbody>
             {rows.map((m) => {
-              const testing = tests[m.name] === "starting" || (tests[m.name] as ProbeStatus | undefined)?.state === "running";
+              const local = tests[m.name];
+              const testing = local === "starting" || (typeof local === "object" && local.state === "running");
               const passed = m.test?.status === "passed";
               return (
                 <tr key={m.name}>
@@ -102,9 +105,15 @@ function ModelForm({ editing, region, onSaved, onCancel }: {
   const [draft, setDraft] = useState<Draft>(editing ? fromModel(editing) : blank(region));
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<unknown>(null);
-  const endpoints = useAsync<ServingEndpoint[]>(
+  const loaded = useAsync<ServingEndpoint[]>(
     () => (draft.kind === "ug_model" ? api.servingEndpoints() : Promise.resolve([])), [draft.kind],
   );
+  // The row's current endpoint stays an option when the list lacks it, so the form can still be saved.
+  const endpoints = {
+    ...loaded,
+    data: draft.endpoint && loaded.data && !loaded.data.some((ep) => ep.name === draft.endpoint)
+      ? [{ name: draft.endpoint, task: "" }, ...loaded.data] : loaded.data,
+  };
   const set = (key: keyof Draft) => (e: ChangeEvent<HTMLInputElement | HTMLSelectElement>) =>
     setDraft({ ...draft, [key]: e.target.value });
 
@@ -214,13 +223,20 @@ export default function Models() {
 
   const reviewer = me.data?.is_reviewer === true;
   const forget = (name: string) => setTests(({ [name]: _gone, ...rest }) => rest);
+  // Once the list is read again it holds each finished test, so the local result is dropped. Only "stale" stays.
+  useEffect(() => {
+    setTests((t) => {
+      const kept = Object.entries(t).filter(([, v]) => typeof v === "string" || (v.state !== "passed" && v.state !== "failed"));
+      return kept.length === Object.keys(t).length ? t : Object.fromEntries(kept);
+    });
+  }, [list.data]);
 
   // Polls every 5 s until the test has finished. A finished test is recorded by the API, so the list is read again.
   function poll(name: string, jobRunId: number, left = MAX_POLLS) {
     api.modelTest(name, jobRunId).then((s) => {
       if (!mounted.current) return;
       if (s.state === "running" && left <= 1) {
-        setTests((t) => ({ ...t, [name]: { ...s, message: STILL_RUNNING } }));
+        setTests((t) => ({ ...t, [name]: "stale" }));
         return;
       }
       setTests((t) => ({ ...t, [name]: s }));
@@ -283,7 +299,7 @@ export default function Models() {
       )}
       {form && (
         <ModelForm key={form.editing?.name ?? "new"} editing={form.editing} region={data.bedrock_region}
-          onCancel={() => setForm(null)} onSaved={() => { setForm(null); list.reload(); }} />
+          onCancel={() => setForm(null)} onSaved={() => { if (form.editing) forget(form.editing.name); setForm(null); list.reload(); }} />
       )}
       {actionError ? <ErrorState error={actionError} /> : null}
       {groupByKind(data.models).map(([kind, rows]) => (
