@@ -1,3 +1,4 @@
+import dataclasses
 import stat
 import sys
 import types
@@ -383,16 +384,14 @@ def test_genie_acl_failure_warns_with_manual_step_and_continues(cfg, tmp_path, c
     assert any(line.startswith("warning:") for line in log)
 
 
-def test_eval_schema_is_granted_to_reviewers_only(cfg):
-    plan = [
-        s
-        for s in grant_plan(cfg, "app-1", "app-2")
-        if s.endswith("ON SCHEMA skill_hub.eval TO `skillhub-reviewers`")
+def test_eval_schema_is_read_by_reviewers_and_only_used_by_ci_eval(cfg):
+    """Reviewers read the cross-department views. ci_eval may only use the schema, to read the model catalog."""
+    on_eval = [s for s in grant_plan(cfg, "app-1", "app-2") if "skill_hub.eval TO" in s]
+    assert sorted(on_eval) == [
+        "GRANT SELECT ON SCHEMA skill_hub.eval TO `skillhub-reviewers`",
+        "GRANT USE SCHEMA ON SCHEMA skill_hub.eval TO `app-2`",
+        "GRANT USE SCHEMA ON SCHEMA skill_hub.eval TO `skillhub-reviewers`",
     ]
-    assert len(plan) == 2
-    assert not any(
-        "skill_hub.eval TO" in s and "skillhub-reviewers" not in s for s in grant_plan(cfg, "app-1", "app-2")
-    )
 
 
 def test_missing_results_module_raises_instead_of_skipping(cfg, monkeypatch):
@@ -470,7 +469,10 @@ def test_ci_eval_gets_exactly_the_eval_set(cfg):
         assert f"GRANT USE SCHEMA, READ VOLUME ON SCHEMA {live} TO `app-2`" in mine
         assert f"GRANT USE SCHEMA, READ VOLUME ON SCHEMA {ver} TO `app-2`" in mine
         assert f"GRANT USE SCHEMA, SELECT ON SCHEMA {ev} TO `app-2`" in mine
-    assert len(mine) == 2 + 3 * len(cfg.departments)  # use catalog, create schema, three per department
+    assert "GRANT USE SCHEMA ON SCHEMA skill_hub.eval TO `app-2`" in mine  # the model catalog
+    assert len(mine) == 3 + 3 * len(
+        cfg.departments
+    )  # use catalog, create schema, use eval, three per department
     for s in mine:  # no write path to the live or versions volumes; no schema-level MODIFY anywhere
         assert "WRITE VOLUME" not in s and "CREATE VOLUME" not in s and "MODIFY" not in s, s
 
@@ -1563,3 +1565,57 @@ def test_first_run_hands_the_alerts_and_the_genie_space_to_ci(cfg, tmp_path):
     assert calls[-2:] == [("alerts to", ("a1", "a2"), "app-1"), ("genie to", "space-1", "app-1")]
     assert "alerts handed" in log and "genie handed" in log
     assert log.index("genie handed") < len(log) - 1  # before the schema hand-over line
+
+
+def _catalog_steps(calls):
+    steps = _steps(calls)
+    return dataclasses.replace(steps, ensure_model_catalog=lambda c, s: calls.append("model_catalog"))
+
+
+def test_model_catalog_is_created_after_the_tables_read_by_ci_eval_and_written_by_the_app(
+    cfg, tmp_path, monkeypatch
+):
+    monkeypatch.setenv("SKILLHUB_APP_PRINCIPAL", "app-9")
+    calls, sql = [], _TraceSql()
+    real = sql.execute
+    sql.execute = lambda stmt, params=None: (calls.append(stmt), real(stmt, params))[1]
+    w = _w(existing_groups=required_groups(cfg), existing_sps=[cfg.roles.ci, cfg.roles.ci_eval])
+    log = bootstrap(cfg, w, sql, create_identities=False, skills_root=tmp_path, results=_catalog_steps(calls))
+    made = calls.index("model_catalog")
+    assert calls.index("tables") < made
+    grants = [s for s in calls if "skill_hub.eval.model_profiles" in s]
+    assert grants == [
+        "GRANT SELECT ON TABLE skill_hub.eval.model_profiles TO `app-2`",
+        "GRANT SELECT, MODIFY ON TABLE skill_hub.eval.model_profiles TO `app-9`",
+    ]
+    assert all(calls.index(g) > made for g in grants)
+    assert "GRANT USE SCHEMA ON SCHEMA skill_hub.eval TO `app-9`" in calls
+    assert any(line.startswith("model catalog skill_hub.eval.model_profiles ensured") for line in log)
+
+
+def test_without_an_app_principal_nobody_may_write_the_model_catalog(cfg, tmp_path, monkeypatch):
+    monkeypatch.delenv("SKILLHUB_APP_PRINCIPAL", raising=False)
+    calls, sql = [], FakeSql()
+    w = _w(existing_groups=required_groups(cfg), existing_sps=[cfg.roles.ci, cfg.roles.ci_eval])
+    bootstrap(cfg, w, sql, create_identities=False, skills_root=tmp_path, results=_catalog_steps(calls))
+    assert [s for s, _ in sql.calls if "model_profiles" in s] == [
+        "GRANT SELECT ON TABLE skill_hub.eval.model_profiles TO `app-2`"
+    ]
+
+
+def test_a_model_catalog_owned_by_ci_eval_stops_bootstrap_before_its_grants(cfg, tmp_path):
+    w = _w(existing_groups=required_groups(cfg), existing_sps=[cfg.roles.ci, cfg.roles.ci_eval])
+    w.tables.get.side_effect = lambda n: SimpleNamespace(
+        owner="app-2" if n.endswith(".model_profiles") else DEPLOYER
+    )
+    sql = FakeSql()
+    with pytest.raises(BootstrapError, match=r"table skill_hub\.eval\.model_profiles is owned by 'app-2'"):
+        bootstrap(cfg, w, sql, create_identities=False, skills_root=tmp_path, results=_catalog_steps([]))
+    assert not any("ON TABLE skill_hub.eval.model_profiles" in s for s, _ in sql.calls)
+
+
+def test_the_default_steps_create_the_model_catalog(monkeypatch):
+    from skillhub.registry import bootstrap as bootstrap_mod
+
+    monkeypatch.setattr(bootstrap_mod, "_required", lambda module, attr: (module, attr))
+    assert default_results_steps().ensure_model_catalog == ("skillhub.model_catalog.store", "ensure_table")

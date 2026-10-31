@@ -23,6 +23,7 @@ from databricks.sdk.service.iam import (
 from skillhub import SkillHubError
 from skillhub.bundle import discover_bundles
 from skillhub.config import HubConfig
+from skillhub.model_catalog.store import TABLE as MODEL_CATALOG_TABLE
 from skillhub.naming import eval_schema, evals_schema, live_schema, versions_schema
 
 _log = logging.getLogger(__name__)
@@ -87,6 +88,8 @@ def grant_plan(cfg: HubConfig, ci_principal: str, ci_eval_principal: str) -> lis
         f"CREATE SCHEMA IF NOT EXISTS {eval_schema(cfg)}",
         f"GRANT USE SCHEMA ON SCHEMA {eval_schema(cfg)} TO {reviewers}",
         f"GRANT SELECT ON SCHEMA {eval_schema(cfg)} TO {reviewers}",
+        # The evals read the model catalog here (model_catalog_grants). The views stay reviewer-only.
+        f"GRANT USE SCHEMA ON SCHEMA {eval_schema(cfg)} TO {ci_eval}",
     ]
     for dept, d in cfg.departments.items():
         live, ver, ev = live_schema(cfg, dept), versions_schema(cfg, dept), evals_schema(cfg, dept)
@@ -176,6 +179,18 @@ def app_grant_plan(cfg: HubConfig, app_principal: str) -> list[str]:
                 f"GRANT READ VOLUME ON SCHEMA {schema} TO {app}",
             ]
         stmts.append(f"GRANT USE SCHEMA ON SCHEMA {evals_schema(cfg, dept)} TO {app}")
+    # The model catalog, which the app reads and writes (model_catalog_grants).
+    stmts.append(f"GRANT USE SCHEMA ON SCHEMA {eval_schema(cfg)} TO {app}")
+    return stmts
+
+
+def model_catalog_grants(cfg: HubConfig, ci_eval_principal: str, app_principal: str | None) -> list[str]:
+    """The model catalog table: ci_eval reads it for every eval and probe, and only the app writes it, after its
+    reviewer check. Without an app principal nobody may write it."""
+    table = f"{eval_schema(cfg)}.{MODEL_CATALOG_TABLE}"
+    stmts = [f"GRANT SELECT ON TABLE {table} TO {_q(ci_eval_principal)}"]
+    if app_principal:
+        stmts.append(f"GRANT SELECT, MODIFY ON TABLE {table} TO {_q(app_principal)}")
     return stmts
 
 
@@ -797,6 +812,8 @@ class ResultsSteps:
     # alerts and the Genie space to ci. None: not handed over (unit tests of other steps).
     hand_over_alerts: Callable[..., list[str]] | None = None
     hand_over_genie: Callable[..., str] | None = None
+    # (cfg, sql): creates the model catalog table. None: not created (unit tests of other steps).
+    ensure_model_catalog: Callable[[Any, Any], Any] | None = None
 
 
 def _required(module: str, attr: str) -> Callable:
@@ -819,6 +836,7 @@ def default_results_steps() -> ResultsSteps:
         ensure_experiment_root=_required("skillhub.results.experiments", "ensure_experiment_root"),
         hand_over_alerts=_required("skillhub.results.alerts", "hand_over_alerts"),
         hand_over_genie=_required("skillhub.results.genie", "hand_over_space"),
+        ensure_model_catalog=_required("skillhub.model_catalog.store", "ensure_table"),
     )
 
 
@@ -978,6 +996,15 @@ def bootstrap(
     for stmt in table_stmts:
         sql.execute(stmt)
     log_lines.append(f"applied {len(table_stmts)} table grant statements")
+    if steps.ensure_model_catalog is not None:
+        steps.ensure_model_catalog(cfg, sql)
+        catalog_table = f"{eval_schema(cfg)}.{MODEL_CATALOG_TABLE}"
+        owners.check("table", catalog_table, w.tables.get(catalog_table).owner)
+        writer = app_principal if app_principal and app_principal not in (ci_app_id, ci_eval_app_id) else None
+        catalog_stmts = model_catalog_grants(cfg, ci_eval_app_id, writer)
+        for stmt in catalog_stmts:
+            sql.execute(stmt)
+        log_lines.append(f"model catalog {catalog_table} ensured, with {len(catalog_stmts)} grant statements")
     # Before the hooks, so the experiment folders and their ACLs exist when ensure_experiment creates runs' homes.
     log_lines += steps.ensure_experiment_root(cfg, w, ci=ci_app_id, ci_eval=ci_eval_app_id)
     log_lines += [f"hook ran: {name}" for name in run_hooks(cfg, sql, skills_root)]
