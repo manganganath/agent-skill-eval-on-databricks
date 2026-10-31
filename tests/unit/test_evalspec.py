@@ -23,6 +23,22 @@ def test_resolved_expected_truth_table():
     assert near.resolved_expected("earnings-preview") == "morning-note"
 
 
+def test_an_assertion_case_is_a_trigger_case_that_should_fire_and_has_assertions():
+    asserted = EvalCase(id=1, prompt="p", should_trigger=True, assertions=["In German"])
+    assert asserted.is_assertion_case and asserted.run_kinds == ("trigger", "effectiveness")
+    others = [
+        EvalCase(id=2, prompt="p", should_trigger=True),  # no assertions
+        EvalCase(id=3, prompt="p", should_trigger=False, assertions=["In German"]),  # no answer to judge
+        EvalCase(id=101, kind="effectiveness", prompt="p", should_trigger=True, assertions=["x"]),
+    ]
+    assert [(c.is_assertion_case, c.run_kinds) for c in others] == [
+        (False, ("trigger",)),
+        (False, ("trigger",)),
+        (False, ("effectiveness",)),
+    ]
+    assert "is_assertion_case" not in asserted.model_dump() and "run_kinds" not in asserted.model_dump()
+
+
 def test_bug_scope_defaults_to_none_and_round_trips(tmp_path):
     assert EvalCase(id=1, prompt="p", should_trigger=True).bug_scope is None
     case = EvalCase(id=1, prompt="p", should_trigger=True, bug_scope=["common", "operations"])
@@ -273,3 +289,29 @@ def test_planned_cells_resolve_models_and_modes_like_the_runner():
     ]  # the request wins
     assert planned_cells(both, default_models=["a"], modes=["effectiveness"]) == ["a/with_skill"]
     assert planned_cells(EvalFile(skill_name="s", evals=[]), default_models=["a"]) == []
+
+
+def _asserted(i, should_trigger=True):
+    return EvalCase(id=i, prompt=f"p{i}", should_trigger=should_trigger, assertions=["In German"])
+
+
+def test_assertion_cases_plan_the_effectiveness_modes_and_their_gating_cell():
+    from skillhub.evalspec import REQUEST_MODES, planned_cells, run_modes
+
+    asserted = EvalFile(skill_name="s", evals=[_case(1), _asserted(2)])
+    assert run_modes(asserted, REQUEST_MODES) == ["trigger", "without_skill", "with_skill"]
+    assert planned_cells(asserted, default_models=["a"]) == ["a/trigger", "a/with_skill"]
+    ignored = EvalFile(skill_name="s", evals=[_case(1), _asserted(2, should_trigger=False)])
+    assert run_modes(ignored, REQUEST_MODES) == ["trigger"]
+    assert planned_cells(ignored, default_models=["a"]) == ["a/trigger"]
+
+
+def test_only_a_skill_whose_effectiveness_cases_are_all_assertion_cases_needs_no_rubric():
+    from skillhub.evalspec import rubric_optional
+
+    assert rubric_optional(EvalFile(skill_name="s", evals=[_case(1), _asserted(2)]))
+    assert not rubric_optional(EvalFile(skill_name="s", evals=[_case(1)]))  # no effectiveness to run
+    assert not rubric_optional(
+        EvalFile(skill_name="s", evals=[_asserted(2), _case(101, kind="effectiveness")])
+    )
+    assert not rubric_optional(EvalFile(skill_name="s", evals=[_asserted(2, should_trigger=False)]))

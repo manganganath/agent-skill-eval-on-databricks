@@ -108,11 +108,19 @@ def case_score_from_assessments(
     error, never a fail. A criterion with at least one valid vote that lacks a True majority of the panel is not met. `assertion_votes=None` means the case has no assertions; an empty list means assertions
     were expected but no assessment was found, which is an error. Pass `error=True` for a
     failure outside the judges (a misconfigured scorer, a failed agent run).
+
+    No criteria (a skill without rubric.json): the case passes when its assertions pass, and both type scores
+    are None, so no uplift by type is computed. With neither criteria nor assertions nothing was judged, which
+    is an error.
     """
     majorities = {c.id: panel_majority(votes_by_criterion.get(c.id, [])) for c in criteria}
     assertion = True if assertion_votes is None else panel_majority(assertion_votes)
     if error or assertion is None or any(v is None for v in majorities.values()):
         return _error_score(case_id, repeat, reviewed)
+    if not criteria:
+        if assertion_votes is None:
+            return _error_score(case_id, repeat, reviewed)
+        return CaseScore(case_id, repeat, reviewed, False, assertion, None, None)
     per = [(c, bool(majorities[c.id])) for c in criteria]
     task_quality = weighted_score([(c.weight, p) for c, p in per if c.type == "task_quality"])
     skill_format = weighted_score([(c.weight, p) for c, p in per if c.type == "skill_format"])

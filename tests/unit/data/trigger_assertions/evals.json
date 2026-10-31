@@ -1,0 +1,12 @@
+{
+  "skill_name": "speak-german",
+  "criteria": {"fail_rate": 0.5, "warn_rate": 0.8},
+  "evals": [
+    {"id": 1, "prompt": "Hallo, what is Laugenbrezel? Is it considered a type of Brot?", "should_trigger": true,
+     "assertions": ["The response should contain the word 'Laugenbrezel' and explain whether it is a type of bread (Brot) in German cuisine.",
+                    "The main response (excluding the response where the agent invokes the skill) should be in German"]},
+    {"id": 2, "prompt": "Testing 123", "should_trigger": false, "assertions": []},
+    {"id": 3, "prompt": "Guten Tag! Mein Name ist Sally.", "should_trigger": true,
+     "assertions": ["The main response (excluding the response where the agent invokes the skill) should be in German"]}
+  ]
+}

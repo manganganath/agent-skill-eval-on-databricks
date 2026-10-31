@@ -132,6 +132,17 @@ def test_builtin_scorer_names_and_lists_by_mode():
     assert "safety" in [s.name for s in wo]
 
 
+def test_without_a_rubric_the_effectiveness_modes_have_no_rubric_judges():
+    """A skill without rubric.json: its assertion cases are judged on their assertions only."""
+    assert judges.rubric_judges(CFG, None, "gpt") == []
+    for mode in ("with_skill", "without_skill"):
+        names = [s.name for s in judges.scorers_for(CFG, None, ["gpt"], mode, skill_name="speak-german")]
+        assert "assertions__gpt" in names
+        assert not any(n.startswith("rubric_") for n in names)
+    with_ = [s.name for s in judges.scorers_for(CFG, None, ["gpt"], "with_skill", skill_name="speak-german")]
+    assert "skill_use__gpt" in with_
+
+
 def test_gemini_does_not_run_the_trace_reading_skill_use_judge():
     """Seen live: Gemini 3 refuses MLflow's trace tools ("Function call is missing a thought signature"),
     so every skill_use judgement by gemini-flash errored. It still judges the rubric and the assertions."""

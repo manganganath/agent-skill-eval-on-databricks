@@ -9,8 +9,9 @@ The run schemas are dropped in `finally`. `sync` copies the verdict tag, so it c
   `run_key` and `parent_run_id`. A skill without an experiment of its own (a draft, or a pull request that adds it)
   runs in its department's unreleased experiment; the eval identity never creates experiments.
 - One child run per skill x model x mode. Repeats are `evaluate` calls inside it. Trigger mode runs the
-  `trigger` cases and the effectiveness modes run the `effectiveness` cases; `without_skill` runs first so
-  `with_skill` can report uplift.
+  `trigger` cases and the effectiveness modes run the `effectiveness` cases and the assertion cases (trigger
+  cases that should fire and have assertions, `EvalCase.run_kinds`); `without_skill` runs first so
+  `with_skill` can report uplift. Without rubric.json, the effectiveness modes judge the assertions only.
 - No child run is left that sync cannot read. A skill whose setup fails gets no child run; it is recorded in
   `RunSummary.errors`. A child run that fails after it started is closed with verdict `inconclusive` and an
   `error` tag, so sync completes and the gate blocks (fail closed).
@@ -964,7 +965,8 @@ def _load_evals(bundle: SkillBundle) -> tuple[EvalFile, bytes]:
 
 
 def _load_rubric(bundle: SkillBundle, *, required: bool) -> Rubric | None:
-    """The rubric scores the effectiveness modes. A trigger-only run records it when there is one."""
+    """The rubric scores the effectiveness modes. A trigger-only run records it when there is one, and so does a
+    run whose effectiveness cases are all assertion cases (evalspec.rubric_optional), which needs none."""
     path = bundle.root / "evals" / "rubric.json"
     try:
         return load_rubric(path)
@@ -1089,7 +1091,8 @@ def _prepare(
 ) -> _SkillCtx:
     label = f"{scope.dept}/{skill.name}"
     ef = plan.ef
-    rubric = _load_rubric(plan.bundle, required=any(m != "trigger" for m in modes))
+    required = any(m != "trigger" for m in modes) and not evalspec.rubric_optional(ef)
+    rubric = _load_rubric(plan.bundle, required=required)
     if rubric is not None and rubric.skill_name != skill.name:  # It would be recorded as this skill's
         raise EvalRunError(f"{label}: rubric.json is for skill {rubric.skill_name!r}, not {skill.name!r}")
     if rubric is not None and rubric.source_hash != skill.content_hash:
@@ -1156,7 +1159,8 @@ def _canon(value) -> str:
 
 
 def _mode_data(ds, cases: dict[int, EvalCase], kind: str, skill: str, label: str = "") -> _ModeData:
-    """The records of one case kind (trigger or effectiveness), joined to evals.json on case_id.
+    """The records of one case kind (trigger or effectiveness), joined to evals.json on case_id. An assertion
+    case is a record of both kinds (`EvalCase.run_kinds`), with the same row.
 
     Labels and expectations always come from the evals.json case, never from the dataset row: the shared
     dataset can hold labels from an older or unmerged evals.json, or from a concurrent run. Each kept record is
@@ -1170,13 +1174,13 @@ def _mode_data(ds, cases: dict[int, EvalCase], kind: str, skill: str, label: str
         inputs = _as_dict(row.get("inputs")) or {}
         cid = _int(inputs.get("case_id"))
         case = cases.get(cid)
-        if case is None or case.kind != kind or case.prompt != inputs.get("prompt") or cid in keep:
+        if case is None or kind not in case.run_kinds or case.prompt != inputs.get("prompt") or cid in keep:
             continue
         current = case_record(case, skill)
         if any(_canon(_as_dict(row.get(k)) or {}) != _canon(current[k]) for k in ("expectations", "tags")):
             stale.append(case.id)
         keep[case.id] = current
-    missing = sorted(c.id for c in cases.values() if c.kind == kind and c.id not in keep)
+    missing = sorted(c.id for c in cases.values() if kind in c.run_kinds and c.id not in keep)
     if stale:
         log.warning(
             "%s: dataset rows of %s case(s) %s differ from evals.json; the evals.json labels are used",
@@ -1527,8 +1531,13 @@ def _trigger_outcome(a, expected: str | None) -> tuple[str | None, Any]:
     return case_outcome(expected, invoked).value, invoked
 
 
+def _criteria(ctx: _SkillCtx) -> list:
+    """The rubric's criteria; none for a skill without rubric.json, whose cases are judged on their assertions."""
+    return ctx.rubric.criteria if ctx.rubric is not None else []
+
+
 def _judge_names(ctx: _SkillCtx, case: EvalCase) -> list[str]:
-    names = [judge_name(f"rubric_{c.id}", p) for c in ctx.rubric.criteria for p in ctx.judges]
+    names = [judge_name(f"rubric_{c.id}", p) for c in _criteria(ctx) for p in ctx.judges]
     if case.assertions:
         names += [judge_name("assertions", p) for p in ctx.judges]
     return names
@@ -1613,9 +1622,9 @@ def _score(
             names = _judge_names(ctx, case)
             total += len(names)
             responded += sum(1 for n in names if _vote(got.get(n)) is not None)
+            criteria = _criteria(ctx)
             votes = {
-                c.id: [_vote(got.get(judge_name(f"rubric_{c.id}", p))) for p in ctx.judges]
-                for c in ctx.rubric.criteria
+                c.id: [_vote(got.get(judge_name(f"rubric_{c.id}", p))) for p in ctx.judges] for c in criteria
             }
             assertion_votes = (
                 [_vote(got.get(judge_name("assertions", p))) for p in ctx.judges] if case.assertions else None
@@ -1629,7 +1638,7 @@ def _score(
                 case_id=cid,
                 repeat=rep,
                 reviewed=case.reviewed,
-                criteria=ctx.rubric.criteria,
+                criteria=criteria,
                 votes_by_criterion=votes,
                 assertion_votes=assertion_votes,
                 pass_score=ctx.thresholds.pass_score,

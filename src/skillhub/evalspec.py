@@ -55,6 +55,18 @@ class EvalCase(BaseModel):
             return self.expected_skill
         return skill_name if self.should_trigger else None
 
+    @property
+    def is_assertion_case(self) -> bool:
+        """A trigger case that should fire and has assertions. Trigger mode checks that the skill fires, as for
+        any trigger case; the effectiveness modes also run it in full and judge the answer on its assertions."""
+        return self.kind == "trigger" and self.should_trigger and bool(self.assertions)
+
+    @property
+    def run_kinds(self) -> tuple[str, ...]:
+        """The case kinds (CASE_KIND) whose modes run this case: its own, plus effectiveness for an assertion
+        case. The case keeps its id in both: each mode is its own child run."""
+        return ("trigger", "effectiveness") if self.is_assertion_case else (self.kind,)
+
 
 EFFECTIVENESS_FIRST_ID = 101  # trigger case ids are 1-100, effectiveness case ids 101 and up
 
@@ -183,7 +195,7 @@ def gate_thresholds(
 
 # --- eval inputs: what the gates bind besides the skill content ---------------------------------------
 
-NO_RUBRIC = "none"  # rubric_hash of a skill without rubric.json (trigger-only evals)
+NO_RUBRIC = "none"  # rubric_hash of a skill without rubric.json: trigger only, or assertions only
 FIXTURE_INDEX = "web_index.json"  # the agent's fixture search index (agent/fixtures.py)
 PLANTED_FIXTURE = "northwind/model.xlsx"  # the audit-xls workbook with planted bugs (eval/scorers.py)
 PLANTED_MANIFEST = "northwind/model_bugs.json"  # the planted bugs the scorer checks the answer against
@@ -270,9 +282,17 @@ def expand_modes(modes: Iterable[str]) -> list[str]:
 
 
 def run_modes(ef: EvalFile, modes: Iterable[str]) -> list[str]:
-    """The run modes a skill gets: those requested that its evals.json has cases for."""
-    kinds = {c.kind for c in ef.evals}
+    """The run modes a skill gets: those requested that its evals.json has cases for. An assertion case counts
+    for the effectiveness modes too."""
+    kinds = {k for c in ef.evals for k in c.run_kinds}
     return [m for m in expand_modes(modes) if CASE_KIND[m] in kinds]
+
+
+def rubric_optional(ef: EvalFile) -> bool:
+    """Whether the effectiveness modes can run without evals/rubric.json. Effectiveness cases are judged on the
+    rubric's criteria, so they need one. Assertion cases do not: without a rubric they are judged on their
+    assertions only."""
+    return any(c.is_assertion_case for c in ef.evals) and not any(c.kind == "effectiveness" for c in ef.evals)
 
 
 def resolve_models(ef: EvalFile, request_models: Iterable[str], default_models: Iterable[str]) -> list[str]:
