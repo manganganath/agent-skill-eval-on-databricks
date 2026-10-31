@@ -136,6 +136,9 @@ class CatalogEntry(BaseModel):
         )
 
 
+RESERVED_NAME = "default"  # `--models default` means the hub.yaml models
+
+
 def problems(entry: CatalogEntry) -> list[str]:
     """What is wrong with a model row before it is written, in plain words. [] when it may be written."""
     if not entry.runnable:
@@ -145,6 +148,8 @@ def problems(entry: CatalogEntry) -> list[str]:
         out.append(
             "name: use 1 to 40 lowercase letters, digits and hyphens, starting with a letter or a digit"
         )
+    elif entry.name == RESERVED_NAME:
+        out.append("name: `default` is reserved for the release-gate models; pick another name")
     if entry.kind == "ug_model":
         if entry.route == "ug-anthropic":
             out.append("route: the ug-anthropic route is not supported yet; use serving")

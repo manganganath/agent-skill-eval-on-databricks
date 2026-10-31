@@ -27,6 +27,7 @@ def test_a_model_on_unity_gateway_and_a_bedrock_model_can_be_written():
     [
         (ug(name="Llama"), "name:"),
         (ug(name="x" * 41), "name:"),
+        (ug(name="default"), "reserved"),
         (ug(route="ug-anthropic"), "ug-anthropic route is not supported yet"),
         (ug(endpoint=None), "endpoint:"),
         (ug(region="us-east-1"), "for external models only"),

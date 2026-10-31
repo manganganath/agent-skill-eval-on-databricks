@@ -158,6 +158,7 @@ def test_a_reviewer_adds_a_model_on_unity_gateway(make_client):
         ({**NOVA, "kind": "external_agent"}, 422, "kind_not_supported"),
         ({**NOVA, "name": "claude-sonnet"}, 409, "model_exists"),
         ({**NOVA, "model_id": None}, 422, "model_invalid"),
+        ({**NOVA, "name": "default"}, 422, "model_invalid"),
         ({**LLAMA, "route": "ug-anthropic"}, 422, "model_invalid"),
         ({**NOVA, "harness": "codex"}, 422, "model_invalid"),
         ({**NOVA, "model_class": "huge"}, 422, "model_invalid"),
