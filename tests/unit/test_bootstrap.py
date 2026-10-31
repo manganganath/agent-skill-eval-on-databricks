@@ -1416,7 +1416,7 @@ def test_a_person_rerun_after_the_handover_creates_new_schemas_and_leaves_the_re
     w, sql, calls = _owned_w(cfg, cat), cat.sql(), []
     log = bootstrap(cfg, w, sql, create_identities=False, skills_root=tmp_path, results=_steps(calls))
     stmts = _stmts(sql)
-    assert calls == []  # tables, views, hooks, alerts and Genie are the Job's
+    assert calls == ["views"]  # the person's own views; tables, hooks, alerts and Genie are the Job's
     assert [s for s in stmts if s.startswith("CREATE SCHEMA")] == [
         f"CREATE SCHEMA IF NOT EXISTS {s}" for s in new
     ]
@@ -1424,6 +1424,59 @@ def test_a_person_rerun_after_the_handover_creates_new_schemas_and_leaves_the_re
     assert not any(s.startswith("GRANT USE SCHEMA") for s in stmts)
     assert [s for s in stmts if " OWNER TO " in s] == [f"ALTER SCHEMA {s} OWNER TO `app-1`" for s in new]
     assert "run the skillhub-bootstrap Job" in log[-1]
+
+
+def _views_owned_by(cfg, w, owner):
+    matrix = f"{evals_schema(cfg, next(iter(cfg.departments)))}.eval_matrix"
+    w.tables.get.side_effect = lambda name: SimpleNamespace(owner=owner if name == matrix else CI)
+
+
+def test_a_person_rerun_after_the_handover_replaces_the_views_they_own(cfg, tmp_path):
+    """The Job leaves a person's views as they are, so after an upgrade that changes them, their owner's run
+    replaces them."""
+    cat = _Catalog(cfg, owner=CI)
+    w, sql, calls = _owned_w(cfg, cat), cat.sql(), []
+    _views_owned_by(cfg, w, DEPLOYER)
+    log = bootstrap(cfg, w, sql, create_identities=False, skills_root=tmp_path, results=_steps(calls))
+    assert calls == ["views"]  # tables, hooks, alerts and Genie are still the Job's
+    assert f"results views replaced: they are owned by {DEPLOYER}" in log
+    assert "run the skillhub-bootstrap Job" in log[-1]
+
+
+def test_a_person_rerun_after_the_handover_leaves_views_another_person_owns(cfg, tmp_path):
+    cat = _Catalog(cfg, owner=CI)
+    w, sql, calls = _owned_w(cfg, cat), cat.sql(), []
+    _views_owned_by(cfg, w, "someone-else@example.com")
+    log = bootstrap(cfg, w, sql, create_identities=False, skills_root=tmp_path, results=_steps(calls))
+    assert calls == []
+    assert any(
+        line.startswith("results views left as they are: they are owned by someone-else@example.com")
+        for line in log
+    )
+
+
+def test_a_person_rerun_before_the_job_added_the_columns_says_to_run_the_job_first(cfg, tmp_path):
+    from dataclasses import replace
+
+    from skillhub.sql import SqlError
+
+    def old_tables(c, s):
+        raise SqlError(
+            "statement failed: [UNRESOLVED_COLUMN.WITH_SUGGESTION] `profile_kind` cannot be resolved"
+        )
+
+    cat = _Catalog(cfg, owner=CI)
+    w, sql = _owned_w(cfg, cat), cat.sql()
+    _views_owned_by(cfg, w, DEPLOYER)
+    with pytest.raises(BootstrapError, match="run the skillhub-bootstrap Job first"):
+        bootstrap(
+            cfg,
+            w,
+            sql,
+            create_identities=False,
+            skills_root=tmp_path,
+            results=replace(_steps(), ensure_views=old_tables),
+        )
 
 
 def test_bootstrap_refuses_to_run_as_ci_eval(cfg, tmp_path):
