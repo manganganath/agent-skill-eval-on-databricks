@@ -535,11 +535,14 @@ def verdicts(
     latest: Iterable[Mapping[str, object]], gating_modes: Iterable[str] = skill_ref.REQUEST_MODES
 ) -> dict[str, str]:
     """{model profile: worst verdict across the gating modes} for one skill, by the release gate's rule
-    (skill_ref.counts_toward_verdict). The baseline (without_skill) never counts."""
+    (skill_ref.counts_toward_verdict). The baseline (without_skill) never counts, and neither does a model added in
+    the catalog: a row without profile_kind is a hub.yaml profile."""
     gating_modes = tuple(gating_modes)
     by_model: dict[str, list[str | None]] = {}
     for r in latest:
         if not skill_ref.counts_toward_verdict(r.get("mode"), gating_modes):
+            continue
+        if (r.get("profile_kind") or "hub_yaml") != "hub_yaml":
             continue
         by_model.setdefault(str(r.get("model_profile")), []).append(r.get("verdict"))  # type: ignore[arg-type]
     return {m: skill_ref.worst_verdict(v) for m, v in sorted(by_model.items())}

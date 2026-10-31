@@ -121,6 +121,14 @@ def _dashboard_statement(sql: UserSql, statement: str, params: dict[str, object]
         raise
 
 
+def _dashboard_section(
+    sql: UserSql, statements: dict[str, tuple[str, dict[str, object]]]
+) -> dict[str, list[dict]]:
+    return {
+        name: _dashboard_statement(sql, statement, params) for name, (statement, params) in statements.items()
+    }
+
+
 def _read_dashboard(sql: UserSql, cfg: HubConfig, response: Response) -> dict[str, list[dict]]:
     """The Dashboard's aggregate rows from every department the user can read, tagged with the department.
 
@@ -131,10 +139,12 @@ def _read_dashboard(sql: UserSql, cfg: HubConfig, response: Response) -> dict[st
     refused: list[str] = []
     for d in cfg.departments:
         try:
-            section = {
-                name: _dashboard_statement(sql, statement, params)
-                for name, (statement, params) in queries.dashboard_sql(cfg, d).items()
-            }
+            try:
+                section = _dashboard_section(sql, queries.dashboard_sql(cfg, d))
+            except SqlError:
+                # A matrix view from before the model catalog has no profile_kind, and holds only hub.yaml rows.
+                log.warning("dashboard read of %s failed; reading it for a view without profile_kind", d)
+                section = _dashboard_section(sql, queries.dashboard_sql(cfg, d, legacy=True))
         except SqlDenied:
             refused.append(d)
             continue

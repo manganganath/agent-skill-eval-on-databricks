@@ -32,14 +32,24 @@ _ACCESS_ORDER: tuple[EvalAccess, ...] = ("ok", "denied", "unavailable")
 
 
 def read_dept(
-    sql: UserSql, statement: tuple[str, dict[str, object]], dept: str
+    sql: UserSql,
+    statement: tuple[str, dict[str, object]],
+    dept: str,
+    fallback: tuple[str, dict[str, object]] | None = None,
 ) -> tuple[list[dict], EvalAccess]:
     """Rows from one department's eval tables, plus whether the user could read them.
 
     A denial or a SQL failure only marks this department. A missing table means nothing is recorded yet.
+    `fallback` is read instead when the statement fails with SqlError: a view from before the model catalog.
     """
     try:
-        return sql.query(*statement), "ok"
+        try:
+            return sql.query(*statement), "ok"
+        except SqlError:
+            if fallback is None:
+                raise
+            log.warning("read of %s failed; reading it with the fallback statement", dept)
+            return sql.query(*fallback), "ok"
     except SqlDenied as exc:
         return [], "ok" if exc.not_found else "denied"
     except SqlError:
@@ -61,7 +71,13 @@ def _start_live_reads(
     """Start the journal and verdict reads for the department (or one skill in it), side by side."""
     return (
         pool.submit(read_dept, sql, queries.journal_sql(cfg, dept, skill), dept),
-        pool.submit(read_dept, sql, queries.catalog_verdicts_sql(cfg, dept, skill), dept),
+        pool.submit(
+            read_dept,
+            sql,
+            queries.catalog_verdicts_sql(cfg, dept, skill),
+            dept,
+            queries.catalog_verdicts_sql(cfg, dept, skill, legacy=True),
+        ),
     )
 
 

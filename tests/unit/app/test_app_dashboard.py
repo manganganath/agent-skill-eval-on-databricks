@@ -28,6 +28,13 @@ def section(statement: str, params: dict) -> str:
     raise AssertionError(f"unknown statement: {statement}")
 
 
+def keeps(statement: str, row: dict) -> bool:
+    """What the hub.yaml filter of a statement does to a row (a row without profile_kind is a hub.yaml one)."""
+    if queries.HUB_YAML_ONLY not in statement:
+        return True
+    return (row.get("profile_kind") or "hub_yaml") == "hub_yaml"
+
+
 class DashSql:
     """Stands in for UserSql. `data` maps a schema fragment to {section: rows}. `denied` schema fragments raise
     SqlDenied, `missing` ones raise a not_found SqlDenied, and `broken` ones raise SqlError."""
@@ -54,7 +61,7 @@ class DashSql:
         name = section(statement, params)
         for frag, sections in self.data.items():
             if frag in statement:
-                return list(sections.get(name, []))
+                return [r for r in sections.get(name, []) if keeps(statement, r)]
         return []
 
 
@@ -493,3 +500,37 @@ def test_verdict_counts_and_health_count_a_null_verdict_as_inconclusive():
     assert dashboard.health(cells) == [
         {"model_profile": "claude-sonnet", "cells": 2, "error_rate": 0.2, "inconclusive_rate": 0.5}
     ]
+
+
+def test_a_catalog_model_verdict_is_not_counted_on_the_dashboard(make_client):
+    data = common_data()
+    data["cells"] = [
+        *data["cells"],
+        cell("sales-brief", 2, "trigger", "fail", model_profile="nova-lite", profile_kind="external_model"),
+    ]
+    sql = DashSql({COMMON: data})
+    c = make_client(user_w=FakeWorkspace(), cfg=make_cfg(), sql=sql)
+    body = c.get("/api/results/dashboard").json()
+    assert all(v["model_profile"] != "nova-lite" for v in body["verdicts"])
+    assert all(h["model_profile"] != "nova-lite" for h in body["health"])
+    assert body["summary"]["verdicts"]["fail"] == 0
+
+
+class OldViewDashSql(DashSql):
+    """Department views from before the model catalog: a statement that names profile_kind fails."""
+
+    def query(self, statement, params=None):
+        if "profile_kind" in statement and COMMON in statement:
+            self.calls.append((statement, dict(params or {})))
+            raise SqlError("statement failed")
+        return super().query(statement, params)
+
+
+def test_a_department_whose_views_predate_the_catalog_is_read_without_the_filter(make_client):
+    sql = OldViewDashSql({COMMON: common_data(), EQ: common_data()})
+    c = make_client(user_w=FakeWorkspace(), cfg=make_cfg(), sql=sql)
+    r = c.get("/api/results/dashboard")
+    assert r.status_code == 200 and r.json()["verdicts"]
+    cells = [s for s, _ in sql.calls if "uplift_task_quality, error_rate" in s]
+    assert any("profile_kind" not in s and COMMON in s for s in cells)
+    assert all("profile_kind" in s for s in cells if EQ in s)  # the other department keeps the filter

@@ -1,4 +1,5 @@
 from app_fakes import FakeApi, FakeWorkspace
+from backend import queries
 from backend.data import SqlDenied, SqlError
 from conftest import make_cfg
 
@@ -357,3 +358,14 @@ def test_matrix_keeps_the_denied_header_when_a_department_used_the_fallback(make
     r = c.get("/api/results/matrix")
     assert r.status_code == 200 and r.json() == [{**row, "dept": "common"}]
     assert r.headers["x-eval-denied-departments"] == "equity_research"
+
+
+def test_release_status_reads_filter_to_hub_yaml_unless_the_view_predates_the_catalog():
+    cfg = make_cfg()
+    assert queries.HUB_YAML_ONLY in queries.catalog_verdicts_sql(cfg, "common")[0]
+    assert "profile_kind" not in queries.catalog_verdicts_sql(cfg, "common", legacy=True)[0]
+    assert queries.HUB_YAML_ONLY in queries.catalog_verdicts_sql(cfg, "common", "a")[0]
+    assert queries.HUB_YAML_ONLY in queries.dashboard_sql(cfg, "common")["cells"][0]
+    assert "profile_kind" not in queries.dashboard_sql(cfg, "common", legacy=True)["cells"][0]
+    # the Eval matrix itself shows every kind
+    assert queries.HUB_YAML_ONLY not in queries.matrix_sql(cfg, "common", None)[0]

@@ -5,8 +5,8 @@ from datetime import datetime
 
 import pytest
 from app_fakes import FakeApi, FakeWorkspace
-from backend import authz, skill_ref
-from backend.data import SqlDenied
+from backend import authz, queries, skill_ref
+from backend.data import SqlDenied, SqlError
 from conftest import make_cfg
 from databricks.sdk.errors import PermissionDenied
 
@@ -24,7 +24,8 @@ class FakeUserSql:
     `datasets` maps a skill name to its ds_ rows, and `rubrics` maps it to rubrics rows, newest first.
     `calls` records each statement and its parameters; `gate`, when set, is called first by every query."""
 
-    def __init__(self, journal=None, matrix=None, denied=(), datasets=None, rubrics=None):
+    def __init__(self, journal=None, matrix=None, denied=(), datasets=None, rubrics=None, old=()):
+        self.old = old  # schema fragments whose matrix view predates the model catalog
         self.journal = journal or {}
         self.matrix = matrix or []
         self.denied = set(denied)
@@ -42,8 +43,18 @@ class FakeUserSql:
         if "skill_versions" in statement:
             return list(self.journal.get(params["dept"], []))
         if "eval_matrix" in statement:
+            if "profile_kind" in statement and any(o in statement for o in self.old):
+                raise SqlError("statement failed")
             skill = (params or {}).get("skill")
-            return [r for r in self.matrix if skill is None or r["skill"] == skill]
+            return [
+                r
+                for r in self.matrix
+                if (skill is None or r["skill"] == skill)
+                and (
+                    queries.HUB_YAML_ONLY not in statement
+                    or (r.get("profile_kind") or "hub_yaml") == "hub_yaml"
+                )
+            ]
         if ".rubrics" in statement:
             return list(self.rubrics.get(params["skill"], []))
         for skill, rows in self.datasets.items():
@@ -219,6 +230,41 @@ def test_catalog_groups_by_schema_and_takes_worst_verdict(make_client, uc):
     audit = next(r for r in rows if r["name"] == "audit-xls")
     assert audit["dept"] == "common" and audit["live_version"] == 2
     assert audit["verdicts"] == {"claude-sonnet": "warn"}
+
+
+def _catalog_with_a_catalog_model_failing(old=()):
+    journal = {
+        "common": [
+            {
+                "dept": "common",
+                "skill": "audit-xls",
+                "action": "switched",
+                "to_version": 2,
+                "ts": datetime(2026, 10, 28),
+            }
+        ]
+    }
+    base = {"skill": "audit-xls", "skill_version": 2, "mode": "trigger"}
+    matrix = [
+        {**base, "model_profile": "claude-sonnet", "verdict": "pass"},
+        {**base, "model_profile": "nova-lite", "verdict": "fail", "profile_kind": "external_model"},
+    ]
+    return FakeUserSql(journal=journal, matrix=matrix, old=old)
+
+
+def test_a_catalog_model_verdict_does_not_reach_the_catalog_scorecard(make_client, uc):
+    c = make_client(
+        user_w=user_w(), app_w=app_w(), cfg=make_cfg(), sql=_catalog_with_a_catalog_model_failing()
+    )
+    audit = next(r for r in c.get("/api/skills").json() if r["name"] == "audit-xls")
+    assert audit["verdicts"] == {"claude-sonnet": "pass"}
+
+
+def test_a_department_whose_views_predate_the_catalog_still_shows_its_verdicts(make_client, uc):
+    sql = _catalog_with_a_catalog_model_failing(old=("common_evals",))
+    c = make_client(user_w=user_w(), app_w=app_w(), cfg=make_cfg(), sql=sql)
+    audit = next(r for r in c.get("/api/skills").json() if r["name"] == "audit-xls")
+    assert audit["eval_access"] == "ok" and "claude-sonnet" in audit["verdicts"]
 
 
 def test_catalog_hides_schema_user_cannot_list(make_client, uc):
