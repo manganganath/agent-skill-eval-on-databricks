@@ -2604,3 +2604,21 @@ def test_child_runs_record_the_profile_kind_and_the_catalog_version(wired):
     assert {k: params["gpt"][k] for k in ("profile_kind", "route", "model_id", "region", "catalog_version")} == {
         "profile_kind": "hub_yaml", "route": "serving", "model_id": "", "region": "", "catalog_version": "",
     }  # fmt: skip
+
+
+def test_unreadable_aws_keys_make_the_bedrock_profile_an_error_before_staging(wired, monkeypatch):
+    from skillhub.gateway.aws import AwsCredentialsError
+
+    def clients(cfg, profile, headers, **kw):
+        if profile == "nova-lite":
+            raise AwsCredentialsError("the secret scope 'skillhub-aws' has no aws-access-key-id key")
+        return wired["model"]
+
+    monkeypatch.setattr(runner, "model_client", clients)
+    cfg = SimpleNamespace(**{**vars(CFG), "models": {**CFG.models, "nova-lite": NOVA}})
+    summary = run_eval(cfg, request(models=["gpt", "nova-lite"], modes=["trigger"]))
+    assert {c.model_profile for c in summary.children} == {"gpt"}
+    assert {(e.model_profile, e.message) for e in summary.errors} == {
+        ("nova-lite", "model profile 'nova-lite' cannot be served: the secret scope 'skillhub-aws' has no "
+                      "aws-access-key-id key"),
+    }  # fmt: skip
