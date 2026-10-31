@@ -3900,6 +3900,7 @@ name = "skillhub"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
+    { name = "boto3" },
     { name = "databricks-sdk" },
     { name = "httpx" },
     { name = "mcp" },
@@ -3928,6 +3929,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
+    { name = "boto3", specifier = ">=1.43" },
     { name = "databricks-sdk", specifier = ">=0.157.0" },
     { name = "fastapi", marker = "extra == 'app'", specifier = ">=0.115" },
     { name = "httpx", specifier = ">=0.27" },
