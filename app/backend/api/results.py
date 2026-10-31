@@ -29,19 +29,28 @@ def _cap(rows: list[dict], response: Response) -> list[dict]:
     return rows
 
 
-def _read_departments(sql: UserSql, depts: list[str], build, response: Response) -> list[dict]:
+def _read_departments(sql: UserSql, depts: list[str], build, response: Response, fallback=None) -> list[dict]:
     """Rows from each department's eval tables, tagged with the department.
 
     A refused department is left out and named in X-Eval-Denied-Departments. A table that does not exist yet
     (`not_found`) holds nothing and is not a refusal. An empty result with any refusal is a 403, so a user who
     cannot read a department never mistakes that for "no results".
+
+    `fallback` builds a second statement for a department whose first one fails with SqlError: only that department
+    is read again, so one department on an older view does not change how the others are read.
     """
     out: list[dict] = []
     refused: list[str] = []
     truncated = False
     for d in depts:
         try:
-            rows = sql.query(*build(d))
+            try:
+                rows = sql.query(*build(d))
+            except SqlError:
+                if fallback is None:
+                    raise
+                log.warning("read of %s failed; reading it with the fallback statement", d)
+                rows = sql.query(*fallback(d))
         except SqlDenied as exc:
             if not exc.not_found:
                 refused.append(d)
@@ -72,13 +81,14 @@ def matrix(
         dept, skill = skill_ref.parse_fqn(cfg, fqn)  # an unknown schema or name is 404 skill_not_found
     # An unknown dept is rejected by queries._check_dept (UnknownDepartment, 404 department_not_found).
     depts = [dept] if dept else list(cfg.departments)
-    try:
-        return _read_departments(sql, depts, lambda d: queries.matrix_sql(cfg, d, skill), response)
-    except SqlError:  # a view from before the model catalog has no profile_kind: read it as it is
-        log.warning("matrix read failed; reading the views without profile_kind")
-        return _read_departments(
-            sql, depts, lambda d: queries.matrix_sql(cfg, d, skill, legacy=True), response
-        )
+    # A view from before the model catalog has no profile_kind: that department is read without it.
+    return _read_departments(
+        sql,
+        depts,
+        lambda d: queries.matrix_sql(cfg, d, skill),
+        response,
+        fallback=lambda d: queries.matrix_sql(cfg, d, skill, legacy=True),
+    )
 
 
 @router.get("/results/cases")

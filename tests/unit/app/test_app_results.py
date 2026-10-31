@@ -301,10 +301,15 @@ def test_matrix_by_fqn_with_an_unknown_schema_is_404(make_client):
 
 
 class OldViewSql(FakeUserSql):
-    """A department view from before the model catalog: selecting profile_kind fails."""
+    """Department views from before the model catalog (`old` schema fragments, default all): selecting
+    profile_kind from them fails."""
+
+    def __init__(self, *args, old=("_evals",), **kw):
+        super().__init__(*args, **kw)
+        self.old = old
 
     def query(self, statement, params=None):
-        if "profile_kind" in statement:
+        if "profile_kind" in statement and any(o in statement for o in self.old):
             self.calls.append((statement, params or {}))
             raise SqlError("statement failed")
         return super().query(statement, params)
@@ -325,3 +330,30 @@ def test_the_legacy_matrix_query_differs_only_by_profile_kind():
     new, _ = queries.matrix_sql(make_cfg(), "common", None)
     old, _ = queries.matrix_sql(make_cfg(), "common", None, legacy=True)
     assert _selected(new) - _selected(old) == {"profile_kind"}
+
+
+def test_matrix_only_a_department_on_an_old_view_loses_profile_kind(make_client):
+    new_row = {"skill": "a", "model_profile": "nova", "profile_kind": "external_model", "run_id": RUN}
+    old_row = {"skill": "b", "model_profile": "gpt", "run_id": RUN}
+    sql = OldViewSql(rows={"common_evals": [old_row], EQ: [new_row]}, old=("common_evals",))
+    c = make_client(user_w=FakeWorkspace(), cfg=make_cfg(), sql=sql)
+    r = c.get("/api/results/matrix")
+    assert r.status_code == 200
+    by_dept = {x["dept"]: x for x in r.json()}
+    assert by_dept["equity_research"]["profile_kind"] == "external_model"
+    assert "profile_kind" not in by_dept["common"]
+
+
+def test_matrix_a_department_that_fails_on_both_reads_is_502(make_client):
+    sql = OldViewSql(broken={EQ})
+    c = make_client(user_w=FakeWorkspace(), cfg=make_cfg(), sql=sql)
+    assert c.get("/api/results/matrix", params={"dept": "equity_research"}).status_code == 502
+
+
+def test_matrix_keeps_the_denied_header_when_a_department_used_the_fallback(make_client):
+    row = {"skill": "b", "model_profile": "gpt", "run_id": RUN}
+    sql = OldViewSql(rows={"common_evals": [row]}, denied={EQ}, old=("common_evals",))
+    c = make_client(user_w=FakeWorkspace(), cfg=make_cfg(), sql=sql)
+    r = c.get("/api/results/matrix")
+    assert r.status_code == 200 and r.json() == [{**row, "dept": "common"}]
+    assert r.headers["x-eval-denied-departments"] == "equity_research"
