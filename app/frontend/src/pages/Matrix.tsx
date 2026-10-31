@@ -57,8 +57,11 @@ export default function Matrix() {
   const all = matrix.data?.rows ?? [];
   const kinds = KIND_ORDER.filter((k) => all.some((r) => kindOf(r.profile_kind) === k));
   const harnesses = [...new Set(all.map(harnessOf))].sort();
-  const rows = all.filter((r) => (kind === ALL || kindOf(r.profile_kind) === kind) &&
-    (harness === ALL || harnessOf(r) === harness));
+  // A choice that the data no longer holds counts as All, so the selects and the rows never disagree.
+  const kindPick = (kinds as string[]).includes(kind) ? kind : ALL;
+  const harnessPick = harnesses.includes(harness) ? harness : ALL;
+  const rows = all.filter((r) => (kindPick === ALL || kindOf(r.profile_kind) === kindPick) &&
+    (harnessPick === ALL || harnessOf(r) === harnessPick));
   const hidden = matrix.data?.deniedDepartments ?? [];
   const caseRows = cases.data?.rows ?? [];
   const caseHidden = cases.data?.deniedDepartments ?? [];
@@ -86,14 +89,14 @@ export default function Matrix() {
         <div className="dash-filters">
           <div className="field">
             <label htmlFor="matrix-kind">Kind</label>
-            <select id="matrix-kind" value={kind} onChange={(e) => setKind(e.target.value)}>
+            <select id="matrix-kind" value={kindPick} onChange={(e) => setKind(e.target.value)}>
               <option value={ALL}>All kinds</option>
               {kinds.map((k) => <option key={k} value={k}>{KIND_LABELS[k]}</option>)}
             </select>
           </div>
           <div className="field">
             <label htmlFor="matrix-harness">Harness</label>
-            <select id="matrix-harness" value={harness} onChange={(e) => setHarness(e.target.value)}>
+            <select id="matrix-harness" value={harnessPick} onChange={(e) => setHarness(e.target.value)}>
               <option value={ALL}>All harnesses</option>
               {harnesses.map((h) => <option key={h} value={h}>{h}</option>)}
             </select>

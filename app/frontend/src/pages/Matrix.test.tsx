@@ -1,5 +1,5 @@
 import { fireEvent, render, screen, within } from "@testing-library/react";
-import { MemoryRouter } from "react-router-dom";
+import { Link, MemoryRouter } from "react-router-dom";
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import Matrix from "./Matrix";
 import { api } from "../api/client";
@@ -199,5 +199,22 @@ describe("Matrix, model kinds", () => {
     fireEvent.change(screen.getByLabelText("Harness"), { target: { value: "codex" } });
     expect(screen.queryByRole("table", { name: /evaluation matrix/i })).toBeNull();
     expect(screen.getByRole("heading", { name: "No rows match the filters" })).toBeTruthy();
+  });
+});
+
+describe("Matrix, filters after the data changes", () => {
+  it("treats a kind or harness that is gone as All", async () => {
+    const nova = { ...row, run_id: "r2", model_profile: "nova-lite", profile_kind: "external_model" as const };
+    const codex = { ...row, run_id: "r3", harness: "codex" };
+    vi.mocked(api.matrix).mockImplementation(async ({ skill } = {}) => listed(skill === "other" ? [row] : [row, nova, codex]));
+    render(<MemoryRouter><Matrix /><Link to="/?skill=other">other skill</Link></MemoryRouter>);
+    await screen.findByRole("table", { name: /evaluation matrix/i });
+    fireEvent.change(screen.getByLabelText("Kind"), { target: { value: "external_model" } });
+    fireEvent.change(screen.getByLabelText("Harness"), { target: { value: "codex" } });
+    fireEvent.click(screen.getByText("other skill"));
+    const table = await screen.findByRole("table", { name: /evaluation matrix/i });
+    expect(within(table).getAllByRole("row")).toHaveLength(2);
+    expect((screen.getByLabelText("Kind") as HTMLSelectElement).value).toBe("all");
+    expect((screen.getByLabelText("Harness") as HTMLSelectElement).value).toBe("all");
   });
 });
