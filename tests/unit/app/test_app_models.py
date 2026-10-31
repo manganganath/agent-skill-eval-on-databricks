@@ -328,3 +328,21 @@ def test_a_reviewer_lists_the_chat_endpoints_with_their_own_token(make_client):
     cfg, sql = catalog()
     r = client(make_client, cfg, sql, user_w=rita).get("/api/serving-endpoints")
     assert [e["name"] for e in r.json()] == ["custom-agent", "databricks-llama-4-maverick"]
+
+
+@pytest.mark.parametrize("field", ["model_class", "enabled"])
+def test_a_patch_cannot_null_a_required_field(make_client, field):
+    cfg, sql = catalog(bedrock(enabled=True))
+    passed_test(sql, cfg, bedrock())
+    before = len(writes(sql))
+    r = client(make_client, cfg, sql).patch("/api/models/nova-lite", json={field: None})
+    assert r.status_code == 422 and r.json()["detail"]["reason"] == "model_invalid"
+    assert len(writes(sql)) == before
+
+
+def test_an_external_agent_is_refused_whatever_else_the_body_holds(make_client):
+    cfg, sql = catalog()
+    body = {"name": "my-agent", "kind": "external_agent", "agent": "x", "harness": "codex"}
+    r = client(make_client, cfg, sql).post("/api/models", json=body)
+    assert r.status_code == 422 and r.json()["detail"]["reason"] == "kind_not_supported"
+    assert writes(sql) == []

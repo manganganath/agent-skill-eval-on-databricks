@@ -104,9 +104,9 @@ def add_model(
     sql: Annotated[SqlExecutor, Depends(get_app_sql)],
 ) -> ModelOut:
     actor = authz.require_reviewer(user_w, cfg)
-    req = _parse(ModelIn, body)
-    if req.kind == "external_agent":
+    if body.get("kind") == "external_agent":  # refused whatever else the body holds
         raise problem(422, Reason.KIND_NOT_SUPPORTED)
+    req = _parse(ModelIn, body)
     if req.kind not in ROUTE_OF_KIND:
         raise _invalid(["kind: use ug_model or external_model"])
     region = req.region or (cfg.external.bedrock.default_region if req.kind == "external_model" else None)
@@ -132,6 +132,11 @@ def update_model(
 ) -> ModelOut:
     actor = authz.require_reviewer(user_w, cfg)
     patch = _parse(ModelPatch, body)
+    nulls = [
+        k for k in ("model_class", "enabled") if k in patch.model_fields_set and getattr(patch, k) is None
+    ]
+    if nulls:
+        raise _invalid([f"{k}: cannot be empty" for k in nulls])
     entry = _catalog_row(catalog.read_or_503(sql, cfg), cfg, name)
     if not entry.runnable:
         raise problem(422, Reason.KIND_NOT_SUPPORTED)
