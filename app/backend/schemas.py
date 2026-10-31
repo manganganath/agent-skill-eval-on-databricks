@@ -70,8 +70,8 @@ class CandidateSummary(BaseModel):
     (`kind` draft). Mirrors CandidateSummary in app/frontend/src/api/types.ts.
 
     `verdicts` is the newest result of each model across modes, from the candidate's own run keys only. A draft has
-    no pull request or commit; `uploaded_by` and `has_rubric` are known for drafts only, and `submitted_pr` is set for
-    a draft that was submitted for review."""
+    no pull request or commit; `uploaded_by`, `has_rubric` and `rubric_optional` (effectiveness mode can run without a
+    rubric) are known for drafts only, and `submitted_pr` is set for a draft that was submitted for review."""
 
     kind: Literal["pr", "draft"]
     run_key: str
@@ -80,6 +80,7 @@ class CandidateSummary(BaseModel):
     uploaded_at: datetime | None
     uploaded_by: str | None = None
     has_rubric: bool | None = None
+    rubric_optional: bool | None = None
     submitted_pr: int | None = None
     dept: str
     name: str
@@ -120,7 +121,8 @@ class CandidateResult(BaseModel):
 
 
 class CandidateDetail(BaseModel):
-    """One candidate skill, in the shape of SkillDetail: files, cases and rubric come from the candidate folder."""
+    """One candidate skill, in the shape of SkillDetail: files, cases and rubric come from the candidate folder.
+    `rubric_optional` says whether effectiveness mode can run without a rubric (evalspec.rubric_optional)."""
 
     dept: str
     name: str
@@ -130,6 +132,7 @@ class CandidateDetail(BaseModel):
     files: dict[str, str]
     evals: EvalFile | None
     rubric: Rubric | None
+    rubric_optional: bool = False
     eval_access: EvalAccess
     results: list[CandidateResult]
     candidate: CandidateBlock

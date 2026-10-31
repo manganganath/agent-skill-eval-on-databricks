@@ -229,7 +229,13 @@ export default function CandidateDetail() {
             </a>
           ) : canSubmit && <SubmitDraftButton runKey={key} onSubmitted={setSubmitted} onAlreadySubmitted={candidate.reload} />)}
           {draft && <DiscardDraft runKey={key} name={s.name} uploader={uploader} />}
-          {!s.rubric && <p className="hint summary-hint">This skill has no rubric, so it can run in trigger mode only.</p>}
+          {!s.rubric && (
+            <p className="hint summary-hint">
+              {s.rubric_optional
+                ? "This skill has no rubric, so effectiveness mode judges its cases on their assertions only."
+                : "This skill has no rubric, so it can run in trigger mode only."}
+            </p>
+          )}
         </div>
         <section className="summary-verdicts" aria-labelledby="summary-verdicts">
           <h2 id="summary-verdicts">Latest verdicts on this {draft ? "draft" : "candidate"}</h2>

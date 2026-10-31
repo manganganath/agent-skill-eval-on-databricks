@@ -81,7 +81,8 @@ export function RubricSection({ rubric, access, note, empty }: {
         Task-quality criteria check what the answer says; skill-format criteria check that it follows the skill's
         format. Each criterion has a weight from 1 to 5. An answer passes when the weight of the criteria it meets
         reaches {Math.round((rubric?.pass_score ?? 0.7) * 100)}% of the total and its case's assertions hold. Trigger
-        mode does not use the rubric.
+        mode does not use the rubric. Without one, effectiveness mode runs only trigger cases with assertions, and
+        judges them on their assertions.
       </p>
       <p className="muted">{note}</p>
       {rubric ? (

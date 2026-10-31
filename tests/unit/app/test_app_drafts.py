@@ -13,7 +13,7 @@ from backend import jobs
 from conftest import make_cfg
 from databricks.sdk.errors import PermissionDenied
 from databricks.sdk.service.workspace import ImportFormat
-from test_app_candidates import RowsSql, evals_json, row, rubric_json, skill_md
+from test_app_candidates import RowsSql, asserted_evals, evals_json, row, rubric_json, skill_md
 
 from skillhub.naming import schema_base
 
@@ -425,6 +425,49 @@ def test_a_draft_without_a_rubric_runs_trigger_mode_only(make_client):
     assert r.status_code == 422 and r.json() == {"detail": {"reason": "rubric_required"}}
     assert c.post("/api/eval-runs", json=run_body(key)).status_code == 200
     assert len(a.jobs.started) == 1
+
+
+def test_a_draft_whose_effectiveness_cases_are_assertion_cases_runs_effectiveness_without_a_rubric(
+    make_client,
+):
+    tree = FakeTree()
+    files = {**skill_files(rubric=False), "evals/evals.json": asserted_evals("new-skill")}
+    r, _, _, _ = upload(make_client, archive_body(files), tree=tree)
+    assert r.status_code == 201, r.text
+    key = r.json()["run_key"]
+    assert r.json()["has_rubric"] is False
+    assert json.loads(tree.files[f"{DRAFTS}/{key}/draft.json"])["rubric_optional"] is True
+    a = app(tree)
+    c = make_client(user_w=author(), app_w=a, cfg=make_cfg(), sql=RowsSql())
+    [listed] = c.get("/api/candidates").json()
+    assert (listed["has_rubric"], listed["rubric_optional"]) == (False, True)
+    detail = c.get(f"/api/candidates/{key}/common/new-skill").json()
+    assert detail["rubric"] is None and detail["rubric_optional"] is True
+    r = c.post("/api/eval-runs", json=run_body(key, modes=("trigger", "effectiveness")))
+    assert r.status_code == 200, r.text
+    assert a.jobs.started[0]["params"]["modes"] == "trigger,effectiveness"
+
+
+def test_a_draft_with_an_effectiveness_case_still_needs_a_rubric(make_client):
+    tree = FakeTree()
+    files = {**skill_files(rubric=False), "evals/evals.json": asserted_evals("new-skill", effectiveness=True)}
+    r, _, _, _ = upload(make_client, archive_body(files), tree=tree)
+    key = r.json()["run_key"]
+    assert json.loads(tree.files[f"{DRAFTS}/{key}/draft.json"])["rubric_optional"] is False
+    c = make_client(user_w=author(), app_w=app(tree), cfg=make_cfg(), sql=RowsSql())
+    assert c.get("/api/candidates").json()[0]["rubric_optional"] is False
+    r = c.post("/api/eval-runs", json=run_body(key, modes=("trigger", "effectiveness")))
+    assert r.status_code == 422 and r.json() == {"detail": {"reason": "rubric_required"}}
+
+
+def test_a_draft_stored_before_rubric_optional_was_kept_reads_as_needing_a_rubric(make_client):
+    tree, key = stored_draft(make_client, rubric=False)
+    path = f"{DRAFTS}/{key}/draft.json"
+    meta = json.loads(tree.files[path])
+    del meta["rubric_optional"]
+    tree.files[path] = json.dumps(meta).encode()
+    c = make_client(user_w=author(), app_w=app(tree), cfg=make_cfg(), sql=RowsSql())
+    assert c.get("/api/candidates").json()[0]["rubric_optional"] is False
 
 
 def test_a_draft_run_names_only_the_drafts_own_skill(make_client):

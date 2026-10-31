@@ -3,8 +3,10 @@ only the merge eval, or a pull request gate run that a release reuses, releases 
 (skillhub.registry.versions.PUBLISH_TRIGGER_SOURCES).
 
 An upload is a zip of the skill folder, or the folder's files. It needs SKILL.md with frontmatter (name, description)
-and evals/evals.json; evals/rubric.json is optional, and without it a draft runs trigger mode only. A top-level
-fixtures/ folder is stored beside the skill and replaces the default fixtures for the draft's evals.
+and evals/evals.json; evals/rubric.json is optional. Without it a draft runs trigger mode only, unless its effectiveness
+cases are all assertion cases (trigger cases that should fire and have assertions), which are then judged on their
+assertions only. A top-level fixtures/ folder is stored beside the skill and replaces the default fixtures for the
+draft's evals.
 
 Validation runs before anything is stored: safe relative paths only (no absolute paths, no `..`, no backslashes or
 drive letters), no symbolic links or other special entries, at most MAX_FILES files and MAX_TOTAL_BYTES bytes once
@@ -40,7 +42,7 @@ from databricks.sdk.service.workspace import ImportFormat
 from backend import candidates
 from skillhub.bundle import BundleError, content_hash, is_ignored, load_bundle, parse_frontmatter
 from skillhub.config import HubConfig
-from skillhub.evalspec import EvalFile, Rubric, loosening_thresholds
+from skillhub.evalspec import EvalFile, Rubric, loosening_thresholds, rubric_optional
 from skillhub.lint import lint_bundle
 from skillhub.registry.stage import CANDIDATE_MARKER
 
@@ -85,6 +87,14 @@ class Draft:
     @property
     def has_rubric(self) -> bool:
         return "evals/rubric.json" in self.files
+
+    @property
+    def rubric_optional(self) -> bool:
+        """Effectiveness mode can run without a rubric: its cases are all assertion cases (evalspec.rubric_optional)."""
+        try:
+            return rubric_optional(EvalFile.model_validate_json(self.files["evals/evals.json"]))
+        except (KeyError, ValueError):
+            return False
 
 
 def new_id(now: float | None = None) -> str:
@@ -268,6 +278,7 @@ def store(
         "uploaded_at": now,
         "description": draft.description,
         "has_rubric": draft.has_rubric,
+        "rubric_optional": draft.rubric_optional,
         "has_fixtures": bool(draft.fixtures),
         "content_hash": content_hash(draft.files),
     }

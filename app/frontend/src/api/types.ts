@@ -41,7 +41,7 @@ export interface SkillDetail {
 export type CandidateKind = "pr" | "draft";
 export interface CandidateSummary {
   kind: CandidateKind; run_key: string; pr_number: number | null; git_sha: string | null; uploaded_at: string | null;
-  uploaded_by: string | null; has_rubric: boolean | null; submitted_pr?: number | null;
+  uploaded_by: string | null; has_rubric: boolean | null; rubric_optional?: boolean | null; submitted_pr?: number | null;
   dept: string; name: string; description: string | null; content_hash: string | null;
   verdicts: Record<string, Verdict>; eval_access: EvalAccess;
 }
@@ -57,7 +57,8 @@ export interface CandidateResult {
 export interface CandidateDetail {
   dept: string; name: string; description: string | null; content_hash: string;
   verdicts: Record<string, Verdict>; files: Record<string, string>; evals: EvalFile | null; rubric: Rubric | null;
-  eval_access: EvalAccess; results: CandidateResult[];
+  // Effectiveness mode can run without a rubric: its cases are trigger cases with assertions only.
+  rubric_optional?: boolean; eval_access: EvalAccess; results: CandidateResult[];
   candidate: {
     kind: CandidateKind; pr_number: number | null; run_key: string; git_sha: string | null;
     uploaded_at: string | null; uploaded_by: string | null; submitted_pr?: number | null; submitted_url?: string | null;

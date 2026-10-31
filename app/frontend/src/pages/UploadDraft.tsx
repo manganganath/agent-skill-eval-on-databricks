@@ -141,7 +141,10 @@ export default function UploadDraft() {
             <ul>
               <li><code>SKILL.md</code> with <code>name</code> and <code>description</code> in its frontmatter.</li>
               <li><code>evals/evals.json</code> with the test cases.</li>
-              <li>Optional: <code>evals/rubric.json</code>. Without it, the draft runs in trigger mode only.</li>
+              <li>
+                Optional: <code>evals/rubric.json</code>. Without it, the draft runs in trigger mode only, unless its
+                effectiveness cases are all trigger cases with assertions: they are then judged on their assertions.
+              </li>
               <li>Optional: a <code>fixtures/</code> folder, used instead of the default fixtures for this draft.</li>
               <li>At most 200 files and 4 MB once unpacked.</li>
             </ul>

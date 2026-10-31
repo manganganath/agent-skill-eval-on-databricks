@@ -16,7 +16,7 @@ const POLL_MS = 5000;
 const TERMINAL = ["TERMINATED", "SKIPPED", "INTERNAL_ERROR"];
 const MODE_HINTS: Record<Mode, string> = {
   trigger: "Checks that the agent picks the skill when it should, and only then.",
-  effectiveness: "Compares answers with and without the skill against the rubric.",
+  effectiveness: "Compares answers with and without the skill against the rubric and the cases' assertions.",
 };
 
 // One picker per selected skill. It lists the published versions from the skill's history. "Live" sends no pin.
@@ -45,6 +45,7 @@ function VersionPicker({ fqn, name, liveVersion, value, onChange }: {
 // A candidate choice: one skill of one upload (a pull request's, or a draft). The run key names the upload's folder.
 type Choice = {
   run_key: string; kind: CandidateKind; pr_number: number | null; dept: string; name: string; has_rubric: boolean | null;
+  rubric_optional?: boolean | null;
 };
 const choiceId = (c: Choice) => `${c.run_key}|${c.dept}/${c.name}`;
 const choiceLabel = (c: Choice) => (c.kind === "draft" ? "draft" : `candidate in PR #${c.pr_number}`);
@@ -91,8 +92,10 @@ export default function RunEval() {
   const choices = fromLink && !listed.some((c) => choiceId(c) === choiceId(fromLink)) ? [fromLink, ...listed] : listed;
   // One run evaluates live skills, or skills of one candidate upload: the Job reads one skills folder per run.
   const candidateKey = pickedCandidates.length > 0 ? pickedCandidates[0].split("|")[0] : null;
-  // A draft without a rubric can run trigger mode only: the effectiveness judges score against the rubric.
-  const triggerOnly = choices.some((c) => pickedCandidates.includes(choiceId(c)) && c.kind === "draft" && c.has_rubric === false);
+  // A draft without a rubric can run trigger mode only: the effectiveness judges score against the rubric. A draft
+  // whose effectiveness cases are all trigger cases with assertions is the exception: they are judged on those.
+  const triggerOnly = choices.some((c) => pickedCandidates.includes(choiceId(c)) && c.kind === "draft" &&
+    c.has_rubric === false && c.rubric_optional !== true);
   const runModes = triggerOnly ? modes.filter((m) => m !== "effectiveness") : modes;
 
   // The linked candidate is picked once, when the candidates have loaded.

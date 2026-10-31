@@ -20,7 +20,7 @@ from backend.deps import get_app_client, get_cfg, get_sql, get_user_client, prob
 from backend.schemas import CandidateBlock, CandidateDetail, CandidateResult, CandidateSummary, EvalAccess
 from skillhub.bundle import content_hash
 from skillhub.config import HubConfig
-from skillhub.evalspec import EvalFile, Rubric
+from skillhub.evalspec import EvalFile, Rubric, rubric_optional
 
 log = logging.getLogger("skillhub.app.candidates")
 router = APIRouter(tags=["candidates"])
@@ -148,6 +148,7 @@ def list_candidates(
                     description=meta.description,
                     uploaded_by=meta.uploaded_by,
                     has_rubric=meta.has_rubric,
+                    rubric_optional=meta.rubric_optional,
                     submitted_pr=meta.submitted_pr,
                 )
             )
@@ -193,6 +194,7 @@ def candidate_detail(
         stamp = meta.uploaded_at if meta is not None else stamp_read.result()
     owned = candidates.owned_rows(rows, key.run_key)
     latest = candidates.latest_rows(owned, key.run_key)
+    evals = _parse(EvalFile, files.get("evals/evals.json"), "evals.json")
     return CandidateDetail(
         dept=dept,
         name=skill,
@@ -200,8 +202,9 @@ def candidate_detail(
         content_hash=content_hash(files),  # evals/ is not part of the content, as in the eval
         verdicts=candidates.verdicts(latest, cfg.defaults.gating_modes),
         files=decode_text(files),
-        evals=_parse(EvalFile, files.get("evals/evals.json"), "evals.json"),
+        evals=evals,
         rubric=_parse(Rubric, files.get("evals/rubric.json"), "rubric.json"),
+        rubric_optional=evals is not None and rubric_optional(evals),
         eval_access=access,
         results=[CandidateResult.model_validate(r) for r in owned],
         candidate=CandidateBlock(

@@ -186,7 +186,8 @@ def _candidate_params(
 ) -> dict[str, str]:
     """Job parameters for an eval of candidate skills: a pull request upload, or a draft. Authors and reviewers only,
     under the candidate visibility rule (backend.candidates); a candidate the user may not see answers 404, as a
-    missing one does. Without evals/rubric.json only trigger mode can run."""
+    missing one does. Without evals/rubric.json only trigger mode can run, unless the skill's effectiveness cases are
+    all assertion cases, which are then judged on their assertions only (evalspec.rubric_optional)."""
     me = authz.fetch_me(user_w)
     key = candidates.parse_key(ref.run_key)
     refs: list[tuple[str, str]] = []
@@ -203,9 +204,10 @@ def _candidate_params(
         if not candidates.workspace_call(lambda md=md: candidates.exists(app_w, md)):
             raise problem(404, Reason.CANDIDATE_NOT_FOUND)
     if "effectiveness" in modes:
-        for dept, name in refs:  # the runner needs a rubric for effectiveness; say so before the Job starts
-            rubric = f"{candidates.skill_dir(cfg, key, dept, name)}/evals/rubric.json"
-            if not candidates.workspace_call(lambda rubric=rubric: candidates.exists(app_w, rubric)):
+        for dept, name in refs:  # effectiveness cases need a rubric; say so before the Job starts
+            if not candidates.workspace_call(
+                lambda dept=dept, name=name: candidates.rubric_ok(app_w, cfg, key, dept, name)
+            ):
                 raise problem(422, Reason.RUBRIC_REQUIRED)
     fixtures = candidates.workspace_call(lambda: candidates.fixtures_root(app_w, cfg, key))
     # Every parameter is sent; "" means unset. The key is fresh, so the PR gate's rows are never mixed with these.

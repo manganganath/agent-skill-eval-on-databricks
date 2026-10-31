@@ -34,8 +34,8 @@ export function VerdictLegend({ rules }: { rules?: VerdictRules }) {
       <p className="muted">
         A verdict is worked out per row, from the reviewed test cases of one skill version, model and mode. A trigger
         case passes when the agent picks the expected skill, or no skill when none is expected. An effectiveness case
-        passes when its weighted rubric score reaches {pct(r.pass_score)} and its assertions hold. Modes that gate a
-        release: {gating}.
+        passes when its weighted rubric score reaches {pct(r.pass_score)} and its assertions hold. A trigger case with
+        assertions also runs as one; without a rubric, only its assertions count. Modes that gate a release: {gating}.
       </p>
       <dl className="legend-list">
         {ORDER.map((v) => (
