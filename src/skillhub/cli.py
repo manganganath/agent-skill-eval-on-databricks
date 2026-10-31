@@ -159,6 +159,7 @@ def lint_cmd(ctx: typer.Context, paths: list[str] = typer.Argument(None)) -> Non
         paths or [],
         departments=settings.departments if settings else None,
         defaults=settings.defaults if settings else None,
+        models=settings.models if settings else None,
     )
     for issue in issues:
         typer.echo(str(issue))
@@ -1094,6 +1095,16 @@ def eval_cmd(
     cfg = _cfg(ctx)
     # [] lets each skill's evals.json `models` override defaults.models
     model_list = [] if (_opt(models) or "default") == "default" else _csv(models)
+    if any(m not in cfg.models for m in model_list):  # model catalog profiles, read as the Job's identity
+        from skillhub.model_catalog.merge import CatalogError, load_requested
+        from skillhub.sql import SqlClient
+
+        try:
+            cfg = load_requested(
+                cfg, lambda: SqlClient(workspace_client(), cfg.workspace.sql_warehouse_id), model_list
+            )
+        except CatalogError as e:
+            raise typer.BadParameter(str(e), param_hint="--models") from e
     unknown = [m for m in model_list if m not in cfg.models]
     if unknown:
         raise typer.BadParameter(f"unknown model profile(s): {', '.join(unknown)}", param_hint="--models")

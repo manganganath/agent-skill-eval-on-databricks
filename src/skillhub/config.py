@@ -281,6 +281,7 @@ class LintSettings:
     departments: frozenset[str]
     defaults: Defaults
     quarantined: frozenset[str] = frozenset()  # departments with quarantine: true
+    models: frozenset[str] = frozenset()  # the hub.yaml model profile names
 
 
 def load_lint_settings(path: str | Path | None = None) -> LintSettings:
@@ -299,4 +300,7 @@ def load_lint_settings(path: str | Path | None = None) -> LintSettings:
     if defaults.warn_rate < defaults.fail_rate:
         raise ConfigError("defaults.warn_rate must not be below defaults.fail_rate")
     quarantined = frozenset(k for k, d in depts.items() if d.quarantine)
-    return LintSettings(frozenset(depts), defaults, quarantined)
+    models = raw.get("models") or {}
+    if not isinstance(models, dict):
+        raise ConfigError(f"{path}: models must be a mapping of profile names")
+    return LintSettings(frozenset(depts), defaults, quarantined, frozenset(models))

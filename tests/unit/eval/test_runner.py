@@ -1401,9 +1401,15 @@ def cli_calls(monkeypatch):
         seen["roots"].append(root)
         return BUNDLES
 
+    def empty_catalog(cfg, connect, names):  # no model catalog rows: a name that hub.yaml lacks is unknown
+        from skillhub.model_catalog.merge import resolve
+
+        return resolve(cfg, [], None, names)
+
     monkeypatch.setattr(cli, "load_config", lambda *a, **k: CFG)
     monkeypatch.setattr("skillhub.bundle.discover_bundles", discover)
     monkeypatch.setattr("skillhub.eval.runner.run_eval", fake_run)
+    monkeypatch.setattr("skillhub.model_catalog.merge.load_requested", empty_catalog)
     return seen
 
 
