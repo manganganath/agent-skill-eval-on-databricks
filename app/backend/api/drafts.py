@@ -208,6 +208,7 @@ def submit_draft(
             files,
             me.user,
             has_rubric=meta.has_rubric,
+            rubric_optional=meta.rubric_optional,
         )
     except release.NoChanges:
         raise problem(409, Reason.NO_CHANGES) from None

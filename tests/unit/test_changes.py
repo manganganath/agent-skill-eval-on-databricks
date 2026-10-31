@@ -267,6 +267,19 @@ def test_rubric_missing_but_cases_present_needs_only_rubric(repo):
     assert (row.needs_cases, row.needs_rubric, row.needs_generation) == (False, True, True)
 
 
+def test_a_skill_whose_effectiveness_cases_are_assertion_cases_needs_no_rubric(repo):
+    """CI generates no rubric for it: its cases are judged on their assertions. An effectiveness case needs one."""
+    path, base = repo
+    asserted = {"id": 1, "prompt": "Guten Tag!", "should_trigger": True, "assertions": ["In German"]}
+    write(path, EVALS, json.dumps({"skill_name": "alpha", "evals": [asserted]}))
+    row = _row(path, base, commit_all(path, "assertion cases"))
+    assert (row.needs_cases, row.needs_rubric, row.needs_generation) == (False, False, False)
+    effect = {"id": 101, "kind": "effectiveness", "prompt": "p", "should_trigger": True}
+    write(path, EVALS, json.dumps({"skill_name": "alpha", "evals": [asserted, effect]}))
+    row = _row(path, base, commit_all(path, "and an effectiveness case"))
+    assert (row.needs_cases, row.needs_rubric) == (False, True)
+
+
 def test_rubric_present_but_no_cases_needs_only_cases(repo):
     path, base = repo
     write(path, RUBRIC, "{}")

@@ -8,9 +8,9 @@ import pytest
 from app_fakes import FakeApi, FakeGitHub, FakeTree, FakeWorkspace
 from backend import github, release
 from conftest import make_cfg
-from test_app_candidates import RowsSql, pr_folder, skill_md
+from test_app_candidates import RowsSql, asserted_evals, pr_folder, skill_md
 from test_app_candidates import app as candidates_app
-from test_app_drafts import ME, app, author, reviewer, skill_files, stored_draft, user
+from test_app_drafts import ME, app, archive_body, author, reviewer, skill_files, stored_draft, upload, user
 from test_app_github import TOKEN, app_with_secret, http_error, recording_opener
 
 HUB = release.HUB_MARKER
@@ -136,6 +136,15 @@ def test_a_rubric_the_draft_lacks_is_left_to_ci_and_the_body_says_so(make_client
     tree, key = stored_draft(make_client, rubric=False)
     assert submit(make_client, tree, key).status_code == 200
     assert "CI generates the missing rubric" in gh.bodies[5]
+
+
+def test_a_draft_judged_on_its_assertions_gets_no_rubric_from_ci_and_the_body_says_so(make_client, gh):
+    tree = FakeTree()
+    files = {**skill_files(rubric=False), "evals/evals.json": asserted_evals("new-skill")}
+    r, _, _, _ = upload(make_client, archive_body(files), tree=tree)
+    assert submit(make_client, tree, r.json()["run_key"]).status_code == 200
+    assert "CI generates" not in gh.bodies[5]
+    assert "judges its trigger cases with assertions on their assertions only" in gh.bodies[5]
 
 
 def test_resubmitting_is_409_with_the_pull_request(make_client, gh):
