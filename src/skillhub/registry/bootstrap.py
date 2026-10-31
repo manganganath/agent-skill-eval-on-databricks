@@ -25,6 +25,7 @@ from skillhub.bundle import discover_bundles
 from skillhub.config import HubConfig
 from skillhub.model_catalog.store import TABLE as MODEL_CATALOG_TABLE
 from skillhub.naming import eval_schema, evals_schema, live_schema, versions_schema
+from skillhub.sql import SqlError
 
 _log = logging.getLogger(__name__)
 
@@ -247,6 +248,29 @@ def _foreign_view_owner(cfg: HubConfig, w, ci: str) -> str | None:
     except NotFound:
         return None
     return owner if owner and owner != ci else None
+
+
+def _replace_own_views(cfg: HubConfig, w, sql, steps, deployer: str, ci: str) -> list[str]:
+    """A person's run after the hand-over replaces the results views they own: the Job leaves them as they are.
+
+    The views read the Job's tables, so the Job runs first after an upgrade that adds columns."""
+    owner = _foreign_view_owner(cfg, w, ci)
+    if owner is None:
+        return []  # no views yet, or ci owns them: the Job replaces them
+    if owner != deployer:
+        return [
+            f"results views left as they are: they are owned by {owner}, whose bootstrap run replaces them"
+        ]
+    try:
+        steps.ensure_views(cfg, sql)
+    except SqlError as exc:
+        if "UNRESOLVED_COLUMN" not in str(exc).upper():
+            raise
+        raise BootstrapError(
+            "the results views read columns the tables do not have yet: run the skillhub-bootstrap Job first, "
+            "then run `skillhub bootstrap` again"
+        ) from None
+    return [f"results views replaced: they are owned by {owner}"]
 
 
 def _schema_owner(w, name: str) -> str | None:
@@ -905,7 +929,8 @@ def bootstrap(
       grants. It cannot create schemas or, unless it owns the catalog, change catalog-level grants:
       those are skipped and logged.
     - A person re-running it after the hand-over (for identities, or a new department) does the identity
-      and catalog steps, creates missing schemas, hands them over, and leaves the rest to the Job.
+      and catalog steps, creates missing schemas, hands them over, replaces the results views they own (the
+      Job leaves those as they are), and leaves the rest to the Job.
     Every owner must be the deployer or ci. ci_eval never runs bootstrap and never owns a hub object.
     """
     log_lines = _Log(emit)
@@ -972,6 +997,7 @@ def bootstrap(
         moved = ownership_transfers(cfg, w, owners, schema_owners)
         for stmt in moved:
             sql.execute(stmt)
+        log_lines += _replace_own_views(cfg, w, sql, steps, deployer, ci_app_id)
         log_lines.append(
             f"handed {len(moved)} schemas and tables to the ci principal {ci_app_id}; views stay with their "
             "owner. The hub is already owned by ci: run the skillhub-bootstrap Job to apply the grants, tables "
