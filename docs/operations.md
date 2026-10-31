@@ -440,15 +440,14 @@ external:
     default_region: us-east-1
 ```
 
-1. **Create a least-privilege IAM user.** It may invoke models and inference profiles and read model metadata, nothing else. The client calls the Converse API, which `bedrock:InvokeModel` authorizes. Narrow the resources to the models you register if you want; a cross-region inference profile also needs the foundation model in each region it routes to.
+1. **Create a least-privilege IAM user.** It may invoke models and inference profiles and read model metadata, nothing else. `bedrock:InvokeModel` authorizes the Converse API, which the client calls (`InvokeModelWithResponseStream` authorizes ConverseStream). Narrow the resources to the models you register if you want; a cross-region inference profile also needs the foundation model in each region it routes to.
 
    ```bash
    cat > skillhub-bedrock.json <<'POLICY'
    {
      "Version": "2012-10-17",
      "Statement": [
-       {"Sid": "InvokeModels", "Effect": "Allow", "Action": ["bedrock:InvokeModel", "bedrock:InvokeModelWithResponseStream",
-                   "bedrock:Converse", "bedrock:ConverseStream"],
+       {"Sid": "InvokeModels", "Effect": "Allow", "Action": ["bedrock:InvokeModel", "bedrock:InvokeModelWithResponseStream"],
         "Resource": ["arn:aws:bedrock:*::foundation-model/*",
                      "arn:aws:bedrock:*:<account-id>:inference-profile/*",
                      "arn:aws:bedrock:*:<account-id>:application-inference-profile/*"]},
