@@ -489,7 +489,12 @@ A Unity Catalog service credential is the recommended alternative where an admin
 
 ### Upgrade to the model catalog
 
-This release adds the `model_profiles` table, five `eval_runs` columns, the `profile_kind` column of the matrix views, and the `skillhub-probe` Job. After the deploy, run the `skillhub-bootstrap` Job before the next eval: sync writes the new columns, and the gates read them. If the matrix views belong to a person rather than `skillhub-ci`, that person runs `uv run skillhub bootstrap` once, so the views carry `profile_kind`. A matrix view from before this release has no `profile_kind`. Until bootstrap replaces it, the Eval matrix reads that department without the column and shows its rows as release gate models; other departments keep their kinds.
+This release adds the `model_profiles` table, five `eval_runs` columns, the `profile_kind` column of the matrix views, and the `skillhub-probe` Job. After the deploy, run the `skillhub-bootstrap` Job before the next eval: sync writes the new columns, and the gates read them. If the matrix views belong to a person rather than `skillhub-ci`, that person runs `uv run skillhub bootstrap` once, so the views carry `profile_kind`. Until bootstrap has run, two things fail, and both fail safe:
+
+- **Sync.** The five new columns are added only by bootstrap. On a workspace that has not been bootstrapped, the `sync` task of `skill-eval` (and of the nightly Job) fails with a SQL error about the missing column, after the evals themselves have finished, and writes no rows. The merge gate and the publish gate then find no result for the skill and refuse (`skillhub check-verdict` exits 1), and so does the pull request gate. Nothing passes on missing data. Run `skillhub-bootstrap` straight after the deploy, then run the evaluation again.
+- **The catalog.** Until bootstrap creates `eval.model_profiles`, `GET /api/models` answers with `catalog_available: false` and lists only the `config/hub.yaml` models, and registering or changing a model answers 503 `catalog_unavailable`. Running `skillhub-bootstrap` creates the table.
+
+A matrix view from before this release has no `profile_kind`. Until bootstrap replaces it, the Eval matrix reads that department without the column and shows its rows as release gate models; other departments keep their kinds.
 
 ## Access to the app
 
