@@ -2,9 +2,10 @@ import { useEffect, useRef, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { api } from "../api/client";
 import type {
-  AppConfig, CandidateKind, CandidateSummary, EvalRunIn, EvalRunStatus, JournalRow, Me, Mode, SkillSummary,
+  AppConfig, CandidateKind, CandidateSummary, EvalRunIn, EvalRunStatus, JournalRow, Me, Mode, ModelsList, SkillSummary,
 } from "../api/types";
 import { MODES } from "../api/types";
+import { KIND_LABELS, groupByKind, targetOf } from "../models";
 import { canSeeCandidates, isDraftKey, prNumberOf } from "../candidates";
 import { useAsync } from "../hooks/useAsync";
 import { CandidateBadge } from "../components/CandidateBadge";
@@ -64,6 +65,8 @@ export default function RunEval() {
   const [params] = useSearchParams();
   const skills = useAsync<SkillSummary[]>(() => api.skills(), []);
   const config = useAsync<AppConfig>(() => api.config(), []);
+  // The enabled model catalog rows, after the hub.yaml models. Without the catalog the hub.yaml models still run.
+  const catalog = useAsync<ModelsList>(() => api.models(), []);
   // One /api/me request per page load, shared with the header. Candidates are asked for only by authors and reviewers.
   const me = useAsync<Me>(() => api.me(), []);
   const reviewing = canSeeCandidates(me.data);
@@ -177,6 +180,10 @@ export default function RunEval() {
   if (skills.error) return <ErrorState error={skills.error} onRetry={skills.reload} />;
   if (config.error) return <ErrorState error={config.error} onRetry={config.reload} />;
 
+  // Models on Unity Gateway, then external models. External agents are not offered in this release.
+  const catalogGroups = groupByKind((catalog.data?.models ?? []).filter(
+    (m) => !m.release_gate && m.enabled && (m.kind === "ug_model" || m.kind === "external_model"),
+  ));
   const liveOf = (fqn: string) => (skills.data ?? []).find((s) => s.fqn === fqn)?.live_version ?? null;
   const liveChoices = (
     <>
@@ -269,14 +276,37 @@ export default function RunEval() {
       )}
       <fieldset className="form-group">
         <legend>Models</legend>
-        <div className="choice-grid">
-          {Object.entries(config.data?.models ?? {}).map(([name, cls]) => (
-            <label key={name} className="choice"><input type="checkbox" checked={models.includes(name)}
-              onChange={() => toggle(models, name, setModels)} aria-label={name} />
-              <span className="choice-text"><strong>{name}</strong><span className="choice-sub">{cls}</span></span>
-            </label>
-          ))}
+        <div role="group" aria-labelledby="models-hub_yaml" className="choice-section">
+          <h3 id="models-hub_yaml" className="choice-section-title">{KIND_LABELS.hub_yaml}</h3>
+          <div className="choice-grid">
+            {Object.entries(config.data?.models ?? {}).map(([name, cls]) => (
+              <label key={name} className="choice"><input type="checkbox" checked={models.includes(name)}
+                onChange={() => toggle(models, name, setModels)} aria-label={name} />
+                <span className="choice-text"><strong>{name}</strong><span className="choice-sub">{cls}</span></span>
+              </label>
+            ))}
+          </div>
         </div>
+        {catalogGroups.map(([kind, rows]) => (
+          <div key={kind} role="group" aria-labelledby={`models-${kind}`} className="choice-section">
+            <h3 id={`models-${kind}`} className="choice-section-title">{KIND_LABELS[kind]}</h3>
+            <div className="choice-grid">
+              {rows.map((m) => (
+                <label key={m.name} className="choice"><input type="checkbox" checked={models.includes(m.name)}
+                  onChange={() => toggle(models, m.name, setModels)} aria-label={m.name} />
+                  <span className="choice-text">
+                    <strong>{m.name}</strong><span className="choice-sub">{m.model_class} · {targetOf(m)}</span>
+                  </span>
+                </label>
+              ))}
+            </div>
+          </div>
+        ))}
+        {catalog.loading && <Loading label="Loading the model catalog" />}
+        {catalog.error ? (
+          <ErrorState error={catalog.error} onRetry={catalog.reload}
+            message="The model catalog could not be loaded. The release gate models can still run." />
+        ) : null}
       </fieldset>
       <fieldset className="form-group">
         <legend>Modes</legend>
