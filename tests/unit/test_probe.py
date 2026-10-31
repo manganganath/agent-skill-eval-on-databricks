@@ -1,5 +1,7 @@
 from datetime import UTC, datetime
 
+import httpx
+import openai
 import pytest
 from typer.testing import CliRunner
 
@@ -164,3 +166,15 @@ def test_a_bedrock_call_error_keeps_its_message():
         make_cfg(), [NOVA], None, "nova-lite", NOVA.target(), client_for=lambda c, n: Client(error)
     )
     assert result.message == f"BedrockCallError: {error}"
+
+
+def test_a_serving_endpoint_refusal_keeps_the_endpoints_message():
+    request = httpx.Request("POST", "https://example.cloud.databricks.com/serving-endpoints/chat/completions")
+    response = httpx.Response(403, request=request)
+    error = openai.PermissionDeniedError(
+        "PERMISSION_DENIED: no CAN_QUERY on the endpoint", response=response, body=None
+    )
+    result = run_probe(
+        make_cfg(), [NOVA], None, "nova-lite", NOVA.target(), client_for=lambda c, n: Client(error)
+    )
+    assert result.message == "PermissionDeniedError: PERMISSION_DENIED: no CAN_QUERY on the endpoint"

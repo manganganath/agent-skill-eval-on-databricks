@@ -69,13 +69,19 @@ def describe(exc: BaseException) -> str:
     """What may leave the probe about an error: the message only of classes known to carry no secret value.
 
     The Bedrock client redacts its call errors, a missing-key error names the scope and key only, and the config and
-    catalog errors are written by this code. Any other error (a library's, a transport's) may quote a request or a
+    catalog errors are written by this code. The serving client's openai errors carry the endpoint's own answer, such as
+    a 403 PERMISSION_DENIED, and Databricks serving never echoes the bearer token. Any other error (a library's, a transport's) may quote a request or a
     credential, so only its type name leaves."""
+    import openai
+
     from skillhub.config import ConfigError
     from skillhub.gateway.bedrock import BedrockCallError
     from skillhub.model_catalog.merge import CatalogError
 
-    if isinstance(exc, BedrockCallError | ConfigError | CatalogError):  # AwsCredentialsError is a ConfigError
+    known = BedrockCallError | ConfigError | CatalogError | openai.APIStatusError | openai.APIConnectionError
+    if isinstance(
+        exc, known
+    ):  # AwsCredentialsError is a ConfigError; the openai errors carry the endpoint's text
         return f"{type(exc).__name__}: {exc}"
     return f"{type(exc).__name__}: the call failed"
 
