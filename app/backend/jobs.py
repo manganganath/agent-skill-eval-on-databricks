@@ -8,9 +8,13 @@ import threading
 from databricks.sdk import WorkspaceClient
 from databricks.sdk.errors import InvalidParameterValue, NotFound
 
-JOB_NAMES = ("skill-eval", "skill-switch")
+JOB_NAMES = ("skill-eval", "skill-switch", "skillhub-probe")
 # The env var wins when it is set and non-empty. Otherwise the job is found by exact name.
-_ENV = {"skill-eval": "SKILLHUB_JOB_ID_EVAL", "skill-switch": "SKILLHUB_JOB_ID_SWITCH"}
+_ENV = {
+    "skill-eval": "SKILLHUB_JOB_ID_EVAL",
+    "skill-switch": "SKILLHUB_JOB_ID_SWITCH",
+    "skillhub-probe": "SKILLHUB_JOB_ID_PROBE",
+}
 _ids: dict[str, int] = {}
 _lock = threading.Lock()
 

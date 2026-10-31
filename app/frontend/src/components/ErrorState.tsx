@@ -33,6 +33,16 @@ const MESSAGES: Record<string, string> = {
   prompt_too_long: "The test input is too long. Keep it under 4000 characters.",
   too_many_models: "Pick at most 3 models.",
   unknown_model: "One of the selected models is not configured.",
+  model_not_found: "That model is not in the model list, or it is disabled. Reload the page and pick another.",
+  model_exists: "A model with that name already exists. Pick another name.",
+  model_invalid: "The model was not saved. Fix the problems listed and try again.",
+  kind_not_supported: "External agents cannot be added or tested in this release.",
+  release_gate_model:
+    "This is a release gate model. Change it in config/hub.yaml through a pull request, not on the Models page.",
+  test_not_passed: "Test the model first. A model can be enabled only after its last test passed.",
+  catalog_unavailable:
+    "Skill Hub could not read or write the model list. An administrator may need to run the skillhub-bootstrap Job.",
+  serving_unavailable: "Skill Hub could not list the serving endpoints. Try again later.",
   not_author: "Only skill authors and reviewers can do this.",
   candidate_not_found:
     "This candidate was not found, or you do not have access to it. Candidate uploads are removed 7 days after upload.",

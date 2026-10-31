@@ -1,7 +1,7 @@
 import re
 
 import pytest
-from app_fakes import FakeApi, FakeJobs, FakeWorkspace, run_obj
+from app_fakes import FakeApi, FakeJobs, FakeWorkspace, ThreadSql, run_obj
 from backend import authz, jobs
 from conftest import make_cfg
 from databricks.sdk.errors import InternalError, PermissionDenied, ResourceConflict
@@ -107,11 +107,16 @@ def test_eval_run_403_when_skill_unreadable(make_client, monkeypatch):
     assert app.jobs.started == []
 
 
-def test_eval_run_unknown_model_is_422(make_client, monkeypatch):
+def test_eval_run_unknown_model_is_404(make_client, monkeypatch):
+    from skillhub.model_catalog import store
+
     readable(monkeypatch)
-    c = make_client(user_w=user(), app_w=FakeWorkspace(jobs=FakeJobs()), cfg=make_cfg(), sql=FakeUserSql([]))
+    sql = ThreadSql()
+    store.ensure_table(make_cfg(), sql)  # an empty model catalog
+    c = make_client(user_w=user(), app_w=FakeWorkspace(jobs=FakeJobs()), cfg=make_cfg(), sql=FakeUserSql([]),
+                    app_sql=sql)  # fmt: skip
     r = c.post("/api/eval-runs", json={**BODY, "models": ["no-such-model"]})
-    assert r.status_code == 422 and r.json() == {"detail": {"reason": "unknown_model"}}
+    assert r.status_code == 404 and r.json() == {"detail": {"reason": "model_not_found"}}
 
 
 @pytest.mark.parametrize(
@@ -548,3 +553,63 @@ def test_status_of_switch_run_owned_through_actor(make_client):
     assert ok.status_code == 200 and ok.json()["run_key"] == ""
     other = make_client(user_w=user("bob@example.com"), app_w=app, cfg=make_cfg()).get("/api/eval-runs/99")
     assert other.status_code == 404
+
+
+def _catalog(*rows):
+    from datetime import UTC, datetime
+
+    from skillhub.model_catalog import store
+    from skillhub.model_catalog.entry import CatalogEntry
+
+    cfg, sql = make_cfg(), ThreadSql()
+    store.ensure_table(cfg, sql)
+    for r in rows:
+        store.insert_entry(
+            sql, cfg, CatalogEntry(**r), "rita@example.com", datetime(2026, 10, 31, tzinfo=UTC)
+        )
+    return cfg, sql
+
+
+NOVA_ROW = {"name": "nova-lite", "kind": "external_model", "route": "bedrock", "model_id": "amazon.nova-lite-v1:0",
+            "region": "us-east-1", "model_class": "fast"}  # fmt: skip
+
+
+def test_an_enabled_catalog_model_is_passed_to_the_eval_job(make_client, monkeypatch):
+    readable(monkeypatch)
+    cfg, sql = _catalog({**NOVA_ROW, "enabled": True})
+    app = FakeWorkspace(jobs=FakeJobs())
+    c = make_client(user_w=user(), app_w=app, cfg=cfg, sql=FakeUserSql([]), app_sql=sql)
+    r = c.post("/api/eval-runs", json={**BODY, "models": ["claude-sonnet", "nova-lite"]})
+    assert r.status_code == 200, r.json()
+    assert app.jobs.started[0]["params"]["models"] == "claude-sonnet,nova-lite"
+
+
+@pytest.mark.parametrize("rows", [[], [NOVA_ROW]], ids=["unknown", "disabled"])
+def test_an_unknown_or_disabled_model_is_404_before_any_job_starts(make_client, monkeypatch, rows):
+    readable(monkeypatch)
+    cfg, sql = _catalog(*rows)
+    app = FakeWorkspace(jobs=FakeJobs())
+    c = make_client(user_w=user(), app_w=app, cfg=cfg, sql=FakeUserSql([]), app_sql=sql)
+    r = c.post("/api/eval-runs", json={**BODY, "models": ["nova-lite"]})
+    assert r.status_code == 404 and r.json() == {"detail": {"reason": "model_not_found"}}
+    assert app.jobs.started == []
+
+
+def test_a_catalog_model_with_the_catalog_unreadable_is_503(make_client, monkeypatch):
+
+    readable(monkeypatch)
+    c = make_client(user_w=user(), app_w=FakeWorkspace(jobs=FakeJobs()), cfg=make_cfg(), sql=FakeUserSql([]),
+                    app_sql=ThreadSql())  # fmt: skip
+    r = c.post("/api/eval-runs", json={**BODY, "models": ["nova-lite"]})
+    assert r.status_code == 503 and r.json() == {"detail": {"reason": "catalog_unavailable"}}
+
+
+def test_a_run_on_release_gate_models_never_reads_the_catalog(make_client, monkeypatch):
+    class NoSql:
+        def execute(self, *a, **k):
+            raise AssertionError("the catalog was read")
+
+    readable(monkeypatch)
+    app = FakeWorkspace(jobs=FakeJobs())
+    c = make_client(user_w=user(), app_w=app, cfg=make_cfg(), sql=FakeUserSql([]), app_sql=NoSql())
+    assert c.post("/api/eval-runs", json=BODY).status_code == 200
