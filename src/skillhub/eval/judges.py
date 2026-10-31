@@ -31,6 +31,9 @@ def criterion_instructions(text: str) -> str:
 
 
 def rubric_judges(cfg, rubric, profile: str) -> list:
+    """One judge per criterion. None for a skill without rubric.json: its cases are judged on their assertions."""
+    if rubric is None:
+        return []
     return [
         make_judge(
             name=judge_name(f"rubric_{c.id}", profile),
@@ -81,7 +84,8 @@ def scorers_for(
 ) -> list:
     """Scorer list for one (skill, mode) across the judge panel. `cases` and `fixtures_root` feed the
     audit-xls planted-bug scorer, which scopes itself to the workbook cases; `fixtures_root` is
-    required for that skill and a ValueError is raised without it.
+    required for that skill and a ValueError is raised without it. `rubric` is None for a skill without
+    rubric.json: the effectiveness modes then have no rubric judges.
 
     The built-in scorers (tool-call correctness and efficiency, safety) have one fixed name each, so they
     are deduped: the first profile in `profiles` is the one that judges them.

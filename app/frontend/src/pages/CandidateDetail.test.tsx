@@ -147,6 +147,14 @@ describe("CandidateDetail for a draft", () => {
       "href", `/run?candidate=${DRAFT}&skill=common%2Fnew-skill`,
     );
   });
+
+  it("says a draft without a rubric is judged on its assertions when its cases allow it", async () => {
+    vi.mocked(api.candidate).mockResolvedValue({ ...draft, rubric_optional: true });
+    renderAt(`/candidates/${DRAFT}/common/new-skill`);
+    expect(await screen.findByText(/no rubric, so effectiveness mode judges its cases on their assertions only/i))
+      .toBeTruthy();
+    expect(screen.queryByText(/trigger mode only/i)).toBeNull();
+  });
 });
 
 describe("CandidateDetail try panel", () => {

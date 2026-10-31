@@ -460,6 +460,7 @@ def test_candidate_detail_has_the_files_cases_rubric_results_and_candidate_block
     assert sorted(body["files"]) == ["SKILL.md", "references/guide.md"]  # evals/ never shows as a file
     assert [case["id"] for case in body["evals"]["evals"]] == [1, 2]
     assert len(body["rubric"]["criteria"]) == 5
+    assert body["rubric_optional"] is False  # no assertion cases: effectiveness needs the rubric
     assert body["candidate"] == {
         "kind": "pr",
         "pr_number": 5,
@@ -602,6 +603,44 @@ def test_a_candidate_run_takes_no_live_skills_and_no_pinned_versions(make_client
     r = c.post("/api/eval-runs", json={**run_body(), **extra})
     assert r.status_code == 422 and r.json() == {"detail": {"reason": "mixed_sources"}}
     assert a.jobs.started == []
+
+
+def asserted_evals(name: str, *, effectiveness=False) -> bytes:
+    """Trigger cases with assertions on the ones that should fire, optionally with an effectiveness case."""
+    cases = [
+        {"id": 1, "prompt": "Guten Tag!", "should_trigger": True, "assertions": ["The answer is in German"]},
+        {"id": 2, "prompt": "Testing 123", "should_trigger": False, "assertions": []},
+    ]
+    if effectiveness:
+        cases.append({"id": 101, "kind": "effectiveness", "prompt": "p", "should_trigger": True})
+    return json.dumps({"skill_name": name, "evals": cases}).encode()
+
+
+@pytest.mark.parametrize(
+    ("evals", "status"),
+    [
+        (asserted_evals("new-skill"), 200),  # judged on the assertions only
+        (asserted_evals("new-skill", effectiveness=True), 422),  # the effectiveness case needs the rubric
+        (evals_json("new-skill"), 422),  # nothing for effectiveness to judge without a rubric
+        (b"{not json", 422),
+    ],
+    ids=["assertion-cases", "with-an-effectiveness-case", "trigger-only", "invalid"],
+)
+def test_effectiveness_without_a_rubric_runs_only_when_its_cases_are_all_assertion_cases(
+    make_client, evals, status
+):
+    files = pr_folder()
+    base = f"{ROOT}/{KEY}/skills/common/new-skill/evals"
+    del files[f"{base}/rubric.json"]
+    files[f"{base}/evals.json"] = evals
+    a = app(FakeTree(files), readable=("common",))
+    c = make_client(user_w=author(), app_w=a, cfg=make_cfg(), sql=RowsSql())
+    r = c.post("/api/eval-runs", json=run_body(modes=["trigger", "effectiveness"]))
+    assert r.status_code == status, r.text
+    if status == 422:
+        assert r.json() == {"detail": {"reason": "rubric_required"}} and a.jobs.started == []
+    else:
+        assert a.jobs.started[0]["params"]["modes"] == "trigger,effectiveness"
 
 
 def test_a_run_with_neither_skills_nor_a_candidate_is_422(make_client):

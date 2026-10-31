@@ -184,17 +184,19 @@ Naming rules:
 - Generated cases per skill: about 8 positive, about 4 near-misses aimed at sibling skills in the same scope, and about 3 unrelated.
 - Accuracy, precision, recall and a confusion matrix are reported over the skills in scope.
 
-**With-versus-without runs** for effectiveness cases.
+**With-versus-without runs** for effectiveness cases, and for trigger cases that should trigger and have assertions.
 
 - The same model and the same fake tools run with and without the skills server. Only the skills server differs.
 - Skill content never goes into a prompt. The agent discovers and loads the skill itself.
-- Uplift is reported separately for `task_quality` (would a domain expert want this anyway) and `skill_format` (the skill's own conventions).
+- Uplift is reported separately for `task_quality` (would a domain expert want this anyway) and `skill_format` (the skill's own conventions). The PR comment and the matrix also show the pass rate without the skill (`pass_rate_without`) and the uplift of the pass rate in percentage points.
+- A trigger case with `should_trigger: true` and assertions also runs in trigger mode, with the same ID. Each mode is its own child run and each trace carries its `mode`, so the results of the two modes never mix. A trigger case with `should_trigger: false` has no answer to judge, so its assertions are ignored.
+- Without `rubric.json`, these cases are judged on their assertions only: a case passes when the panel finds that its assertions hold, and no uplift by type is reported. Effectiveness cases (`kind: effectiveness`) need a rubric.
 
 **Scoring.**
 
 - Code scorers read the tool spans of the trace.
 - `ExpectationsGuidelines` checks each case's assertions.
-- One `make_judge` per rubric criterion uses only inputs and outputs. A `make_judge` with the trace checks skill use. Built-in tool-call and safety scorers run on effectiveness cases.
+- One `make_judge` per rubric criterion uses only inputs and outputs. A `make_judge` with the trace checks skill use. Built-in tool-call and safety scorers run in the effectiveness modes.
 - Judges form a panel (`judges` in `config/hub.yaml`, three models in the shipped config; PR runs use `judges_pr`). Every judge's assessment is kept. A criterion passes only with a strict majority of the whole configured panel, for example 2 of 3. If at least one judge answered but there is no such majority, the criterion is not met. If no judge answered, the criterion is an error. Judge prompts mark the agent output and the skill text as data and tell the judge to ignore instructions inside them. Bootstrap registers only the skill-use judge of the first judge model. The rest of the panel runs at eval time.
 - Verdict rules: a pass rate below `fail_rate` is `fail`; below `warn_rate` is `warn`; otherwise `pass`. An error rate above `max_error_rate`, or most of the panel not responding, is `inconclusive`. Fewer than `min_reviewed_cases` reviewed cases is `advisory` and does not gate. Only reviewed cases count toward a gating verdict. A reviewed case with no dataset row counts as an error.
 - Thresholds: a skill may set its own `fail_rate`, `warn_rate` (`evals.json`) and `pass_score` (`rubric.json`), but only to tighten the defaults in `config/hub.yaml`. A looser value is ignored with a warning, and lint reports it. `max_error_rate` and `min_reviewed_cases` are not per skill.
@@ -204,7 +206,7 @@ Naming rules:
 - Model profiles declare a class (`frontier` or `fast`), shown next to results.
 - The harness does not send `temperature`, because the supported models reject it. Repeats give a measure of consistency instead.
 - Fixtures: all tools are fake and the data is synthetic (the Northwind Robotics fixture suite), so runs are repeatable and need no live web access.
-- Rubrics: 5 to 10 criteria per skill, each with a `source` that points to the part of `SKILL.md` it came from. They are reviewed in pull requests like any other change. Each run writes the rubric to the `rubrics` table, not to the skill bundle.
+- Rubrics: 5 to 10 criteria per skill, each with a `source` that points to the part of `SKILL.md` it came from. They are reviewed in pull requests like any other change. Each run writes the rubric to the `rubrics` table, not to the skill bundle. A skill whose effectiveness cases are all trigger cases with assertions may have no rubric, and CI then generates none.
 
 ## Results
 

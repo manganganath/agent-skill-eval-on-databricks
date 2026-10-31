@@ -51,6 +51,7 @@ from backend.authz import MeProfile, Reason, RequestMemo
 from backend.deps import problem
 from skillhub.bundle import BundleError, is_ignored, parse_frontmatter
 from skillhub.config import HubConfig
+from skillhub.evalspec import EvalFile, rubric_optional
 from skillhub.lint import MAX_BUNDLE_BYTES, NAME_RE
 from skillhub.naming import SKILL_RE, candidates_root, drafts_root, live_schema, make_run_key
 from skillhub.registry.stage import CANDIDATE_MARKER, CANDIDATE_MAX_AGE_HOURS
@@ -111,6 +112,7 @@ class DraftMeta:
     has_rubric: bool
     submitted_pr: int | None = None
     submitted_url: str | None = None
+    rubric_optional: bool = False  # effectiveness mode can run without a rubric (evalspec.rubric_optional)
 
 
 @dataclass
@@ -315,6 +317,22 @@ def exists(app_w: WorkspaceClient, path: str) -> bool:
     return True
 
 
+def rubric_ok(app_w: WorkspaceClient, cfg: HubConfig, key: CandidateKey, dept: str, name: str) -> bool:
+    """Whether the effectiveness modes have the rubric they need: the skill has evals/rubric.json, or its
+    effectiveness cases are all assertion cases, which need none (evalspec.rubric_optional). An evals.json that is
+    missing, too large or invalid counts as needing a rubric."""
+    base = skill_dir(cfg, key, dept, name)
+    if exists(app_w, f"{base}/evals/rubric.json"):
+        return True
+    data = _download(app_w, f"{base}/evals/evals.json", MAX_BYTES)
+    if data is None or len(data) > MAX_BYTES:
+        return False
+    try:
+        return rubric_optional(EvalFile.model_validate_json(data))
+    except ValueError:
+        return False
+
+
 def read_skill_files(
     app_w: WorkspaceClient, cfg: HubConfig, key: CandidateKey, dept: str, name: str, pool: ThreadPoolExecutor
 ) -> dict[str, bytes]:
@@ -384,6 +402,7 @@ def read_meta(
             has_rubric=raw.get("has_rubric") is True,
             submitted_pr=_pr_number(raw.get("submitted_pr")),
             submitted_url=_text(raw.get("submitted_url")),
+            rubric_optional=raw.get("rubric_optional") is True,  # absent in drafts stored before it was kept
         )
     except (ValueError, TypeError, KeyError, AttributeError, OverflowError, OSError):
         log.warning("ignored the unreadable draft.json of %s", key.run_key)

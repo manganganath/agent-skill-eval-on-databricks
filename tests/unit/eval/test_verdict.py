@@ -131,6 +131,48 @@ def test_case_without_assertion_assessments_is_judged_on_the_rubric_alone():
     assert cs.passed is True
 
 
+@pytest.mark.parametrize(
+    ("assertion_votes", "passed", "error"),
+    [
+        ([True, True, False], True, False),  # a majority of the panel holds the assertions
+        ([True, False, False], False, False),
+        ([None, None, None], None, True),  # no judge answered
+        ([], None, True),  # assertions expected, no assessment
+        (None, None, True),  # neither criteria nor assertions: nothing was judged
+    ],
+)
+def test_without_criteria_a_case_passes_when_its_assertions_pass(assertion_votes, passed, error):
+    """A skill without rubric.json: no criteria, so the assertions alone decide, and there is no type score."""
+    cs = case_score_from_assessments(
+        case_id=1,
+        repeat=0,
+        reviewed=True,
+        criteria=[],
+        votes_by_criterion={},
+        assertion_votes=assertion_votes,
+        pass_score=0.7,
+    )
+    assert (cs.passed, cs.error) == (passed, error)
+    assert cs.task_quality is None and cs.skill_format is None
+
+
+def test_without_criteria_uplift_reports_the_pass_rate_without_the_skill_only():
+    def judged(case_id, repeat, held):
+        return case_score_from_assessments(
+            case_id=case_id,
+            repeat=repeat,
+            reviewed=True,
+            criteria=[],
+            votes_by_criterion={},
+            assertion_votes=[held],
+            pass_score=0.7,
+        )
+
+    with_ = [judged(1, 0, True), judged(1, 1, True), judged(3, 0, True), judged(3, 1, False)]
+    without = [judged(1, 0, False), judged(1, 1, False), judged(3, 0, True), judged(3, 1, False)]
+    assert uplift(with_, without) == {"pass_rate_without": pytest.approx(0.25)}
+
+
 def test_expected_assertions_with_no_assessment_is_an_error():
     cs = case_score_from_assessments(
         case_id=1,

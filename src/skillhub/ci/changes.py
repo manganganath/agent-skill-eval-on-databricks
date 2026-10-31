@@ -11,6 +11,7 @@ from typing import Literal
 import yaml
 
 from skillhub import SkillHubError
+from skillhub.evalspec import EvalFile, rubric_optional
 
 Status = Literal["added", "modified", "deleted", "renamed"]
 SKILL_ROOT = "skills"
@@ -24,7 +25,7 @@ class ChangedSkill:
     skill: str
     status: Status
     needs_cases: bool = False  # no evals/evals.json with a trigger case at head
-    needs_rubric: bool = False  # no evals/rubric.json at head
+    needs_rubric: bool = False  # no evals/rubric.json at head, and its cases need one
     # Its files come from a skill in a quarantined department, and it is not in one. CI refuses it.
     moved_from_quarantine: bool = False
     # Its department is quarantined. Pull requests evaluate it; the release never publishes or retires it.
@@ -77,7 +78,8 @@ def _blob(repo: Path, sha: str, rel: str) -> str | None:
 def _needs(repo: Path, sha: str, dept: str, skill: str) -> tuple[bool, bool]:
     """(needs_cases, needs_rubric) at `sha`.
 
-    Unparseable files don't count as missing: lint reports them, and `generate` must not overwrite them.
+    Unparseable files don't count as missing: lint reports them, and `generate` must not overwrite them. A skill
+    whose effectiveness cases are all assertion cases needs no rubric: they are judged on their assertions.
     """
     base = f"{SKILL_ROOT}/{dept}/{skill}/evals"
     needs_rubric = _blob(repo, sha, f"{base}/rubric.json") is None
@@ -89,7 +91,14 @@ def _needs(repo: Path, sha: str, dept: str, skill: str) -> tuple[bool, bool]:
         has_trigger = any(isinstance(c, dict) and c.get("kind", "trigger") == "trigger" for c in cases)
     except (ValueError, AttributeError):
         return False, needs_rubric
-    return not has_trigger, needs_rubric
+    return not has_trigger, needs_rubric and not _rubric_optional(text)
+
+
+def _rubric_optional(evals_json: str) -> bool:
+    try:
+        return rubric_optional(EvalFile.model_validate_json(evals_json))
+    except ValueError:
+        return False  # not a valid evals.json: lint reports it
 
 
 def _skill_of(path: str) -> tuple[str, str] | None:

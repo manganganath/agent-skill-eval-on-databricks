@@ -269,7 +269,7 @@ def wired(tmp_path, monkeypatch):
         kind = "trigger" if mode == "trigger" else "effectiveness"
         out = []
         for rep in range(REPEATS):
-            for case in (c for c in state["eval_files"][skill].evals if c.kind == kind):
+            for case in (c for c in state["eval_files"][skill].evals if kind in c.run_kinds):
                 got = state["assess"](skill, mode, case, rep)
                 if got is None:  # the trace never arrived
                     continue
@@ -2417,3 +2417,162 @@ def test_each_skill_model_client_tags_its_requests_as_eval_with_the_skill_and_tr
         "common/audit-xls",
     }
     assert all(t["skillhub_source"] == "eval" and t["skillhub_trigger_source"] == "nightly" for _, t in tags)
+
+
+# --- Assertion cases: trigger cases that should fire and have assertions ----------------------------------------
+
+ASSERTED = EvalCase(id=3, prompt="p3", should_trigger=True, assertions=["Answers in German"])
+TRIGGER_ASSERTIONS = Path(__file__).resolve().parents[1] / "data" / "trigger_assertions" / "evals.json"
+
+
+def _no_rubric(monkeypatch):
+    def load_rubric(path):
+        raise FileNotFoundError(path)
+
+    monkeypatch.setattr(runner, "load_rubric", load_rubric)
+
+
+def test_an_assertion_case_runs_in_trigger_mode_and_in_both_effectiveness_modes(wired):
+    """It keeps its trigger id in every mode; each mode is its own child run, so the cells never collide."""
+    wired["eval_files"] = eval_files([*TRIGGER, ASSERTED, *EFFECT])
+    wired["dataset"] = [record(c) for c in wired["eval_files"]["earnings-preview"].evals]
+    summary = run_eval(CFG, request(skills=["earnings-preview"]))
+    mode_of = {c.run_id: c.mode for c in summary.children}
+    assert {mode_of[run_id]: ids for run_id, ids in wired["evaluated"]} == {
+        "trigger": sorted([1, 2, 3] * REPEATS),
+        "without_skill": sorted([3, 101, 102] * REPEATS),
+        "with_skill": sorted([3, 101, 102] * REPEATS),
+    }
+    assert {t["mode"] for t in wired["tags"] if t["case_id"] == "3"} == {
+        "trigger",
+        "without_skill",
+        "with_skill",
+    }
+    assert child(summary, "earnings-preview", "trigger").metrics["n_cases"] == 3
+    assert child(summary, "earnings-preview", "with_skill").metrics["n_cases"] == 3
+
+
+def test_mode_data_holds_an_assertion_case_in_both_kinds_from_one_dataset_row():
+    cases = {c.id: c for c in [*TRIGGER, ASSERTED, *EFFECT]}
+    ds = FrameDataset([record(c) for c in cases.values()])
+    trig = runner._mode_data(ds, cases, "trigger", "earnings-preview")
+    eff = runner._mode_data(ds, cases, "effectiveness", "earnings-preview")
+    assert trig.case_ids == [1, 2, 3] and eff.case_ids == [3, 101, 102]
+    assert eff.records[0]["expectations"]["guidelines"] == ["Answers in German"]
+    missing = runner._mode_data(
+        FrameDataset([record(TRIGGER[0])]), cases, "effectiveness", "earnings-preview"
+    )
+    assert missing.missing_ids == [3, 101, 102]
+
+
+def test_without_a_rubric_assertion_cases_are_judged_on_their_assertions_only(wired, monkeypatch):
+    _no_rubric(monkeypatch)
+    wired["eval_files"] = eval_files([*TRIGGER, ASSERTED])
+    wired["dataset"] = [record(c) for c in [*TRIGGER, ASSERTED]]
+    passes = {"with_skill": "yes", "without_skill": "no"}
+
+    def assess(skill, mode, case, rep):
+        if mode == "trigger":
+            return default_assessments(skill, mode, case, rep)
+        return [A("assertions__gpt", passes[mode])]  # no rubric judges
+
+    wired["assess"] = assess
+    summary = run_eval(CFG, request(skills=["earnings-preview"]))
+    with_ = child(summary, "earnings-preview", "with_skill")
+    assert with_.verdict == "pass" and with_.metrics["pass_rate"] == 1.0
+    assert with_.metrics["pass_rate_without"] == 0.0
+    assert "uplift_task_quality" not in with_.metrics and "uplift_skill_format" not in with_.metrics
+    assert child(summary, "earnings-preview", "without_skill").metrics["pass_rate"] == 0.0
+    for c in summary.children:
+        assert MlflowClient().get_run(c.run_id).data.params["rubric_hash"] == "none"
+    assert wired["rubrics"] == [] and not summary.errors
+
+
+def test_with_a_rubric_an_assertion_case_is_judged_on_its_criteria_too(wired):
+    wired["eval_files"] = eval_files([*TRIGGER, ASSERTED])
+    wired["dataset"] = [record(c) for c in [*TRIGGER, ASSERTED]]
+
+    def assess(skill, mode, case, rep):  # the assertions hold, but 3 of 5 criteria score 0.6 < pass_score 0.7
+        if mode == "trigger":
+            return default_assessments(skill, mode, case, rep)
+        return [A(f"rubric_{c.id}__gpt", i < 3) for i, c in enumerate(CRITERIA)] + [
+            A("assertions__gpt", "yes")
+        ]
+
+    wired["assess"] = assess
+    summary = run_eval(CFG, request(skills=["earnings-preview"], modes=["effectiveness"]))
+    with_ = child(summary, "earnings-preview", "with_skill")
+    assert with_.metrics["pass_rate"] == 0.0 and with_.verdict == "fail"
+    assert with_.metrics["uplift_task_quality"] == 0.0  # the rubric gives uplift by type
+    assert len(wired["rubrics"]) == 2  # recorded once per child run
+
+
+def test_without_a_rubric_effectiveness_cases_still_need_one(wired, monkeypatch):
+    _no_rubric(monkeypatch)
+    wired["eval_files"] = eval_files([*TRIGGER, ASSERTED, *EFFECT])
+    summary = run_eval(CFG, request(skills=["earnings-preview"]))
+    [err] = summary.errors
+    assert "rubric.json is missing" in err.message and summary.children == []
+    trigger_only = run_eval(
+        CFG, request(run_key="pr12_trigger", skills=["earnings-preview"], modes=["trigger"])
+    )
+    assert [c.mode for c in trigger_only.children] == ["trigger"] and not trigger_only.errors
+
+
+def test_a_test_case_file_with_assertions_on_its_trigger_cases_runs_unchanged_without_a_rubric(
+    wired, monkeypatch, make_bundle, tmp_path
+):
+    """A test-case file in the customer's format: lint accepts it as is, trigger mode runs every case, and the
+    effectiveness modes run the cases that should trigger and have assertions, judged on those alone."""
+    from skillhub import evalspec
+    from skillhub.lint import lint_repo
+
+    data = TRIGGER_ASSERTIONS.read_text(encoding="utf-8")
+    ef = EvalFile.model_validate_json(data)
+    name = ef.skill_name
+    bundle = make_bundle("common", name, files={"evals/evals.json": data})
+    assert lint_repo(tmp_path / "skills") == []  # no issue and no warning
+
+    _no_rubric(monkeypatch)
+    monkeypatch.setattr(runner, "discover_bundles", lambda *a, **k: [bundle])
+    wired["scopes"] = [RunScope(dept="common", schemas=[CO], skills=[staged(name, "common", CO)])]
+    wired["eval_files"] = {name: ef}
+    wired["dataset"] = [record(c, name) for c in ef.evals]
+    # The judge's assertion votes per mode, case and repeat (REPEATS is 2).
+    votes = {
+        ("with_skill", 1): ["yes", "yes"],
+        ("with_skill", 3): ["yes", "no"],
+        ("without_skill", 1): ["no", "no"],
+        ("without_skill", 3): ["yes", "no"],
+    }
+
+    def assess(skill, mode, case, rep):
+        if mode == "trigger":
+            return default_assessments(skill, mode, case, rep)
+        return [A("assertions__gpt", votes[(mode, case.id)][rep])]
+
+    wired["assess"] = assess
+    summary = run_eval(CFG, request(skills=[name], models=[]))
+    assert not summary.errors
+    mode_of = {c.run_id: c.mode for c in summary.children}
+    assert {mode_of[run_id]: ids for run_id, ids in wired["evaluated"]} == {
+        "trigger": sorted([1, 2, 3] * REPEATS),
+        "without_skill": sorted([1, 3] * REPEATS),
+        "with_skill": sorted([1, 3] * REPEATS),
+    }
+    trig = child(summary, name, "trigger")
+    assert trig.verdict == "pass" and trig.metrics["accuracy"] == 1.0
+    without = child(summary, name, "without_skill").metrics
+    with_ = child(summary, name, "with_skill")
+    assert without["pass_rate"] == pytest.approx(0.25)  # 1 of 4 case-repeats
+    assert with_.metrics["pass_rate"] == pytest.approx(0.75)  # 3 of 4
+    assert with_.metrics["pass_rate_without"] == pytest.approx(0.25)  # case 1: 0, case 3: 0.5
+    assert with_.verdict == "warn"  # 0.75 is below the file's warn_rate 0.8
+    assert "uplift_task_quality" not in with_.metrics and "uplift_skill_format" not in with_.metrics
+    ran = sorted(f"{c.model_profile}/{c.mode}" for c in summary.children if c.mode != "without_skill")
+    assert (
+        ran
+        == evalspec.planned_cells(ef, default_models=CFG.defaults.models)
+        == ["gpt/trigger", "gpt/with_skill"]
+    )
+    assert {MlflowClient().get_run(c.run_id).data.params["rubric_hash"] for c in summary.children} == {"none"}

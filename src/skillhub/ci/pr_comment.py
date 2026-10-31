@@ -24,6 +24,9 @@ COLUMNS = (
     "Mode",
     "Verdict",
     "Trigger accuracy",
+    "Pass rate",
+    "Pass rate (without)",
+    "Uplift (pass)",
     "Uplift (task)",
     "Uplift (format)",
     "Spread",
@@ -43,6 +46,19 @@ def _pct(v: float | None) -> str:
 
 def _num(v: float | None) -> str:
     return "-" if v is None else f"{v:.2f}"
+
+
+def _pp(v: float | None) -> str:
+    """A difference of two rates in percentage points, signed: +20 pp."""
+    return "-" if v is None else f"{round(v * 100):+d} pp"
+
+
+def _pass_uplift(r: dict[str, Any]) -> float | None:
+    """A with_skill row's pass rate minus the pass rate without the skill on the same cases, as a fraction.
+    None for other modes, or when either value is missing."""
+    if r.get("mode") != "with_skill" or r.get("pass_rate") is None or r.get("pass_rate_without") is None:
+        return None
+    return r["pass_rate"] - r["pass_rate_without"]
 
 
 def _cell(value: object) -> str:
@@ -285,6 +301,9 @@ def _matrix_line(r: dict[str, Any], links: bool) -> str:
         r["mode"] or "-",
         r["verdict"] or "-",
         _pct(r.get("accuracy")),
+        _pct(r.get("pass_rate")),
+        _pct(r.get("pass_rate_without")),
+        _pp(_pass_uplift(r)),
         _num(r.get("uplift_task_quality")),
         _num(r.get("uplift_skill_format")),
         _num(r.get("spread")),
@@ -354,7 +373,7 @@ def _matrix_sql(cfg, n_authors: int = 1, *, merge_only: bool = False) -> str:
     parts = [
         f"SELECT * EXCEPT (rn) FROM ("
         f"SELECT dept, skill, skill_version, content_hash, rubric_hash, dataset_digest, model_profile, "
-        f"model_class, mode, verdict, accuracy, "
+        f"model_class, mode, verdict, accuracy, pass_rate, pass_rate_without, "
         f"spread, uplift_task_quality, uplift_skill_format, n_cases, n_reviewed, run_id, experiment_id, "
         f"ROW_NUMBER() OVER (PARTITION BY skill, skill_version, model_profile, "
         f"COALESCE(harness, 'reference'), mode "

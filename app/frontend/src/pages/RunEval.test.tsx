@@ -232,4 +232,23 @@ describe("RunEval with drafts", () => {
       candidate: { run_key: DRAFT, skills: ["common/draft-skill"] }, models: ["claude-sonnet"], modes: ["trigger"],
     });
   });
+
+  it("runs effectiveness on a draft without a rubric whose effectiveness cases are trigger cases with assertions", async () => {
+    vi.mocked(api.me).mockResolvedValue(author);
+    vi.mocked(api.candidates).mockResolvedValue([{ ...draft, rubric_optional: true }]);
+    render(<MemoryRouter><RunEval /></MemoryRouter>);
+    const group = await screen.findByRole("group", { name: /candidates under review/i });
+    fireEvent.click(within(group).getByRole("checkbox", { name: /common\/draft-skill, draft/i }));
+    expect(screen.getByRole("checkbox", { name: /effectiveness/i })).not.toBeDisabled();
+    expect(screen.queryByText(/without a rubric runs in trigger mode only/i)).toBeNull();
+    fireEvent.click(screen.getByRole("checkbox", { name: /claude-sonnet/i }));
+    fireEvent.click(screen.getByRole("checkbox", { name: /trigger/i }));
+    fireEvent.click(screen.getByRole("checkbox", { name: /effectiveness/i }));
+    fireEvent.click(screen.getByRole("button", { name: /start evaluation/i }));
+    await screen.findByText(/run hub_0123abcd/i);
+    expect(api.startEval).toHaveBeenLastCalledWith({
+      candidate: { run_key: DRAFT, skills: ["common/draft-skill"] }, models: ["claude-sonnet"],
+      modes: ["trigger", "effectiveness"],
+    });
+  });
 });

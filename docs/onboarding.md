@@ -37,14 +37,43 @@ Nobody publishes a version from the app, and skills are not edited in it. To cha
 
 1. Create a branch.
 2. Create `skills/<department>/<name>/SKILL.md`. The `name` in the frontmatter must equal the folder name, and it must match `^[a-z0-9]+(?:-[a-z0-9]+)*$`. Add `references/` files as needed.
-3. Run `uv run skillhub lint`. Lint checks the frontmatter, the name pattern, that names are unique across departments, that the department folder is a key in `config/hub.yaml`, and that case IDs are unique and in range. It also reports a per-skill threshold that is looser than the default in `config/hub.yaml`. A skill can only tighten the gate.
+3. Run `uv run skillhub lint`. Lint checks the frontmatter, the name pattern, that names are unique across departments, that the department folder is a key in `config/hub.yaml`, and that case IDs are unique and in range. It also reports a per-skill threshold that is looser than the default in `config/hub.yaml`. A skill can only tighten the gate. A warning, such as assertions on a case that should not trigger, is printed but does not fail lint.
 4. Run `uv run skillhub generate --skills <name>`. It calls the generator model, so set `SKILLHUB_CATALOG` and `SQL_WAREHOUSE_ID` and sign in to Databricks first. It writes `evals/evals.json` with trigger cases and `evals/rubric.json` with 5 to 10 criteria. Run it once per skill: each run without `--force` adds another batch of trigger cases, and `--force` replaces the generated ones. Trigger case IDs start at 1, and effectiveness case IDs start at 101. `generate` never overwrites an existing `rubric.json` without `--force`. Test cases and rubrics stay in `evals/` in the repository. They are never uploaded to the skill bundle, so the agent under test cannot read them.
 5. Review them. Check that each positive case is a realistic request the skill should handle, each near-miss is a request that a sibling skill should take, and each unrelated case is unrelated. Check that each rubric criterion can be checked from the output, and that its `source` points at a real part of `SKILL.md`. Mark what you checked with `uv run python scripts/mark_reviewed.py --skill <name> --ids 1,2,3 --rubric`. A member of the reviewers group still has to review them. On GitHub, the `production` environment reviewer approves publish and switch. Code owners are asked to review `evals/**` changes, but GitHub enforces that only if you turn on code-owner review.
 6. Add effectiveness cases (`kind: effectiveness`) only where the skill's output can be checked against fixtures. Each has a realistic `prompt`, two to four `assertions`, and `fixtures` under `fixtures/`.
 7. Add a unit test for the skill's files if it needs one. For example, `tests/unit/test_skill_<name>.py` asserts that the skill's cases load and that the rubric has 5 to 10 criteria.
-8. Run `uv run pytest tests/unit -q`. `tests/unit/test_generated_cases.py` checks every skill: only generated trigger cases (6 to 10 positive, 3 to 5 near-misses, 2 to 4 unrelated), and a rubric generated from the current skill content. After you change the skill's files, run `uv run skillhub generate --skills <name> --rubric-only --force`. The `platform` check runs these tests and must pass before a merge.
-9. Open a pull request. Its description must say what the skill is for. The PR pipeline runs lint, the trigger tests, and the effectiveness tests for skills that have them. It then posts a matrix comment. A `fail` blocks merge. An `inconclusive` check needs a re-run. An `advisory` note means the skill lacks enough reviewed cases. While the pull request is open, the skill is also a candidate in the Skill Hub; see [Evaluate a new skill](#evaluate-a-new-skill).
+8. Run `uv run pytest tests/unit -q`. `tests/unit/test_generated_cases.py` checks every skill: only generated trigger cases (6 to 10 positive, 3 to 5 near-misses, 2 to 4 unrelated), and a rubric generated from the current skill content. A skill whose trigger cases are all your own is not checked against that mix (see [Test cases with assertions](#test-cases-with-assertions-on-trigger-cases)). After you change the skill's files, run `uv run skillhub generate --skills <name> --rubric-only --force`. The `platform` check runs these tests and must pass before a merge.
+9. Open a pull request. Its description must say what the skill is for. The PR pipeline runs lint, the trigger tests, and the effectiveness tests for skills that have effectiveness cases or trigger cases with assertions. It then posts a matrix comment. A `fail` blocks merge. An `inconclusive` check needs a re-run. An `advisory` note means the skill lacks enough reviewed cases. While the pull request is open, the skill is also a candidate in the Skill Hub; see [Evaluate a new skill](#evaluate-a-new-skill).
 10. After merge to `main`, the publish workflow re-evaluates every changed skill, and stops on `fail` or `inconclusive`. Otherwise it waits for approval in the `production` environment. After approval it starts the `skill-switch` Job, which registers a new version and switches it live. The Job publishes only content that the cited eval evaluated. When the pull request changed only `skills/`, was up to date with `main`, only trigger verdicts gate (`defaults.gating_modes: [trigger]`), and its gate passed on its last commit, the workflow reuses that gate's results instead of evaluating again, so the approval request comes a few minutes after the merge (see [Architecture](architecture.md#data-flow)).
+
+### Test cases with assertions on trigger cases
+
+A test-case file with assertions on its trigger cases works as it is. Put it at `skills/<department>/<name>/evals/evals.json`. For example:
+
+```json
+{
+  "skill_name": "speak-german",
+  "criteria": {"fail_rate": 0.5, "warn_rate": 0.8},
+  "evals": [
+    {"id": 1, "prompt": "Guten Tag! Mein Name ist Sally.", "should_trigger": true,
+     "assertions": ["The main response should be in German"]},
+    {"id": 2, "prompt": "Testing 123", "should_trigger": false, "assertions": []}
+  ]
+}
+```
+
+`kind` defaults to `trigger`. `criteria` sets the skill's own `fail_rate` and `warn_rate`, which can only tighten the defaults. A case with `should_trigger: true` and at least one assertion is evaluated in two ways:
+
+- **Trigger mode**, as every trigger case: did the agent invoke the skill? The case counts toward accuracy, precision and recall.
+- **Effectiveness mode**: the agent answers the prompt in full, once without the skill (`without_skill`) and once with it (`with_skill`). The judges check each answer against the case's assertions. The `with_skill` row of the PR comment and of the Eval matrix shows the pass rate with the skill, the pass rate without it, and the uplift in percentage points.
+
+What else applies:
+
+- The case keeps its ID (1 to 100) in both modes. The rules for effectiveness cases (IDs from 101, two to four assertions, `fixtures`) do not apply to it.
+- `rubric.json` is optional. Without it, a case passes when the judges find that its assertions hold, and the uplift by task quality and format is not reported. CI does not generate a rubric for such a skill. To judge rubric criteria as well, run `uv run skillhub generate --skills <name> --rubric-only`. An answer then also needs the rubric's `pass_score`. A skill that also has effectiveness cases (`kind: effectiveness`) needs `rubric.json`.
+- A case with `should_trigger: false` has no answer to judge, so its assertions are ignored. Lint warns about it.
+- Effectiveness verdicts block a release only when `defaults.gating_modes` in `config/hub.yaml` includes `effectiveness`. The shipped value is `[trigger]`: failed assertions are reported but do not block. To make them block, set `gating_modes: [trigger, effectiveness]`. This applies to every skill. A mode also needs at least `min_reviewed_cases` reviewed cases (default 5) for a gating verdict. With fewer, its verdict is `advisory`. Cases you write are reviewed by default.
+- Cost: each such case is a full agent run, not one model call, in two modes. One eval makes 2 × `repeats` × models runs of each case, and every judge scores each run. With the shipped defaults (3 repeats, 3 models) that is 18 full runs per case.
 
 ## Evaluate a new skill
 
@@ -66,7 +95,7 @@ Who sees a candidate: reviewers see every department. An author sees a candidate
 
 **As a draft.** To try a skill before you open a pull request:
 
-1. In the catalog, select **Upload draft**. Choose the department, then a zip of the skill folder or the folder itself. The upload needs `SKILL.md` with `name` and `description` in its frontmatter and `evals/evals.json`. `evals/rubric.json` is optional; without it the draft runs in trigger mode only. A `fixtures/` folder in the upload replaces the default fixtures for this draft.
+1. In the catalog, select **Upload draft**. Choose the department, then a zip of the skill folder or the folder itself. The upload needs `SKILL.md` with `name` and `description` in its frontmatter and `evals/evals.json`. `evals/rubric.json` is optional; without it the draft runs in trigger mode only, unless its effectiveness cases are all [trigger cases with assertions](#test-cases-with-assertions-on-trigger-cases). A `fixtures/` folder in the upload replaces the default fixtures for this draft.
 2. The Skill Hub checks the skill as `uv run skillhub lint` does. If something is wrong, the form lists every problem; fix them and upload again.
 3. The draft's page opens, with a **Draft** badge and the banner **Not released. Draft uploaded by ...**. Select **Run eval** to evaluate it.
 
@@ -80,7 +109,7 @@ A draft is never released. To release the skill, submit the draft for review fro
 4. **Release approved in GitHub.** The `production` environment's required reviewers approve the release in GitHub. The step links to the waiting run.
 5. **Live.** When the switch has run, the step shows the live version and links to the skill.
 
-If the draft has no `evals/rubric.json`, CI generates it in the eval gate, and the pull request says so. The release path refreshes by itself while a step is pending. If GitHub is not set up for the Skill Hub yet, the page says so, and an administrator sets it up as described in [GitHub token](operations.md#github-token-for-the-skill-hub).
+If the draft has no `evals/rubric.json` and its cases need one, CI generates it in the eval gate, and the pull request says so. The release path refreshes by itself while a step is pending. If GitHub is not set up for the Skill Hub yet, the page says so, and an administrator sets it up as described in [GitHub token](operations.md#github-token-for-the-skill-hub).
 
 ## Retire a skill
 

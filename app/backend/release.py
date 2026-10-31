@@ -67,7 +67,9 @@ def commit_message(skill: str, submitter: str) -> str:
     return f"feat(skills): {skill} from the Skill Hub\n\nSubmitted-by: {submitter}"
 
 
-def pull_body(dept: str, skill: str, run_key: str, submitter: str, *, has_rubric: bool) -> str:
+def pull_body(
+    dept: str, skill: str, run_key: str, submitter: str, *, has_rubric: bool, rubric_optional: bool = False
+) -> str:
     lines = [
         f"Submitted by {submitter} from the draft `{run_key}` in the Skill Hub.",
         "",
@@ -79,7 +81,13 @@ def pull_body(dept: str, skill: str, run_key: str, submitter: str, *, has_rubric
         "2. A reviewer merges it once the gate passes.",
         "3. The release is approved in GitHub, in the production environment. CI then publishes the new version.",
     ]
-    if not has_rubric:
+    if not has_rubric and rubric_optional:
+        lines += [
+            "",
+            "The draft has no `evals/rubric.json`, and needs none: the eval gate judges its trigger cases on their "
+            "assertions.",
+        ]
+    elif not has_rubric:
         lines += [
             "",
             "The draft has no `evals/rubric.json`. CI generates the missing rubric in the eval gate.",
@@ -118,6 +126,7 @@ def open_pull(
     submitter: str,
     *,
     has_rubric: bool,
+    rubric_optional: bool = False,
 ) -> Submission:
     """Open the pull request for a draft: a commit on a new branch from main's head, in which the skill folder holds the
     draft's files and nothing else. A file of the skill on main that the draft lacks is deleted. Raises NoChanges, before
@@ -155,7 +164,7 @@ def open_pull(
         title(dept, skill, update="SKILL.md" in on_main),
         branch,
         BASE,
-        pull_body(dept, skill, run_key, submitter, has_rubric=has_rubric),
+        pull_body(dept, skill, run_key, submitter, has_rubric=has_rubric, rubric_optional=rubric_optional),
     )
     return Submission(pull, branch)
 

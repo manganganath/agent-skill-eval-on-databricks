@@ -68,6 +68,26 @@ def test_render_has_no_links_unless_asked():
     assert "Skill Hub: https://hub.example" in linked
 
 
+def test_with_skill_rows_show_the_pass_rates_with_and_without_the_skill_and_the_uplift_in_points():
+    rows = [
+        row(mode="trigger", pass_rate=0.875),
+        row(mode="without_skill", accuracy=None, pass_rate=0.25),
+        row(mode="with_skill", accuracy=None, pass_rate=0.75, pass_rate_without=0.25),
+        row(skill="no-baseline", mode="with_skill", accuracy=None, pass_rate=0.5, pass_rate_without=None),
+    ]
+    md = render_matrix_markdown(rows, run_key="k")
+    header = "| Trigger accuracy | Pass rate | Pass rate (without) | Uplift (pass) | Uplift (task) |"
+    assert header in md
+    assert "| trigger | pass | 88% | 88% | - | - | - |" in md
+    assert "| without_skill | pass | - | 25% | - | - | - |" in md
+    assert "| with_skill | pass | - | 75% | 25% | +50 pp | - |" in md
+    assert "| no-baseline | claude-sonnet | frontier | with_skill | pass | - | 50% | - | - | - |" in md
+    lower = render_matrix_markdown(
+        [row(mode="with_skill", pass_rate=0.2, pass_rate_without=0.6)], run_key="k"
+    )
+    assert "| 20% | 60% | -40 pp |" in lower
+
+
 def test_render_escapes_pipes_in_cells():
     md = render_matrix_markdown([row(skill="a|b")], run_key="k")
     assert "a\\|b" in md
@@ -234,6 +254,7 @@ def test_matrix_sql_selects_latest_row_per_key(cfg):
     assert sql.count("WHERE rn = 1") == len(cfg.departments)
     assert sql.count("run_key = :run_key") == len(cfg.departments)
     assert "mode IS NOT NULL" not in sql  # a row without a mode stays in and blocks
+    assert sql.count("accuracy, pass_rate, pass_rate_without, ") == len(cfg.departments)
     assert seen["params"] == {"run_key": "k", "author_0": "t"}
 
 
