@@ -5,6 +5,7 @@ from typer.testing import CliRunner
 
 from skillhub import cli, probe
 from skillhub.gateway.aws import AwsCredentialsError
+from skillhub.gateway.bedrock import BedrockCallError
 from skillhub.gateway.models import ChatResult
 from skillhub.model_catalog import store
 from skillhub.model_catalog.entry import CatalogEntry, Target
@@ -77,7 +78,7 @@ def test_a_row_that_cannot_be_tested_as_asked_fails_without_a_call(entries, name
     "error",
     [
         AwsCredentialsError("the secret scope 'skillhub-aws' has no aws-access-key-id key"),
-        RuntimeError("PERMISSION_DENIED: no CAN_QUERY on the endpoint"),
+        BedrockCallError("bedrock call failed: AccessDeniedException on amazon.nova-lite-v1:0"),
     ],
 )
 def test_a_client_that_cannot_be_built_or_called_is_a_failed_test(error):
@@ -144,3 +145,22 @@ def test_a_catalog_the_identity_cannot_read_is_a_failed_test(monkeypatch, probe_
     result = invoke()
     assert result.exit_code == 1
     assert "this identity cannot read the model catalog" in parse_result(result.stdout).message
+
+
+@pytest.mark.parametrize("where", ["client", "call"])
+def test_an_error_of_an_unknown_class_never_puts_its_text_on_the_result_line(where):
+    error = RuntimeError("request failed with key test-secret-0001 in the header")
+    client_for = (
+        (lambda c, n: (_ for _ in ()).throw(error)) if where == "client" else lambda c, n: Client(error)
+    )
+    result = run_probe(make_cfg(), [NOVA], None, "nova-lite", NOVA.target(), client_for=client_for)
+    assert result == ProbeResult("nova-lite", "failed", "RuntimeError: the call failed")
+    assert "test-secret-0001" not in result.line()
+
+
+def test_a_bedrock_call_error_keeps_its_message():
+    error = BedrockCallError("the model amazon.nova-lite-v1:0 refused the call: ThrottlingException")
+    result = run_probe(
+        make_cfg(), [NOVA], None, "nova-lite", NOVA.target(), client_for=lambda c, n: Client(error)
+    )
+    assert result.message == f"BedrockCallError: {error}"

@@ -65,6 +65,21 @@ def parse_result(logs: str | None) -> ProbeResult | None:
     return None
 
 
+def describe(exc: BaseException) -> str:
+    """What may leave the probe about an error: the message only of classes known to carry no secret value.
+
+    The Bedrock client redacts its call errors, a missing-key error names the scope and key only, and the config and
+    catalog errors are written by this code. Any other error (a library's, a transport's) may quote a request or a
+    credential, so only its type name leaves."""
+    from skillhub.config import ConfigError
+    from skillhub.gateway.bedrock import BedrockCallError
+    from skillhub.model_catalog.merge import CatalogError
+
+    if isinstance(exc, BedrockCallError | ConfigError | CatalogError):  # AwsCredentialsError is a ConfigError
+        return f"{type(exc).__name__}: {exc}"
+    return f"{type(exc).__name__}: the call failed"
+
+
 def _client(cfg: HubConfig, name: str) -> Any:
     from skillhub.auth import auth_headers
     from skillhub.gateway.models import model_client
@@ -97,6 +112,6 @@ def run_probe(
             [{"role": "user", "content": PROMPT}], [], max_tokens=MAX_TOKENS
         )
     except Exception as exc:
-        return failed(name, f"{type(exc).__name__}: {exc}")
+        return failed(name, describe(exc))
     ms = int((clock() - start) * 1000)
     return ProbeResult(name, "passed", f"answered in {ms} ms", ms)

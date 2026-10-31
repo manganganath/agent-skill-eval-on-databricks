@@ -1169,7 +1169,7 @@ def probe_cmd(
 
     from skillhub.model_catalog.entry import Target
     from skillhub.model_catalog.store import read_entries
-    from skillhub.probe import failed, run_probe
+    from skillhub.probe import describe, failed, run_probe
     from skillhub.sql import SqlClient
 
     cfg = _cfg(ctx)
@@ -1180,7 +1180,7 @@ def probe_cmd(
                 SqlClient(workspace_client(), cfg.workspace.sql_warehouse_id), cfg
             )
         except Exception as e:  # the eval identity's read of the catalog is part of what the test proves
-            result = failed(name, f"this identity cannot read the model catalog: {type(e).__name__}: {e}")
+            result = failed(name, f"this identity cannot read the model catalog: {describe(e)}")
         else:
             result = run_probe(cfg, entries, version, name, expect)
     if requested_by:
