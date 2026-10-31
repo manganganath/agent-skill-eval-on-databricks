@@ -1305,7 +1305,7 @@ def _run_child(ctx: _SkillCtx, client, profile: str, mode: str, without_scores: 
     """One child run. Returns (summary or None, case scores or None, errors)."""
     cfg, req = ctx.cfg, ctx.req
     prof = cfg.models[profile]
-    endpoint = prof.endpoint or prof.model or profile
+    endpoint = prof.endpoint or prof.model or prof.model_id or profile
     repeats = cfg.defaults.repeats
     md = ctx.data[CASE_KIND[mode]]
     scorers = ctx.scorers[mode]
@@ -1332,6 +1332,12 @@ def _run_child(ctx: _SkillCtx, client, profile: str, mode: str, without_scores: 
         "model_profile": profile,
         "endpoint": endpoint,
         "model_class": prof.class_,
+        # hub_yaml for a release-gate profile, else its model catalog kind. Gates read hub_yaml rows only.
+        "profile_kind": prof.kind,
+        "route": prof.route,
+        "model_id": prof.model_id or "",
+        "region": prof.region or "",
+        "catalog_version": "" if prof.catalog_version is None else str(prof.catalog_version),
         "mode": mode,
         "judges": ",".join(ctx.judges),
         "prompt_versions": json.dumps(ctx.prompt_versions, sort_keys=True),

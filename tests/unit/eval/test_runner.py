@@ -2582,3 +2582,25 @@ def test_a_test_case_file_with_assertions_on_its_trigger_cases_runs_unchanged_wi
         == ["gpt/trigger", "gpt/with_skill"]
     )
     assert {MlflowClient().get_run(c.run_id).data.params["rubric_hash"] for c in summary.children} == {"none"}
+
+
+NOVA = ModelProfile(
+    route="bedrock", model_id="amazon.nova-lite-v1:0", region="us-east-1", kind="external_model",
+    catalog_version=7, **{"class": "fast"},
+)  # fmt: skip
+
+
+def test_child_runs_record_the_profile_kind_and_the_catalog_version(wired):
+    cfg = SimpleNamespace(**{**vars(CFG), "models": {**CFG.models, "nova-lite": NOVA}})
+    summary = run_eval(
+        cfg, request(skills=["earnings-preview"], models=["gpt", "nova-lite"], modes=["trigger"])
+    )
+    params = {c.model_profile: MlflowClient().get_run(c.run_id).data.params for c in summary.children}
+    assert {k: params["nova-lite"][k] for k in ("profile_kind", "route", "model_id", "region", "catalog_version")} == {
+        "profile_kind": "external_model", "route": "bedrock", "model_id": "amazon.nova-lite-v1:0",
+        "region": "us-east-1", "catalog_version": "7",
+    }  # fmt: skip
+    assert params["nova-lite"]["endpoint"] == "amazon.nova-lite-v1:0"
+    assert {k: params["gpt"][k] for k in ("profile_kind", "route", "model_id", "region", "catalog_version")} == {
+        "profile_kind": "hub_yaml", "route": "serving", "model_id": "", "region": "", "catalog_version": "",
+    }  # fmt: skip

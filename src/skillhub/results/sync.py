@@ -21,6 +21,7 @@ if TYPE_CHECKING:
 
 log = logging.getLogger(__name__)
 DEFAULT_HARNESS = "reference"  # the built-in agent loop; the only harness so far
+DEFAULT_PROFILE_KIND = "hub_yaml"  # a run from before the model catalog used a hub.yaml profile
 PARENT_TAG = "parent_run_id"  # The runner sets it on each child run
 POLL_S = 5
 STALL_S = 60  # how long a scored run's trace count may stay unchanged before sync writes what it has
@@ -72,6 +73,11 @@ RUN_FIELDS: list[tuple[str, str]] = [
     ("ended_at", "timestamp"),
     ("synced_at", "timestamp"),
     ("run_author", "string"),  # see run_author(); the gates read only trusted authors
+    ("profile_kind", "string"),
+    ("route", "string"),
+    ("model_id", "string"),
+    ("region", "string"),
+    ("catalog_version", "bigint"),
 ]
 CASE_FIELDS: list[tuple[str, str]] = [
     ("run_id", "string"),
@@ -140,6 +146,11 @@ CHILD_PARAMS = frozenset(
         "requested_by",
         "run_key",
         "repeats",
+        "profile_kind",
+        "route",
+        "model_id",
+        "region",
+        "catalog_version",
     }
 )
 
@@ -505,6 +516,11 @@ def run_row(run, synced_at: str) -> dict:
         "ended_at": _ts(run.info.end_time),
         "synced_at": synced_at,
         "run_author": run_author(run),
+        "profile_kind": _param(run, "profile_kind") or DEFAULT_PROFILE_KIND,
+        "route": _param(run, "route") or None,
+        "model_id": _param(run, "model_id") or None,
+        "region": _param(run, "region") or None,
+        "catalog_version": it(_param(run, "catalog_version")),
     }
 
 

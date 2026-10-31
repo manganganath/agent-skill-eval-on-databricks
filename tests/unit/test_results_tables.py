@@ -77,8 +77,15 @@ def test_table_columns_match_contract_ddl():
     cols = tables.table_columns()
     assert cols["eval_cases"][:4] == ["run_id", "trace_id", "assessment_name", "case_id"]
     assert "precision" in cols["eval_runs"]
-    assert len(cols["eval_runs"]) == 38
-    assert cols["eval_runs"][-1] == "run_author"  # C-C1a
+    assert len(cols["eval_runs"]) == 43
+    assert cols["eval_runs"][-6:] == [
+        "run_author",
+        "profile_kind",
+        "route",
+        "model_id",
+        "region",
+        "catalog_version",
+    ]
     assert cols["eval_runs"][cols["eval_runs"].index("model_profile") + 1] == "harness"
     assert len(cols["eval_cases"]) == 16
     assert len(cols["rubrics"]) == 6
@@ -141,32 +148,42 @@ def alters(sql: FakeSql) -> list[str]:
     return [s for s in stmts(sql) if s.lstrip().upper().startswith("ALTER")]
 
 
-def test_ensure_tables_adds_harness_and_run_author_columns_once_when_missing():
+ADDED = ["harness", "run_author", "profile_kind", "route", "model_id", "region", "catalog_version"]
+
+
+def _add(cfg, dept, name):
+    kind = "BIGINT" if name == "catalog_version" else "STRING"
+    return f"ALTER TABLE {evals_schema(cfg, dept)}.eval_runs ADD COLUMNS ({name} {kind})"
+
+
+def test_ensure_tables_adds_every_later_column_once_when_missing():
     cfg = make_cfg()
     sql = DescribeSql(["run_id", "model_profile", "endpoint"])
     tables.ensure_tables(cfg, sql)
-    found = alters(sql)
-    assert len(found) == 2 * len(cfg.departments)
-    for dept in cfg.departments:
-        assert f"ALTER TABLE {evals_schema(cfg, dept)}.eval_runs ADD COLUMNS (harness STRING)" in found
-        assert f"ALTER TABLE {evals_schema(cfg, dept)}.eval_runs ADD COLUMNS (run_author STRING)" in found
+    assert sorted(alters(sql)) == sorted(_add(cfg, d, n) for d in cfg.departments for n in ADDED)
 
 
-def test_ensure_tables_adds_only_the_missing_run_author_column():
+def test_ensure_tables_adds_only_the_missing_model_catalog_columns():
     cfg = make_cfg()
-    sql = DescribeSql(["run_id", "model_profile", "harness", "endpoint"])
+    sql = DescribeSql(["run_id", "model_profile", "harness", "endpoint", "run_author"])
     tables.ensure_tables(cfg, sql)
-    assert alters(sql) == [
-        f"ALTER TABLE {evals_schema(cfg, d)}.eval_runs ADD COLUMNS (run_author STRING)"
-        for d in cfg.departments
-    ]
+    assert alters(sql) == [_add(cfg, d, n) for d in cfg.departments for n in ADDED[2:]]
 
 
 def test_ensure_tables_does_not_alter_when_every_column_exists():
     cfg = make_cfg()
-    sql = DescribeSql(["run_id", "model_profile", "harness", "endpoint", "run_author"])
+    sql = DescribeSql(["run_id", "model_profile", "endpoint", *ADDED])
     tables.ensure_tables(cfg, sql)
     assert alters(sql) == []
+
+
+def test_matrix_rows_and_runs_all_read_old_rows_as_hub_yaml_profiles():
+    cfg, sql = make_cfg(), FakeSql()
+    tables.ensure_views(cfg, sql)
+    runs = next(s for s in stmts(sql) if f"VIEW {eval_schema(cfg)}.runs_all" in s)
+    assert runs.count("COALESCE(`profile_kind`, 'hub_yaml') AS `profile_kind`") == len(cfg.departments)
+    assert "COALESCE(profile_kind, 'hub_yaml') AS profile_kind" in tables.VIEWS_SQL
+    assert tables.MATRIX_COLUMNS[-1] == "profile_kind"
 
 
 def test_eval_matrix_view_coalesces_harness_to_reference():

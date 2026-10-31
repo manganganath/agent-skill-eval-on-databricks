@@ -20,14 +20,18 @@ from databricks.sdk.service.sql import (
 
 from skillhub.config import HubConfig
 from skillhub.naming import eval_schema
+from skillhub.results.tables import RELEASE_GATE
 
 log = logging.getLogger(__name__)
 DESTINATION_ENV = "SKILLHUB_ALERT_DESTINATION_ID"
 
 
-# Only gating runs raise alerts. PR, Hub and manual runs report to whoever started them, and the
-# without_skill baseline is not a verdict on the skill.
-GATING = "parent_run_id IS NOT NULL AND trigger_source IN ('merge', 'nightly') AND COALESCE(mode, '') <> 'without_skill'"
+# Only gating runs raise alerts. PR, Hub and manual runs report to whoever started them, the without_skill baseline
+# is not a verdict on the skill, and only hub.yaml profiles on the built-in agent loop gate (RELEASE_GATE).
+GATING = (
+    "parent_run_id IS NOT NULL AND trigger_source IN ('merge', 'nightly') AND COALESCE(mode, '') <> 'without_skill' "
+    f"AND {RELEASE_GATE}"
+)
 # Journal rows that start or end a switch (registry/reconcile.py). A retire ends an unfinished switch too.
 SWITCH_ROWS = "'switch_started', 'switch_failed', 'switched', 'retired'"
 
