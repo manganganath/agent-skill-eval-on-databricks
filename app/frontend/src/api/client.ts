@@ -1,7 +1,8 @@
 import type {
-  AppConfig, CandidateDetail, CandidateSummary, CaseRow, DraftIn, DraftOut, EvalRunIn, EvalRunOut, EvalRunStatus,
-  Dashboard, DashboardOut, JournalRow, MatrixRow, Me, MergeOut, ReadableDepartments, ReleaseStatus, SkillDetail,
-  SkillSummary, SubmitOut, SwitchOut, TryCandidateIn, TryIn, TryModelResult,
+  AppConfig, CandidateDetail, CandidateSummary, CaseRow, CatalogModel, DraftIn, DraftOut, EvalRunIn, EvalRunOut,
+  EvalRunStatus, Dashboard, DashboardOut, JournalRow, MatrixRow, Me, MergeOut, ModelIn, ModelPatch, ModelsList,
+  ProbeStarted, ProbeStatus, ReadableDepartments, ReleaseStatus, ServingEndpoint, SkillDetail, SkillSummary, SubmitOut,
+  SwitchOut, TryCandidateIn, TryIn, TryModelResult,
 } from "./types";
 
 // `errors` carries the plain-language problems of a refused draft upload (reason draft_invalid), and `unmet` the
@@ -138,6 +139,13 @@ export const api = {
   evalRun: (jobRunId: number) => request<EvalRunStatus>(`/eval-runs/${jobRunId}`),
   switchVersion: (fqn: string, toVersion: number) =>
     request<SwitchOut>(`/skills/${enc(fqn)}/switch`, { method: "POST", body: JSON.stringify({ to_version: toVersion }) }),
+  models: () => request<ModelsList>("/models"),
+  addModel: (body: ModelIn) => request<CatalogModel>("/models", { method: "POST", body: JSON.stringify(body) }),
+  updateModel: (name: string, patch: ModelPatch) =>
+    request<CatalogModel>(`/models/${enc(name)}`, { method: "PATCH", body: JSON.stringify(patch) }),
+  testModel: (name: string) => request<ProbeStarted>(`/models/${enc(name)}/test`, { method: "POST" }),
+  modelTest: (name: string, jobRunId: number) => request<ProbeStatus>(`/models/${enc(name)}/test/${jobRunId}`),
+  servingEndpoints: () => request<ServingEndpoint[]>("/serving-endpoints"),
   tryPrompt: (body: TryIn) =>
     request<TryModelResult[]>("/try", { method: "POST", body: JSON.stringify(body) }),
   tryCandidate: (runKey: string, dept: string, name: string, body: TryCandidateIn) =>

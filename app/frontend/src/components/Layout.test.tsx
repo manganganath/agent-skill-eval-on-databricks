@@ -73,6 +73,7 @@ describe("Layout", () => {
     ["/skills/skill_hub.common.audit-xls", "Catalog"],
     ["/matrix", "Eval matrix"],
     ["/run", "Run eval"],
+    ["/models", "Models"],
   ])("marks the active section for %s", async (path, name) => {
     renderAt(path);
     const nav = screen.getByRole("navigation", { name: "Main" });

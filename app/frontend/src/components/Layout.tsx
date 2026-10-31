@@ -48,6 +48,7 @@ export function Layout() {
             <NavLink to="/dashboard">Dashboard</NavLink>
             <NavLink to="/matrix">Eval matrix</NavLink>
             <NavLink to="/run">Run eval</NavLink>
+            <NavLink to="/models">Models</NavLink>
             <NavLink to="/access">Access</NavLink>
           </nav>
           <SignedInUser />
