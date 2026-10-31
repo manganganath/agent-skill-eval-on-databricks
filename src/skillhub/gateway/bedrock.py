@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from collections.abc import Callable
 from typing import Any
 
@@ -36,8 +37,9 @@ class BedrockCallError(RuntimeError):
 
 
 def _plain_names(profile: ModelProfile) -> bool:
-    """Amazon Nova fails a call whose tool name holds a hyphen ("invalid sequence as part of ToolUse")."""
-    return (profile.model_id or "").startswith("amazon.")
+    """Amazon Nova fails a call whose tool name holds a hyphen ("invalid sequence as part of ToolUse").
+    The model id may carry a region prefix (`us.amazon.`) or be an ARN, so `amazon.` is matched after `.` or `/`."""
+    return re.search(r"(?:^|[./])amazon\.", profile.model_id or "") is not None
 
 
 def tool_name(name: str, *, plain: bool = False) -> str:
@@ -85,13 +87,13 @@ def to_converse(messages: list[dict], *, plain: bool = False) -> tuple[list[dict
             if m.get("content"):
                 system.append({"text": str(m["content"])})
         elif role == "user":
-            add("user", [{"text": str(m.get("content") or "(empty)")}])
+            add("user", [{"text": str(m.get("content") or "").strip() or "(empty)"}])
         elif role == "assistant":
             add("assistant", _assistant_blocks(m, plain))
         elif role == "tool":
             result = {
                 "toolUseId": m["tool_call_id"],
-                "content": [{"text": str(m.get("content") or "(no output)")}],
+                "content": [{"text": str(m.get("content") or "").strip() or "(no output)"}],
             }
             add("user", [{"toolResult": result}])
         else:

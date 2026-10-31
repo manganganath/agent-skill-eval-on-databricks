@@ -252,3 +252,33 @@ def test_nova_history_tool_calls_are_sent_with_plain_names_including_long_ones()
     sent = [b["toolUse"]["name"] for b in runtime.requests[0]["messages"][1]["content"]]
     assert sent == [SKILL.replace("-", "_"), tool_name(long, plain=True)]
     assert len(sent[1]) == 64 and "-" not in sent[1]
+
+
+@pytest.mark.parametrize(
+    ("model_id", "plain"),
+    [
+        ("amazon.nova-lite-v1:0", True),
+        ("us.amazon.nova-lite-v1:0", True),
+        ("global.amazon.nova-2-lite-v1:0", True),
+        ("arn:aws:bedrock:us-east-1::foundation-model/amazon.nova-pro-v1:0", True),
+        ("arn:aws:bedrock:us-east-1:123456789012:inference-profile/us.amazon.nova-pro-v1:0", True),
+        ("anthropic.claude-sonnet-5-5", False),
+        ("us.anthropic.claude-sonnet-5-5", False),
+        ("meta.llama4-maverick-17b-instruct-v1:0", False),
+    ],
+)
+def test_nova_gets_plain_tool_names_through_a_region_prefix_or_an_arn(model_id, plain):
+    assert bedrock._plain_names(NOVA.model_copy(update={"model_id": model_id})) is plain
+
+
+def test_whitespace_only_text_is_sent_as_a_placeholder():
+    _, turns = bedrock.to_converse(
+        [
+            {"role": "user", "content": "  \n "},
+            {"role": "assistant", "content": None, "tool_calls": [
+                {"id": "t1", "type": "function", "function": {"name": "read_file", "arguments": "{}"}}]},
+            {"role": "tool", "tool_call_id": "t1", "content": " \t\n"},
+        ]
+    )  # fmt: skip
+    assert turns[0]["content"] == [{"text": "(empty)"}]
+    assert turns[2]["content"][0]["toolResult"]["content"] == [{"text": "(no output)"}]
