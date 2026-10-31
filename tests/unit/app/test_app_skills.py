@@ -6,7 +6,7 @@ from datetime import datetime
 import pytest
 from app_fakes import FakeApi, FakeWorkspace
 from backend import authz, queries, skill_ref
-from backend.data import SqlDenied, SqlError
+from backend.data import SqlDenied, SqlError, SqlMissingColumn
 from conftest import make_cfg
 from databricks.sdk.errors import PermissionDenied
 
@@ -44,7 +44,7 @@ class FakeUserSql:
             return list(self.journal.get(params["dept"], []))
         if "eval_matrix" in statement:
             if "profile_kind" in statement and any(o in statement for o in self.old):
-                raise SqlError("statement failed")
+                raise SqlMissingColumn("statement failed")
             skill = (params or {}).get("skill")
             return [
                 r
@@ -232,7 +232,7 @@ def test_catalog_groups_by_schema_and_takes_worst_verdict(make_client, uc):
     assert audit["verdicts"] == {"claude-sonnet": "warn"}
 
 
-def _catalog_with_a_catalog_model_failing(old=()):
+def _catalog_with_a_catalog_model_failing(old=(), sql_class=None):
     journal = {
         "common": [
             {
@@ -249,7 +249,7 @@ def _catalog_with_a_catalog_model_failing(old=()):
         {**base, "model_profile": "claude-sonnet", "verdict": "pass"},
         {**base, "model_profile": "nova-lite", "verdict": "fail", "profile_kind": "external_model"},
     ]
-    return FakeUserSql(journal=journal, matrix=matrix, old=old)
+    return (sql_class or FakeUserSql)(journal=journal, matrix=matrix, old=old)
 
 
 def test_a_catalog_model_verdict_does_not_reach_the_catalog_scorecard(make_client, uc):
@@ -265,6 +265,24 @@ def test_a_department_whose_views_predate_the_catalog_still_shows_its_verdicts(m
     c = make_client(user_w=user_w(), app_w=app_w(), cfg=make_cfg(), sql=sql)
     audit = next(r for r in c.get("/api/skills").json() if r["name"] == "audit-xls")
     assert audit["eval_access"] == "ok" and "claude-sonnet" in audit["verdicts"]
+
+
+class TransientSql(FakeUserSql):
+    """A warehouse that times out on every eval_matrix read that filters to hub.yaml models."""
+
+    def query(self, statement, params=None):
+        if "eval_matrix" in statement and queries.HUB_YAML_ONLY in statement:
+            self.calls.append((statement, dict(params or {})))
+            raise SqlError("statement failed")
+        return super().query(statement, params)
+
+
+def test_a_transient_failure_does_not_show_catalog_model_verdicts(make_client, uc):
+    sql = _catalog_with_a_catalog_model_failing(sql_class=TransientSql)
+    c = make_client(user_w=user_w(), app_w=app_w(), cfg=make_cfg(), sql=sql)
+    audit = next(r for r in c.get("/api/skills").json() if r["name"] == "audit-xls")
+    assert audit["eval_access"] == "unavailable" and "nova-lite" not in (audit["verdicts"] or {})
+    assert all(queries.HUB_YAML_ONLY in s for s, _ in sql.calls if "eval_matrix" in s)
 
 
 def test_catalog_hides_schema_user_cannot_list(make_client, uc):

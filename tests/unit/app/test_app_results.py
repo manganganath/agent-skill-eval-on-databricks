@@ -1,6 +1,6 @@
 from app_fakes import FakeApi, FakeWorkspace
 from backend import queries
-from backend.data import SqlDenied, SqlError
+from backend.data import SqlDenied, SqlError, SqlMissingColumn
 from conftest import make_cfg
 
 ME = "/api/2.0/preview/scim/v2/Me"
@@ -312,7 +312,7 @@ class OldViewSql(FakeUserSql):
     def query(self, statement, params=None):
         if "profile_kind" in statement and any(o in statement for o in self.old):
             self.calls.append((statement, params or {}))
-            raise SqlError("statement failed")
+            raise SqlMissingColumn("statement failed")
         return super().query(statement, params)
 
 
@@ -349,6 +349,13 @@ def test_matrix_a_department_that_fails_on_both_reads_is_502(make_client):
     sql = OldViewSql(broken={EQ})
     c = make_client(user_w=FakeWorkspace(), cfg=make_cfg(), sql=sql)
     assert c.get("/api/results/matrix", params={"dept": "equity_research"}).status_code == 502
+
+
+def test_matrix_a_transient_failure_is_not_read_again_with_the_legacy_statement(make_client):
+    sql = FakeUserSql(broken={EQ})  # a timeout or a 5xx, not a missing column
+    c = make_client(user_w=FakeWorkspace(), cfg=make_cfg(), sql=sql)
+    assert c.get("/api/results/matrix", params={"dept": "equity_research"}).status_code == 502
+    assert len(sql.calls) == 1
 
 
 def test_matrix_keeps_the_denied_header_when_a_department_used_the_fallback(make_client):

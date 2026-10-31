@@ -1,6 +1,6 @@
 from app_fakes import FakeWorkspace
 from backend import dashboard, queries
-from backend.data import SqlDenied, SqlError
+from backend.data import SqlDenied, SqlError, SqlMissingColumn
 from conftest import make_cfg
 
 EQ = "skill_hub.dept_equity_research_evals"
@@ -522,7 +522,7 @@ class OldViewDashSql(DashSql):
     def query(self, statement, params=None):
         if "profile_kind" in statement and COMMON in statement:
             self.calls.append((statement, dict(params or {})))
-            raise SqlError("statement failed")
+            raise SqlMissingColumn("statement failed")
         return super().query(statement, params)
 
 
@@ -534,3 +534,28 @@ def test_a_department_whose_views_predate_the_catalog_is_read_without_the_filter
     cells = [s for s, _ in sql.calls if "uplift_task_quality, error_rate" in s]
     assert any("profile_kind" not in s and COMMON in s for s in cells)
     assert all("profile_kind" in s for s in cells if EQ in s)  # the other department keeps the filter
+
+
+class FlakyDashSql(DashSql):
+    """A warehouse whose first statement that filters on profile_kind fails as a timeout or a 5xx would."""
+
+    failed = False
+
+    def query(self, statement, params=None):
+        if not self.failed and "profile_kind" in statement:
+            self.failed = True
+            self.calls.append((statement, dict(params or {})))
+            raise SqlError("statement failed")
+        return super().query(statement, params)
+
+
+def test_a_transient_failure_is_not_read_again_without_the_hub_yaml_filter(make_client):
+    data = common_data()
+    data["cells"] = [
+        *data["cells"],
+        cell("sales-brief", 2, "trigger", "fail", model_profile="nova-lite", profile_kind="external_model"),
+    ]
+    sql = FlakyDashSql({COMMON: data, EQ: data})
+    c = make_client(user_w=FakeWorkspace(), cfg=make_cfg(), sql=sql)
+    assert c.get("/api/results/dashboard").status_code == 502
+    assert all("profile_kind" in s for s, _ in sql.calls if "uplift_task_quality, error_rate" in s)

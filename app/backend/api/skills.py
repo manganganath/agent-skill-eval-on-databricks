@@ -13,7 +13,7 @@ from fastapi import APIRouter, Depends, Query
 
 from backend import authz, queries, skill_ref
 from backend.authz import Forbidden, Reason
-from backend.data import SqlDenied, SqlError, UserSql
+from backend.data import SqlDenied, SqlError, SqlMissingColumn, UserSql
 from backend.deps import get_app_client, get_cfg, get_sql, get_user_client, problem
 from backend.schemas import EvalAccess, JournalRowOut, SkillDetail, SkillSummary
 from skillhub.config import HubConfig
@@ -40,15 +40,18 @@ def read_dept(
     """Rows from one department's eval tables, plus whether the user could read them.
 
     A denial or a SQL failure only marks this department. A missing table means nothing is recorded yet.
-    `fallback` is read instead when the statement fails with SqlError: a view from before the model catalog.
+    `fallback` is read instead when the statement names a column the view lacks (SqlMissingColumn): a view from before
+    the model catalog. Any other SqlError marks the department unavailable, so a timeout never reads it unfiltered.
     """
     try:
         try:
             return sql.query(*statement), "ok"
-        except SqlError:
+        except SqlMissingColumn:
             if fallback is None:
                 raise
-            log.warning("read of %s failed; reading it with the fallback statement", dept)
+            log.warning(
+                "read of %s names a column its view lacks; reading it with the fallback statement", dept
+            )
             return sql.query(*fallback), "ok"
     except SqlDenied as exc:
         return [], "ok" if exc.not_found else "denied"
