@@ -1148,6 +1148,48 @@ def eval_cmd(
         raise typer.Exit(1)
 
 
+@app.command("probe")
+def probe_cmd(
+    ctx: typer.Context,
+    name: str = typer.Option(..., "--name", help="The model catalog row to test."),
+    route: str = typer.Option(
+        "", "--route", help="The target the Skill Hub asked to test. Empty means unset."
+    ),
+    endpoint: str = typer.Option("", "--endpoint", help="Empty means unset."),
+    model_id: str = typer.Option("", "--model-id", help="Empty means unset."),
+    region: str = typer.Option("", "--region", help="Empty means unset."),
+    requested_by: str = typer.Option("", "--requested-by", help="The reviewer who started the test."),
+) -> None:
+    """Test one model catalog row as this identity: one chat call of at most 16 tokens.
+
+    Prints `SKILLHUB_PROBE {json}` and exits 1 when the test failed. The row's target must still be the one given.
+    """
+    import sys
+    from contextlib import redirect_stdout
+
+    from skillhub.model_catalog.entry import Target
+    from skillhub.model_catalog.store import read_entries
+    from skillhub.probe import failed, run_probe
+    from skillhub.sql import SqlClient
+
+    cfg = _cfg(ctx)
+    expect = Target(route=route, endpoint=endpoint, model_id=model_id, region=region)
+    with redirect_stdout(sys.stderr):  # library output must not mix with the result line
+        try:
+            entries, version = read_entries(
+                SqlClient(workspace_client(), cfg.workspace.sql_warehouse_id), cfg
+            )
+        except Exception as e:  # the eval identity's read of the catalog is part of what the test proves
+            result = failed(name, f"this identity cannot read the model catalog: {type(e).__name__}: {e}")
+        else:
+            result = run_probe(cfg, entries, version, name, expect)
+    if requested_by:
+        typer.echo(f"connection test of {name} requested by {requested_by}", err=True)
+    typer.echo(result.line())
+    if result.status != "passed":
+        raise typer.Exit(1)
+
+
 @app.command("changed-skills")
 def changed_skills_cmd(
     base: str = typer.Option("", "--base", help="Base ref. Give it or --empty-base."),

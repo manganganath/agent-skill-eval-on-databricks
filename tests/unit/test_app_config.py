@@ -41,6 +41,7 @@ def test_app_resources_bind_the_warehouse_and_jobs_but_no_serving_endpoints():
     assert resources["sql-warehouse"]["sql_warehouse"]["permission"] == "CAN_USE"
     assert resources["skill-eval-job"]["job"]["permission"] == "CAN_MANAGE_RUN"
     assert resources["skill-switch-job"]["job"]["permission"] == "CAN_MANAGE_RUN"
+    assert resources["skillhub-probe-job"]["job"]["permission"] == "CAN_MANAGE_RUN"
     assert not [r for r in resources.values() if "serving_endpoint" in r]
 
 
@@ -50,6 +51,7 @@ def test_app_env_comes_from_bundle_variables():
     assert env["OTEL_TRACES_SAMPLER"] == "always_on"
     assert env["SKILLHUB_JOB_ID_EVAL"] == "${resources.jobs.skill_eval.id}"
     assert env["SKILLHUB_JOB_ID_SWITCH"] == "${resources.jobs.skill_switch.id}"
+    assert env["SKILLHUB_JOB_ID_PROBE"] == "${resources.jobs.skillhub_probe.id}"
     assert env["SKILLHUB_CI_EVAL_PRINCIPAL"] == "${var.ci_eval_principal}"
     assert env["SKILLHUB_WORKSPACE_ROOT"] == "${var.workspace_root}"  # The Jobs use the same folder
     assert env["SKILLHUB_GITHUB_REPO"] == "${var.github_repo}"
