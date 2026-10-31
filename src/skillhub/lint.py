@@ -176,17 +176,38 @@ def _threshold_issues(b: SkillBundle, defaults) -> list[LintIssue]:
     ]
 
 
+def _model_issues(b: SkillBundle, models: frozenset[str]) -> list[LintIssue]:
+    """evals.json `models` that are not hub.yaml profiles. A skill's own models are its gating models, and only
+    hub.yaml profiles gate: a model catalog profile is picked per run in the Skill Hub."""
+    ev = b.root / "evals" / "evals.json"
+    try:
+        named = (load_evals(ev).models or []) if ev.is_file() else []
+    except ValueError:
+        return []  # already reported by lint_bundle
+    return [
+        LintIssue(
+            b.root.as_posix(),
+            f"evals.json models names {m!r}, which is not a hub.yaml model profile; catalog models are picked "
+            "per run in the Skill Hub",
+        )
+        for m in named
+        if m not in models
+    ]
+
+
 def lint_repo(
     skills_root: Path | None = None,
     paths: Sequence[str] = (),
     *,
     departments: Iterable[str] | None = None,
     defaults=None,
+    models: Iterable[str] | None = None,
 ) -> list[LintIssue]:
     """Lint every bundle under skills_root, or only the bundles that contain the given paths.
 
     With `departments` (hub.yaml keys), a department folder that is not a key is an issue. With `defaults`
-    (hub.yaml `defaults`), a per-skill threshold that would loosen the gate is an issue. Issues with `warning`
+    (hub.yaml `defaults`), a per-skill threshold that would loosen the gate is an issue. With `models` (hub.yaml
+    model profile names), an evals.json `models` entry that is not one of them is an issue. Issues with `warning`
     set (lint_warnings) are reported but do not fail lint.
     """
     skills_root = skills_root or default_skills_root()
@@ -243,5 +264,7 @@ def lint_repo(
         issues += _near_miss_issues(b, known)
         if defaults is not None:
             issues += _threshold_issues(b, defaults)
+        if models is not None:
+            issues += _model_issues(b, frozenset(models))
         issues += lint_warnings(b)
     return issues

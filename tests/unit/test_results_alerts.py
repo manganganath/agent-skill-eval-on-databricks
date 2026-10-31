@@ -301,3 +301,10 @@ def test_hand_over_alerts_makes_ci_the_owner_and_warns_when_refused(caplog):
     with caplog.at_level("WARNING"):
         (line,) = alerts.hand_over_alerts(NS(alerts_v2=fake), ["x1"], "ci-app")
     assert line.startswith("warning: could not make ci-app the owner of alert x1") and "Manual step" in line
+
+
+@pytest.mark.parametrize("key", ["verdict-regression", "error-rate", "inconclusive"])
+def test_run_alerts_read_only_hub_yaml_profiles_on_the_reference_harness(key):
+    q, _ = alerts.queries(make_cfg())[key]
+    assert "COALESCE(harness, 'reference') = 'reference'" in q
+    assert "COALESCE(profile_kind, 'hub_yaml') = 'hub_yaml'" in q

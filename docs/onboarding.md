@@ -27,6 +27,7 @@ The Skill Hub shows the same table on its Access page, with your own roles marke
 | Run an eval on a candidate or draft | No | Yes | Yes |
 | Merge a pull request from the Hub | No | No | Yes, when its gate passed |
 | Switch the live version | No | No | Yes |
+| Manage models: add, test, enable and disable | See the list | See the list | Yes |
 | Add or edit a skill | No | Through a pull request | Through a pull request |
 | Approve a release | In GitHub: the required reviewers of the `production` environment, not a Skill Hub role | | |
 | Publish a version | No one: CI publishes after approval | | |

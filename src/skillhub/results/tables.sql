@@ -12,7 +12,8 @@ CREATE TABLE IF NOT EXISTS {evals}.eval_runs (
   verdict STRING, pass_rate DOUBLE, spread DOUBLE, error_rate DOUBLE, n_cases INT, n_reviewed INT,
   accuracy DOUBLE, `precision` DOUBLE, recall DOUBLE, pass_rate_without DOUBLE,
   uplift_task_quality DOUBLE, uplift_skill_format DOUBLE, planted_bugs_recall DOUBLE,
-  started_at TIMESTAMP, ended_at TIMESTAMP, synced_at TIMESTAMP, run_author STRING)
+  started_at TIMESTAMP, ended_at TIMESTAMP, synced_at TIMESTAMP, run_author STRING,
+  profile_kind STRING, route STRING, model_id STRING, region STRING, catalog_version BIGINT)
 TBLPROPERTIES ('delta.appendOnly' = 'true');
 
 CREATE TABLE IF NOT EXISTS {evals}.eval_cases (

@@ -48,7 +48,7 @@ def make_client():
     from backend.main import create_app
     from fastapi.testclient import TestClient
 
-    def _make(*, user_w=None, app_w=None, cfg=None, sql=None, static_dir=None):
+    def _make(*, user_w=None, app_w=None, cfg=None, sql=None, app_sql=None, static_dir=None):
         app = create_app(static_dir or REPO / "does-not-exist")
         if user_w is not None:
             app.dependency_overrides[deps.get_user_client] = lambda: user_w
@@ -58,6 +58,8 @@ def make_client():
             app.dependency_overrides[deps.get_cfg] = lambda: cfg
         if sql is not None:
             app.dependency_overrides[deps.get_sql] = lambda: sql
+        if app_sql is not None:
+            app.dependency_overrides[deps.get_app_sql] = lambda: app_sql
         return TestClient(app)
 
     return _make

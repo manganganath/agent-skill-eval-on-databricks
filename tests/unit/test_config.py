@@ -199,3 +199,60 @@ def test_no_host_anywhere_is_a_config_error(monkeypatch):
     monkeypatch.setattr(config, "_sdk_host", lambda: "")
     with pytest.raises(ConfigError, match="workspace host"):
         config.load_config(EXAMPLE)
+
+
+GEMINI = "  gemini-flash:  {route: serving, endpoint: databricks-gemini-3-8-flash,  class: fast}"
+
+
+def test_shipped_config_names_the_bedrock_secret_scope_and_only_release_gate_profiles(cfg):
+    assert cfg.external.bedrock.secret_scope == "skillhub-aws"
+    assert cfg.external.bedrock.default_region == "us-east-1"
+    assert all(p.kind == "hub_yaml" and p.catalog_version is None for p in cfg.models.values())
+
+
+@pytest.mark.parametrize(
+    ("old", "new", "says"),
+    [
+        ("default_region: us-east-1", "default_region: Virginia", "default_region"),
+        ("secret_scope: skillhub-aws", "secret_scope: 'skill hub'", "secret_scope"),
+    ],
+)
+def test_bedrock_settings_are_checked(tmp_path, old, new, says):
+    with pytest.raises(ConfigError, match=says):
+        load_config(_variant(tmp_path, old, new))
+
+
+@pytest.mark.parametrize(
+    "profile",
+    [
+        "{route: bedrock, model_id: amazon.nova-lite-v1:0, region: us-east-1, class: fast}",
+        "{kind: ug_model, route: serving, endpoint: databricks-x, class: fast}",
+        "{route: serving, endpoint: databricks-x, catalog_version: 3, class: fast}",
+    ],
+)
+def test_hub_yaml_profiles_are_databricks_serving_endpoints(tmp_path, profile):
+    with pytest.raises(ConfigError, match="models.extra: .*model catalog"):
+        load_config(_variant(tmp_path, GEMINI, f"{GEMINI}\n  extra: {profile}"))
+
+
+def test_an_endpoint_of_another_model_family_gets_no_provider_parameters():
+    from skillhub.config import ModelProfile
+    from skillhub.gateway.models import adapt_request
+
+    p = ModelProfile(endpoint="databricks-llama-4-maverick", params={"seed": 1}, **{"class": "fast"})
+    assert p.provider == "other"
+    body = adapt_request(p, [{"role": "user", "content": "hi"}], [], max_tokens=None, trigger=False)
+    assert body == {"model": "databricks-llama-4-maverick", "messages": [{"role": "user", "content": "hi"}]}
+
+
+def test_catalog_profiles_survive_the_eval_worker_round_trip(cfg):
+    from skillhub.config import HubConfig, ModelProfile
+
+    nova = ModelProfile(
+        route="bedrock", model_id="amazon.nova-lite-v1:0", region="us-east-1", kind="external_model",
+        catalog_version=7, **{"class": "fast"},
+    )  # fmt: skip
+    merged = cfg.model_copy(update={"models": {**cfg.models, "nova-lite": nova}})
+    again = HubConfig.model_validate(merged.model_dump(mode="json", by_alias=True))
+    assert again.models["nova-lite"] == nova
+    assert again.external == cfg.external

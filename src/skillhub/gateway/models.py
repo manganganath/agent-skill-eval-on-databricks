@@ -13,7 +13,7 @@ import openai
 from skillhub.config import HubConfig, ModelProfile
 from skillhub.gateway.request_auth import HeaderAuth
 
-Provider = Literal["claude", "gpt", "gemini"]
+Provider = Literal["claude", "gpt", "gemini", "other"]
 RETRY_STATUSES = {429, 500, 502, 503, 504}
 MAX_TRIES = 3
 TIMEOUT_S = 180
@@ -270,8 +270,13 @@ def model_client(
 ) -> ModelClient:
     """`max_tries` and `timeout` let a caller with its own deadline (the Skill Hub Try panel) bound each call.
     `usage_context` is sent with every request as the body's `usage_context`, so the endpoints' usage table
-    records who made it (the eval runner and Try tag their calls with the skill and the source)."""
+    records who made it (the eval runner and Try tag their calls with the skill and the source). A Bedrock profile
+    (route `bedrock`, from the model catalog) gets a gateway.bedrock client; it has no usage table to tag."""
     profile = cfg.models[profile_name]
+    if profile.route == "bedrock":  # boto3 is imported only when a Bedrock profile runs
+        from skillhub.gateway.bedrock import bedrock_client
+
+        return bedrock_client(cfg, profile_name, profile, max_tries=max_tries, timeout=timeout)
     if profile.route != "serving":
         raise NotImplementedError("ug-anthropic route is not supported yet")
     return ServingModelClient(

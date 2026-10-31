@@ -66,22 +66,63 @@ class Roles(BaseModel):
     ci_eval: str = "skillhub-ci-eval"  # service principal that only runs evals
 
 
+# An AWS region name, for example us-east-1 or us-gov-west-1.
+AWS_REGION = re.compile(r"[a-z]{2}(?:-[a-z]+)+-\d{1,2}")
+# A Databricks secret scope name.
+_SECRET_SCOPE = re.compile(r"[A-Za-z0-9_.@-]{1,128}")
+
+ProfileKind = Literal["hub_yaml", "ug_model", "external_model"]
+
+
 class ModelProfile(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
-    route: Literal["serving", "ug-anthropic"] = "serving"
+    route: Literal["serving", "ug-anthropic", "bedrock"] = "serving"
     endpoint: str | None = None
     model: str | None = None
     class_: Literal["frontier", "fast"] = Field(alias="class")
     params: dict[str, object] = {}
+    # Profiles merged from the model catalog (skillhub.model_catalog) set these. hub.yaml profiles keep the defaults.
+    kind: ProfileKind = "hub_yaml"
+    model_id: str | None = None  # a Bedrock model ID or inference profile ID
+    region: str | None = None  # the AWS region of a Bedrock profile
+    catalog_version: int | None = None  # the Delta version of the model catalog the profile was read from
 
     @property
-    def provider(self) -> Literal["claude", "gpt", "gemini"]:
-        name = (self.endpoint or self.model or "").lower()
+    def provider(self) -> Literal["claude", "gpt", "gemini", "other"]:
+        """The model family, from the endpoint, model or model ID. `other` gets no provider-specific parameters."""
+        name = (self.endpoint or self.model or self.model_id or "").lower()
         for p in ("claude", "gpt", "gemini"):
             if p in name:
                 return p  # type: ignore[return-value]
-        raise ConfigError(f"cannot tell the provider from model name '{name}'")
+        return "other"
+
+
+class BedrockSettings(BaseModel):
+    """Where the eval Jobs find the AWS keys for Amazon Bedrock. Only skillhub-ci-eval may read the scope."""
+
+    secret_scope: str = "skillhub-aws"
+    default_region: str = "us-east-1"
+
+    @field_validator("secret_scope")
+    @classmethod
+    def _scope_is_a_name(cls, v: str) -> str:
+        if not _SECRET_SCOPE.fullmatch(v):
+            raise ValueError(f"external.bedrock.secret_scope {v!r} is not a secret scope name")
+        return v
+
+    @field_validator("default_region")
+    @classmethod
+    def _region_is_a_region(cls, v: str) -> str:
+        if not AWS_REGION.fullmatch(v):
+            raise ValueError(f"external.bedrock.default_region {v!r} is not an AWS region such as us-east-1")
+        return v
+
+
+class ExternalSettings(BaseModel):
+    """External model providers. The models themselves are registered in the model catalog."""
+
+    bedrock: BedrockSettings = BedrockSettings()
 
 
 class Defaults(BaseModel):
@@ -135,6 +176,7 @@ class HubConfig(BaseModel):
     generator: str
     defaults: Defaults
     import_: ImportSpec = Field(alias="import")
+    external: ExternalSettings = ExternalSettings()
 
     @field_validator("catalog")
     @classmethod
@@ -187,6 +229,19 @@ def _check_references(cfg: HubConfig) -> None:
                 raise ConfigError(f"{label} names unknown model profile '{name}'")
     if cfg.defaults.warn_rate < cfg.defaults.fail_rate:
         raise ConfigError("defaults.warn_rate must not be below defaults.fail_rate")
+    for name, p in cfg.models.items():
+        # hub.yaml holds the release-gate profiles, served by Databricks. The model catalog holds the rest.
+        if (
+            p.kind != "hub_yaml"
+            or p.route == "bedrock"
+            or p.model_id
+            or p.region
+            or p.catalog_version is not None
+        ):
+            raise ConfigError(
+                f"models.{name}: hub.yaml profiles are served by Databricks; register external models in the "
+                "Skill Hub model catalog"
+            )
 
 
 def _sdk_host() -> str:
@@ -226,6 +281,7 @@ class LintSettings:
     departments: frozenset[str]
     defaults: Defaults
     quarantined: frozenset[str] = frozenset()  # departments with quarantine: true
+    models: frozenset[str] = frozenset()  # the hub.yaml model profile names
 
 
 def load_lint_settings(path: str | Path | None = None) -> LintSettings:
@@ -244,4 +300,7 @@ def load_lint_settings(path: str | Path | None = None) -> LintSettings:
     if defaults.warn_rate < defaults.fail_rate:
         raise ConfigError("defaults.warn_rate must not be below defaults.fail_rate")
     quarantined = frozenset(k for k, d in depts.items() if d.quarantine)
-    return LintSettings(frozenset(depts), defaults, quarantined)
+    models = raw.get("models") or {}
+    if not isinstance(models, dict):
+        raise ConfigError(f"{path}: models must be a mapping of profile names")
+    return LintSettings(frozenset(depts), defaults, quarantined, frozenset(models))

@@ -92,9 +92,15 @@ export interface JournalRow {
   git_sha: string | null; eval_run_id: string | null; actor: string; job_run_id: string | null; ts: string;
 }
 
+// The kind of an eval target: a hub.yaml profile (a release gate model) or a model catalog row.
+export type ProfileKind = "hub_yaml" | "ug_model" | "external_model" | "external_agent";
+
+// profile_kind is missing on rows from before the model catalog, and from a matrix view that is not upgraded yet:
+// read it as hub_yaml.
 export interface MatrixRow {
   dept: string; skill: string; skill_version: number; content_hash: string; model_profile: string;
-  harness?: string; endpoint: string; model_class: string; mode: RunMode; verdict: Verdict; run_id: string; experiment_id: string;
+  harness?: string; profile_kind?: ProfileKind;
+  endpoint: string; model_class: string; mode: RunMode; verdict: Verdict; run_id: string; experiment_id: string;
   n_cases: number; n_reviewed: number; pass_rate: number | null; spread: number | null; error_rate: number | null;
   accuracy: number | null; precision: number | null; recall: number | null; pass_rate_without: number | null;
   uplift_task_quality: number | null; uplift_skill_format: number | null; started_at: string;
@@ -164,6 +170,27 @@ export interface DashboardOut {
 }
 /** The dashboard and the departments left out of it (X-Eval-Denied-Departments). */
 export interface Dashboard extends DashboardOut { deniedDepartments: string[] }
+
+// The Models page. Mirrors ModelOut, ModelsOut, ProbeStarted, ProbeStatus and ServingEndpointOut in
+// app/backend/schemas.py. A release gate row (`release_gate`) comes from hub.yaml and is changed only there.
+export interface ModelTest { status: "passed" | "failed"; message: string; job_run_id: number | null }
+export interface CatalogModel {
+  name: string; kind: ProfileKind; route: string | null; endpoint: string | null; model_id: string | null;
+  region: string | null; model_class: "frontier" | "fast"; harness: string; enabled: boolean; release_gate: boolean;
+  price_in: number | null; price_out: number | null; tested_at: string | null; test: ModelTest | null;
+  updated_by: string | null; updated_at: string | null;
+}
+export interface ModelsList { models: CatalogModel[]; catalog_available: boolean; bedrock_region: string }
+export interface ModelIn {
+  name: string; kind: "ug_model" | "external_model"; endpoint?: string; model_id?: string; region?: string;
+  model_class: "frontier" | "fast"; price_in?: number | null; price_out?: number | null;
+}
+export type ModelPatch = Partial<Pick<CatalogModel,
+  "endpoint" | "model_id" | "region" | "model_class" | "price_in" | "price_out" | "enabled">>;
+export interface ProbeStarted { job_run_id: number }
+// `stale`: the model changed while it was tested, so the result was not recorded.
+export interface ProbeStatus { state: "running" | "passed" | "failed" | "stale"; message: string | null; tested_at: string | null }
+export interface ServingEndpoint { name: string; task: string | null }
 
 export interface AppConfig {
   workspace_url: string;

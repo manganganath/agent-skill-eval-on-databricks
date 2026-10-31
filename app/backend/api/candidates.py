@@ -76,7 +76,13 @@ def list_candidates(
         for key, meta in drafts:
             dept_keys.setdefault(meta.dept, []).append(key.run_key)
         reads = {
-            d: pool.submit(read_dept, sql, queries.candidate_runs_sql(cfg, d, ks), d)
+            d: pool.submit(
+                read_dept,
+                sql,
+                queries.candidate_runs_sql(cfg, d, ks),
+                d,
+                queries.candidate_runs_sql(cfg, d, ks, legacy=True),
+            )
             for d, ks in sorted(dept_keys.items())
         }
         # The live content of each visible department: a pull request skill that is already released is left out.
@@ -182,7 +188,11 @@ def candidate_detail(
     meta = candidates.authorize(app_w, cfg, authz.fetch_me(user_w), key, [(dept, skill)])
     with ThreadPoolExecutor(max_workers=MAX_PARALLEL) as pool:
         rows_read = pool.submit(
-            read_dept, sql, queries.candidate_runs_sql(cfg, dept, [key.run_key], skill), dept
+            read_dept,
+            sql,
+            queries.candidate_runs_sql(cfg, dept, [key.run_key], skill),
+            dept,
+            queries.candidate_runs_sql(cfg, dept, [key.run_key], skill, legacy=True),
         )
         stamp_read = pool.submit(candidates.uploaded_at, app_w, cfg, key) if meta is None else None
         files = candidates.workspace_call(

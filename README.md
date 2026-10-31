@@ -124,6 +124,10 @@ A test-case file with assertions on its trigger cases works as it is. Each trigg
 
 [docs/onboarding.md](docs/onboarding.md) walks through it, including how to import a whole skill repository.
 
+### Evaluate on more models
+
+Reviewers register more models on the Skill Hub's **Models** page: any serving endpoint on Unity Gateway, or an Amazon Bedrock model. A **Test** runs one short call as the eval service principal, and a model can be enabled once its test passed. Run eval then lists it after the release gate models. Its results appear in the Eval matrix with a badge for its kind; only the `config/hub.yaml` models gate a release. See [Model catalog](docs/operations.md#model-catalog).
+
 ### Connect your own agents
 
 Agents outside the Skill Hub load skills from the Unity Gateway skills MCP (Beta), with the user's identity, so Unity Catalog grants apply. A connection offers at most 20 per-skill tools in this Beta, so add one MCP server per schema, for example one for the department and one for `common`. `src/skillhub/gateway/skills_mcp.py` is a reference client. The Skill Hub also has a REST API; see [docs/api.md](docs/api.md) and `/docs` on the app.
@@ -214,7 +218,8 @@ Everything customer-specific is in `config/hub.yaml`. `${VAR}` values come from 
 | `catalog`, `workspace_root` | The catalog for every schema, and the workspace folder for experiments, CI candidates and drafts. Never use `/Shared`: every user can edit it. |
 | `departments` | One key per folder under `skills/`, with its reader groups. `common` is read by everyone. `quarantine: true` makes a department reviewer-only. Its skills are evaluated in pull requests but never published. `external` is quarantined, for partner-built skills. |
 | `roles` | The author, reviewer and CI group or principal names |
-| `models` | Model profiles: a name, a serving endpoint and a class. Add your own endpoints here. |
+| `models` | The release gate model profiles: a name, a serving endpoint and a class. Other models, on Unity Gateway or Amazon Bedrock, are registered by reviewers on the Skill Hub's Models page and never gate a release. |
+| `external` | Where the eval Jobs find the AWS key for Amazon Bedrock (`bedrock.secret_scope`) and the default Bedrock region. See [Amazon Bedrock](docs/operations.md#amazon-bedrock). |
 | `judges`, `judges_pr`, `generator` | The judge panel for full runs, the single judge for pull request runs, and the model that drafts test cases and rubrics. |
 | `defaults` | The default models and repeats, the verdict thresholds, `min_reviewed_cases`, the concurrency, and `gating_modes`, the modes whose verdicts block a release. |
 | `import` | A pinned upstream skill repository and how its folders map to departments. |

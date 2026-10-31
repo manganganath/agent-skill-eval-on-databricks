@@ -13,6 +13,7 @@ import httpx
 
 from skillhub.evalspec import CASE_KIND, NO_RUBRIC, REQUEST_MODES
 from skillhub.naming import evals_schema
+from skillhub.results.tables import RELEASE_GATE
 
 MARKER = "<!-- skillhub:pr-comment -->"
 API = "https://api.github.com"
@@ -364,9 +365,10 @@ def upsert_pr_comment(
 def _matrix_sql(cfg, n_authors: int = 1, *, merge_only: bool = False) -> str:
     """eval_runs lives in each department's evals schema, so read every one of them.
 
-    Only child rows (parent_run_id set) by trusted authors count. A row with no mode stays in, and
-    blocks the gate (blocking_verdicts). With `merge_only` (the publish gate), only rows whose trigger_source is
-    the :trigger_source parameter count, before the latest row of each cell is picked.
+    Only child rows (parent_run_id set) by trusted authors count, and only release-gate rows: hub.yaml profiles
+    (RELEASE_GATE) on the reference harness. A row with no mode stays in, and blocks the gate (blocking_verdicts).
+    With `merge_only` (the publish gate), only rows whose trigger_source is the :trigger_source parameter count,
+    before the latest row of each cell is picked.
     """
     authors = ", ".join(f":author_{i}" for i in range(n_authors))
     source = " AND trigger_source = :trigger_source" if merge_only else ""
@@ -379,7 +381,8 @@ def _matrix_sql(cfg, n_authors: int = 1, *, merge_only: bool = False) -> str:
         f"COALESCE(harness, 'reference'), mode "
         f"ORDER BY started_at DESC, synced_at DESC) AS rn "
         f"FROM {evals_schema(cfg, dept)}.eval_runs "
-        f"WHERE run_key = :run_key AND parent_run_id IS NOT NULL AND run_author IN ({authors}){source}"
+        f"WHERE run_key = :run_key AND parent_run_id IS NOT NULL AND run_author IN ({authors}) "
+        f"AND {RELEASE_GATE}{source}"
         f") WHERE rn = 1"
         for dept in cfg.departments
     ]

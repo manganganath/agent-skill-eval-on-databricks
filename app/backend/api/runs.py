@@ -16,12 +16,13 @@ from databricks.sdk.errors import (
 from fastapi import APIRouter, Depends, Path
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from backend import authz, candidates, jobs, queries, skill_ref
+from backend import authz, candidates, jobs, model_catalog, queries, skill_ref
 from backend.authz import Forbidden, Reason
 from backend.data import SqlDenied, UserSql
-from backend.deps import get_app_client, get_cfg, get_sql, get_user_client, problem
+from backend.deps import get_app_client, get_app_sql, get_cfg, get_sql, get_user_client, problem
 from skillhub.config import HubConfig
 from skillhub.naming import make_run_key, version_fqn
+from skillhub.sql import SqlExecutor
 
 T = TypeVar("T")  # a TypeVar, not PEP 695 syntax: the Databricks Apps runtime is Python 3.11
 
@@ -29,6 +30,8 @@ log = logging.getLogger("skillhub.app.runs")
 router = APIRouter(tags=["runs"])
 # Journal actions that start or end a switch. The others (published, publish_refused, drift) do not.
 SWITCH_ROWS = frozenset({"switch_started", "switch_failed", "switched", "retired"})
+# The runs that GET /eval-runs/{id} reports. A connection test is read through /models/{name}/test/{id}.
+EVAL_STATUS_JOBS = ("skill-eval", "skill-switch")
 
 
 class CandidateRunIn(BaseModel):
@@ -142,11 +145,12 @@ def start_eval(
     app_w: Annotated[WorkspaceClient, Depends(get_app_client)],
     cfg: Annotated[HubConfig, Depends(get_cfg)],
     sql: Annotated[UserSql, Depends(get_sql)],
+    app_sql: Annotated[SqlExecutor, Depends(get_app_sql)],
 ) -> EvalRunOut:
     models = list(dict.fromkeys(body.models))
     modes = list(dict.fromkeys(body.modes))
-    if any(m not in cfg.models for m in models):
-        raise problem(422, Reason.UNKNOWN_MODEL)
+    # hub.yaml models, else enabled model catalog rows: 404 model_not_found before any Job starts.
+    model_catalog.require_runnable(app_sql, cfg, models)
     if body.candidate is not None:
         if body.skills or body.versions:  # one skills folder per run: live skills and pins run on their own
             raise problem(422, Reason.MIXED_SOURCES)
@@ -242,7 +246,7 @@ def eval_status(
         raise problem(502, Reason.JOB_FAILED) from None
     # Only runs of the Hub's own Jobs are visible; no other run id is a window onto the workspace.
     own: set[int] = set()
-    for job_name in jobs.JOB_NAMES:  # each id on its own: one missing Job must not hide the other's runs
+    for job_name in EVAL_STATUS_JOBS:  # each id on its own: one missing Job must not hide the other's runs
         try:
             own.add(jobs.job_id(app_w, job_name))
         except jobs.JobNotFound:

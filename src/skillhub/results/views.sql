@@ -11,6 +11,7 @@ SELECT run_id, dept, skill, skill_fqn, skill_version, content_hash, model_profil
        model_class, mode, verdict, pass_rate, spread, error_rate, n_cases, n_reviewed,
        n_cases - n_reviewed AS unreviewed_cases,
        accuracy, `precision`, recall, pass_rate_without, uplift_task_quality,
-       uplift_skill_format, planted_bugs_recall, started_at, run_key, trigger_source, experiment_id
+       uplift_skill_format, planted_bugs_recall, started_at, run_key, trigger_source, experiment_id,
+       COALESCE(profile_kind, 'hub_yaml') AS profile_kind
 FROM ranked
 WHERE rn = 1;

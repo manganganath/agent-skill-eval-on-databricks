@@ -24,6 +24,13 @@ class SqlError(Exception):
     """A statement failed for a reason other than access."""
 
 
+class SqlMissingColumn(SqlError):
+    """The statement names a column the table or view does not have: a view from before the model catalog.
+
+    Only this failure may be read again with a legacy statement. A timeout or a 5xx is a plain SqlError.
+    """
+
+
 # SqlClient passes on the warehouse's error message ("statement failed: <message>"). These mean "refused", not "broken".
 _NOT_FOUND_MARKERS = ("TABLE_OR_VIEW_NOT_FOUND", "SCHEMA_NOT_FOUND")
 _ACCESS_MARKERS = (
@@ -32,6 +39,8 @@ _ACCESS_MARKERS = (
     "INSUFFICIENT_PERMISSIONS",
     "USER_DOES_NOT_HAVE_PERMISSION",
 )
+# A column the view does not have (UNRESOLVED_COLUMN.WITH_SUGGESTION and .WITHOUT_SUGGESTION).
+_MISSING_COLUMN_MARKER = "UNRESOLVED_COLUMN"
 
 
 def _marker(exc: Exception) -> str | None:
@@ -66,6 +75,8 @@ class UserSql:
             marker = _marker(exc)
             if marker:
                 self._deny(exc, marker)
+            if _MISSING_COLUMN_MARKER in str(exc).upper():
+                raise SqlMissingColumn("statement failed") from None
             raise SqlError("statement failed") from None
         except DatabricksError as exc:
             raise SqlError(type(exc).__name__) from None

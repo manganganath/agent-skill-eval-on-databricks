@@ -296,3 +296,62 @@ class MergeOut(BaseModel):
     pr_number: int
     merged: bool
     sha: str
+
+
+ProfileKind = Literal["hub_yaml", "ug_model", "external_model", "external_agent"]
+
+
+class ModelTestOut(BaseModel):
+    """The last connection test of a model catalog row."""
+
+    status: Literal["passed", "failed"]
+    message: str
+    job_run_id: int | None = None
+
+
+class ModelOut(BaseModel):
+    """One eval target: a hub.yaml profile (`release_gate`, changed only in hub.yaml) or a model catalog row.
+    Mirrors CatalogModel in app/frontend/src/api/types.ts."""
+
+    name: str
+    kind: ProfileKind
+    route: str | None
+    endpoint: str | None
+    model_id: str | None
+    region: str | None
+    model_class: Literal["frontier", "fast"]
+    harness: str
+    enabled: bool
+    release_gate: bool
+    price_in: float | None = None
+    price_out: float | None = None
+    tested_at: str | None = None
+    test: ModelTestOut | None = None
+    updated_by: str | None = None
+    updated_at: str | None = None
+
+
+class ModelsOut(BaseModel):
+    """`catalog_available` is false when the catalog table cannot be read: only the hub.yaml models are listed.
+    `bedrock_region` is the region a new Bedrock model gets unless the reviewer names another."""
+
+    models: list[ModelOut]
+    catalog_available: bool
+    bedrock_region: str
+
+
+class ProbeStarted(BaseModel):
+    job_run_id: int
+
+
+class ProbeStatus(BaseModel):
+    """`stale`: the row's target changed while it was tested, so the result was not recorded."""
+
+    state: Literal["running", "passed", "failed", "stale"]
+    message: str | None = None
+    tested_at: str | None = None
+
+
+class ServingEndpointOut(BaseModel):
+    name: str
+    task: str | None = None

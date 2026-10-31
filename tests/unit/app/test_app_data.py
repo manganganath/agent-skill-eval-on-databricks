@@ -4,7 +4,7 @@ from datetime import datetime
 import pytest
 from app_fakes import FakeSqlClient
 from backend import candidates, deps, queries, skill_ref
-from backend.data import SqlDenied, SqlError, UserSql
+from backend.data import SqlDenied, SqlError, SqlMissingColumn, UserSql
 from conftest import make_cfg
 from databricks.sdk.errors import DatabricksError, NotFound, PermissionDenied
 
@@ -79,6 +79,32 @@ def test_other_databricks_error_is_sql_error():
     with pytest.raises(SqlError) as ei:
         UserSql(FakeSqlClient([DatabricksError("boom")])).query("SELECT 1")
     assert not isinstance(ei.value, SqlDenied)
+
+
+@pytest.mark.parametrize(
+    "code", ["UNRESOLVED_COLUMN.WITH_SUGGESTION", "UNRESOLVED_COLUMN.WITHOUT_SUGGESTION"]
+)
+def test_a_column_the_view_does_not_have_is_sql_missing_column(code):
+    message = (
+        f"statement failed: [{code}] A column with name `profile_kind` cannot be resolved. SQLSTATE: 42703"
+    )
+    with pytest.raises(SqlMissingColumn) as ei:
+        UserSql(FakeSqlClient([SkillhubSqlError(message)])).query("SELECT 1")
+    assert isinstance(ei.value, SqlError) and str(ei.value) == "statement failed"
+
+
+@pytest.mark.parametrize(
+    "exc",
+    [
+        SkillhubSqlError("statement failed: [INTERNAL_ERROR] warehouse restarting"),
+        SkillhubSqlError("statement 01ef did not finish within 60s"),
+        DatabricksError("503 Service Unavailable"),
+    ],
+)
+def test_any_other_failure_is_not_a_missing_column(exc):
+    with pytest.raises(SqlError) as ei:
+        UserSql(FakeSqlClient([exc])).query("SELECT 1")
+    assert not isinstance(ei.value, SqlMissingColumn)
 
 
 def test_denial_is_logged_without_sql_or_params(caplog):

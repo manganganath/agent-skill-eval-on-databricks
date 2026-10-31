@@ -873,3 +873,28 @@ def test_any_other_sql_error_is_raised_at_once(monkeypatch):
     with pytest.raises(SqlError, match="TABLE_OR_VIEW_NOT_FOUND"):
         sync_mod.insert_missing(sql, "c.e", "eval_cases", FIELDS, ROWS, ["run_id"])
     assert len(sql.inserts("eval_cases")) == 1
+
+
+def test_run_row_records_the_model_catalog_params_of_a_catalog_profile():
+    r = run("r1")
+    r.data.params.update(
+        profile_kind="external_model", route="bedrock", model_id="amazon.nova-lite-v1:0", region="us-east-1",
+        catalog_version="7", endpoint="amazon.nova-lite-v1:0",
+    )  # fmt: skip
+    row = sync_mod.run_row(r, "now")
+    assert (row["profile_kind"], row["route"], row["model_id"], row["region"], row["catalog_version"]) == (
+        "external_model", "bedrock", "amazon.nova-lite-v1:0", "us-east-1", 7,
+    )  # fmt: skip
+
+
+def test_a_run_from_before_the_model_catalog_syncs_as_a_hub_yaml_profile():
+    row = sync_mod.run_row(run("r1"), "now")
+    assert (row["profile_kind"], row["route"], row["model_id"], row["region"], row["catalog_version"]) == (
+        "hub_yaml", None, None, None, None,
+    )  # fmt: skip
+
+
+def test_a_catalog_param_set_as_a_tag_marks_the_run_as_tampered():
+    r = run("r1")
+    r.data.tags["profile_kind"] = "hub_yaml"
+    assert "runner param(s) set as tags: profile_kind" in sync_mod.tampering(r)

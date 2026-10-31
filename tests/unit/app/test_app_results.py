@@ -1,5 +1,6 @@
 from app_fakes import FakeApi, FakeWorkspace
-from backend.data import SqlDenied, SqlError
+from backend import queries
+from backend.data import SqlDenied, SqlError, SqlMissingColumn
 from conftest import make_cfg
 
 ME = "/api/2.0/preview/scim/v2/Me"
@@ -204,6 +205,7 @@ MATRIX_KEYS = {
     "uplift_task_quality",
     "uplift_skill_format",
     "started_at",
+    "profile_kind",
 }
 CASE_KEYS = {
     "run_id",
@@ -297,3 +299,80 @@ def test_matrix_by_fqn_with_an_unknown_schema_is_404(make_client):
     r = c.get("/api/results/matrix", params={"fqn": "skill_hub.dept_nope.earnings-preview"})
     assert r.status_code == 404 and r.json() == {"detail": {"reason": "skill_not_found"}}
     assert sql.calls == []
+
+
+class OldViewSql(FakeUserSql):
+    """Department views from before the model catalog (`old` schema fragments, default all): selecting
+    profile_kind from them fails."""
+
+    def __init__(self, *args, old=("_evals",), **kw):
+        super().__init__(*args, **kw)
+        self.old = old
+
+    def query(self, statement, params=None):
+        if "profile_kind" in statement and any(o in statement for o in self.old):
+            self.calls.append((statement, params or {}))
+            raise SqlMissingColumn("statement failed")
+        return super().query(statement, params)
+
+
+def test_matrix_reads_a_view_from_before_the_model_catalog_without_profile_kind(make_client):
+    rows = [{"skill": "audit-xls", "model_profile": "gpt", "run_id": RUN}]
+    sql = OldViewSql(rows={"common_evals": rows})
+    c = make_client(user_w=FakeWorkspace(), cfg=make_cfg(), sql=sql)
+    r = c.get("/api/results/matrix", params={"dept": "common"})
+    assert r.status_code == 200 and r.json() == [{**rows[0], "dept": "common"}]
+    assert "profile_kind" not in sql.calls[-1][0]
+
+
+def test_the_legacy_matrix_query_differs_only_by_profile_kind():
+    from backend import queries
+
+    new, _ = queries.matrix_sql(make_cfg(), "common", None)
+    old, _ = queries.matrix_sql(make_cfg(), "common", None, legacy=True)
+    assert _selected(new) - _selected(old) == {"profile_kind"}
+
+
+def test_matrix_only_a_department_on_an_old_view_loses_profile_kind(make_client):
+    new_row = {"skill": "a", "model_profile": "nova", "profile_kind": "external_model", "run_id": RUN}
+    old_row = {"skill": "b", "model_profile": "gpt", "run_id": RUN}
+    sql = OldViewSql(rows={"common_evals": [old_row], EQ: [new_row]}, old=("common_evals",))
+    c = make_client(user_w=FakeWorkspace(), cfg=make_cfg(), sql=sql)
+    r = c.get("/api/results/matrix")
+    assert r.status_code == 200
+    by_dept = {x["dept"]: x for x in r.json()}
+    assert by_dept["equity_research"]["profile_kind"] == "external_model"
+    assert "profile_kind" not in by_dept["common"]
+
+
+def test_matrix_a_department_that_fails_on_both_reads_is_502(make_client):
+    sql = OldViewSql(broken={EQ})
+    c = make_client(user_w=FakeWorkspace(), cfg=make_cfg(), sql=sql)
+    assert c.get("/api/results/matrix", params={"dept": "equity_research"}).status_code == 502
+
+
+def test_matrix_a_transient_failure_is_not_read_again_with_the_legacy_statement(make_client):
+    sql = FakeUserSql(broken={EQ})  # a timeout or a 5xx, not a missing column
+    c = make_client(user_w=FakeWorkspace(), cfg=make_cfg(), sql=sql)
+    assert c.get("/api/results/matrix", params={"dept": "equity_research"}).status_code == 502
+    assert len(sql.calls) == 1
+
+
+def test_matrix_keeps_the_denied_header_when_a_department_used_the_fallback(make_client):
+    row = {"skill": "b", "model_profile": "gpt", "run_id": RUN}
+    sql = OldViewSql(rows={"common_evals": [row]}, denied={EQ}, old=("common_evals",))
+    c = make_client(user_w=FakeWorkspace(), cfg=make_cfg(), sql=sql)
+    r = c.get("/api/results/matrix")
+    assert r.status_code == 200 and r.json() == [{**row, "dept": "common"}]
+    assert r.headers["x-eval-denied-departments"] == "equity_research"
+
+
+def test_release_status_reads_filter_to_hub_yaml_unless_the_view_predates_the_catalog():
+    cfg = make_cfg()
+    assert queries.HUB_YAML_ONLY in queries.catalog_verdicts_sql(cfg, "common")[0]
+    assert "profile_kind" not in queries.catalog_verdicts_sql(cfg, "common", legacy=True)[0]
+    assert queries.HUB_YAML_ONLY in queries.catalog_verdicts_sql(cfg, "common", "a")[0]
+    assert queries.HUB_YAML_ONLY in queries.dashboard_sql(cfg, "common")["cells"][0]
+    assert "profile_kind" not in queries.dashboard_sql(cfg, "common", legacy=True)["cells"][0]
+    # the Eval matrix itself shows every kind
+    assert queries.HUB_YAML_ONLY not in queries.matrix_sql(cfg, "common", None)[0]

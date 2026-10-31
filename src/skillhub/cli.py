@@ -159,6 +159,7 @@ def lint_cmd(ctx: typer.Context, paths: list[str] = typer.Argument(None)) -> Non
         paths or [],
         departments=settings.departments if settings else None,
         defaults=settings.defaults if settings else None,
+        models=settings.models if settings else None,
     )
     for issue in issues:
         typer.echo(str(issue))
@@ -1094,6 +1095,16 @@ def eval_cmd(
     cfg = _cfg(ctx)
     # [] lets each skill's evals.json `models` override defaults.models
     model_list = [] if (_opt(models) or "default") == "default" else _csv(models)
+    if any(m not in cfg.models for m in model_list):  # model catalog profiles, read as the Job's identity
+        from skillhub.model_catalog.merge import CatalogError, load_requested
+        from skillhub.sql import SqlClient
+
+        try:
+            cfg = load_requested(
+                cfg, lambda: SqlClient(workspace_client(), cfg.workspace.sql_warehouse_id), model_list
+            )
+        except CatalogError as e:
+            raise typer.BadParameter(str(e), param_hint="--models") from e
     unknown = [m for m in model_list if m not in cfg.models]
     if unknown:
         raise typer.BadParameter(f"unknown model profile(s): {', '.join(unknown)}", param_hint="--models")
@@ -1134,6 +1145,48 @@ def eval_cmd(
         where = " ".join(x for x in (e.model_profile, e.mode) if x)
         typer.echo(f"error: {e.dept}/{e.skill}{' ' + where if where else ''}: {e.message}", err=True)
     if summary.errors:
+        raise typer.Exit(1)
+
+
+@app.command("probe")
+def probe_cmd(
+    ctx: typer.Context,
+    name: str = typer.Option(..., "--name", help="The model catalog row to test."),
+    route: str = typer.Option(
+        "", "--route", help="The target the Skill Hub asked to test. Empty means unset."
+    ),
+    endpoint: str = typer.Option("", "--endpoint", help="Empty means unset."),
+    model_id: str = typer.Option("", "--model-id", help="Empty means unset."),
+    region: str = typer.Option("", "--region", help="Empty means unset."),
+    requested_by: str = typer.Option("", "--requested-by", help="The reviewer who started the test."),
+) -> None:
+    """Test one model catalog row as this identity: one chat call of at most 16 tokens.
+
+    Prints `SKILLHUB_PROBE {json}` and exits 1 when the test failed. The row's target must still be the one given.
+    """
+    import sys
+    from contextlib import redirect_stdout
+
+    from skillhub.model_catalog.entry import Target
+    from skillhub.model_catalog.store import read_entries
+    from skillhub.probe import describe, failed, run_probe
+    from skillhub.sql import SqlClient
+
+    cfg = _cfg(ctx)
+    expect = Target(route=route, endpoint=endpoint, model_id=model_id, region=region)
+    with redirect_stdout(sys.stderr):  # library output must not mix with the result line
+        try:
+            entries, version = read_entries(
+                SqlClient(workspace_client(), cfg.workspace.sql_warehouse_id), cfg
+            )
+        except Exception as e:  # the eval identity's read of the catalog is part of what the test proves
+            result = failed(name, f"this identity cannot read the model catalog: {describe(e)}")
+        else:
+            result = run_probe(cfg, entries, version, name, expect)
+    if requested_by:
+        typer.echo(f"connection test of {name} requested by {requested_by}", err=True)
+    typer.echo(result.line())
+    if result.status != "passed":
         raise typer.Exit(1)
 
 

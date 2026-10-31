@@ -21,6 +21,7 @@ const ROWS: Row[] = [
   { action: "Run an eval on a candidate or draft", everyone: "No", authors: "Yes", reviewers: "Yes" },
   { action: "Merge a pull request from the Hub", everyone: "No", authors: "No", reviewers: "Yes, when its gate passed" },
   { action: "Switch the live version", everyone: "No", authors: "No", reviewers: "Yes" },
+  { action: "Manage models: add, test, enable and disable", everyone: "See the list", authors: "See the list", reviewers: "Yes" },
   { action: "Add or edit a skill", everyone: "No", authors: "Through a pull request", reviewers: "Through a pull request" },
   { action: "Approve a release", everyone: "In GitHub: the required reviewers of the production environment", authors: "", reviewers: "" },
   { action: "Publish a version", everyone: "No one: CI publishes after approval", authors: "", reviewers: "" },

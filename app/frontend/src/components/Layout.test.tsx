@@ -1,4 +1,4 @@
-import { act, render, screen } from "@testing-library/react";
+import { act, render, screen, within } from "@testing-library/react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { Layout } from "./Layout";
@@ -73,9 +73,13 @@ describe("Layout", () => {
     ["/skills/skill_hub.common.audit-xls", "Catalog"],
     ["/matrix", "Eval matrix"],
     ["/run", "Run eval"],
+    ["/models", "Models"],
   ])("marks the active section for %s", async (path, name) => {
     renderAt(path);
     const nav = screen.getByRole("navigation", { name: "Main" });
+    // The section's own link must exist, or the loop below passes with nothing to compare.
+    const own = within(nav).getByRole("link", { name });
+    expect(own.getAttribute("href")).toBe(path.startsWith("/skills/") ? "/" : path);
     for (const link of nav.querySelectorAll("a")) {
       expect(link.classList.contains("active")).toBe(link.textContent === name);
     }

@@ -525,3 +525,35 @@ def test_blocking_verdicts_skip_modes_outside_gating_modes_but_never_unknown_one
     assert (
         exit_code(blocking_verdicts([row(mode="with_skill", verdict="pass")], ["trigger"])) == 1
     )  # nothing gated
+
+
+def test_gates_and_the_pr_comment_read_only_hub_yaml_profiles_on_the_reference_harness(cfg):
+    """A Skill Hub run on a catalog model or another harness can share nothing with a gate, but if one ever carried a
+    gate's run key its rows must still not count."""
+    from skillhub.ci.pr_comment import load_matrix_rows
+    from skillhub.naming import evals_schema
+    from tests.fakes import FakeSql
+    from tests.unit.eval_rows import TRUSTED, add_rows
+
+    sql = FakeSql()
+    add_rows(sql, cfg, "common", "audit-xls", "merge_k", "sha256:h")  # the hub.yaml rows: gpt on reference
+    t = f"{evals_schema(cfg, 'common')}.eval_runs"
+    for i, (profile, kind, harness) in enumerate(
+        [
+            ("nova-lite", "external_model", "reference"),
+            ("llama", "ug_model", "reference"),
+            ("gpt", None, "codex"),
+        ]
+    ):
+        sql.execute(
+            f"INSERT INTO {t} (run_id, parent_run_id, run_key, dept, skill, model_profile, profile_kind, harness, "
+            "mode, verdict, started_at, synced_at, run_author) VALUES (:rid, 'p', 'merge_k', 'common', "
+            "'audit-xls', :profile, :kind, :harness, 'trigger', 'fail', '2026-10-29T00:00:00', "
+            "'2026-10-29T00:00:00', :author)",
+            {"rid": f"other-{i}", "profile": profile, "kind": kind, "harness": harness, "author": TRUSTED},
+        )
+    rows = load_matrix_rows(sql.execute, cfg, "merge_k", trusted={TRUSTED})
+    assert {(r["model_profile"], r["mode"]) for r in rows} == {
+        ("gpt", "trigger"), ("gpt", "with_skill"), ("gpt", "without_skill"),
+    }  # fmt: skip
+    assert {r["verdict"] for r in rows if r["mode"] == "trigger"} == {"pass"}

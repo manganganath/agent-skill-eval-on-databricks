@@ -298,6 +298,18 @@ def test_the_listing_joins_the_latest_eval_rows_of_the_candidates_run_key(make_c
     assert all(KEY in p.values() for _, p in runs)  # the key is a parameter, never part of the SQL text
 
 
+def test_a_catalog_model_row_does_not_decide_the_candidates_verdicts(make_client):
+    rows = {
+        "common": [
+            row("new-skill", "claude-sonnet", "trigger", "pass"),
+            row("new-skill", "nova-lite", "trigger", "fail", profile_kind="external_model"),
+        ]
+    }
+    c = make_client(user_w=reviewer(), app_w=app(FakeTree(pr_folder())), cfg=make_cfg(), sql=RowsSql(rows))
+    new = next(x for x in c.get("/api/candidates").json() if x["name"] == "new-skill")
+    assert new["verdicts"] == {"claude-sonnet": "pass"}
+
+
 def test_a_pull_request_skill_already_released_with_the_same_content_is_left_out(make_client):
     tree = FakeTree(pr_folder())
     sql = RowsSql(

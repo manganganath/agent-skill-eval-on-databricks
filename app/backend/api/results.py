@@ -9,7 +9,7 @@ from fastapi import APIRouter, Depends, Query, Response
 
 from backend import authz, dashboard, queries, skill_ref
 from backend.authz import Reason
-from backend.data import SqlDenied, SqlError, UserSql
+from backend.data import SqlDenied, SqlError, SqlMissingColumn, UserSql
 from backend.deps import ci_eval_principal, get_cfg, get_sql, get_user_client, problem
 from backend.schemas import DashboardOut
 from skillhub.config import HubConfig
@@ -29,19 +29,31 @@ def _cap(rows: list[dict], response: Response) -> list[dict]:
     return rows
 
 
-def _read_departments(sql: UserSql, depts: list[str], build, response: Response) -> list[dict]:
+def _read_departments(sql: UserSql, depts: list[str], build, response: Response, fallback=None) -> list[dict]:
     """Rows from each department's eval tables, tagged with the department.
 
     A refused department is left out and named in X-Eval-Denied-Departments. A table that does not exist yet
     (`not_found`) holds nothing and is not a refusal. An empty result with any refusal is a 403, so a user who
     cannot read a department never mistakes that for "no results".
+
+    `fallback` builds a second statement for a department whose first one names a column its view lacks
+    (SqlMissingColumn): only that department is read again, so one department on an older view does not change how
+    the others are read. Any other SqlError is not retried.
     """
     out: list[dict] = []
     refused: list[str] = []
     truncated = False
     for d in depts:
         try:
-            rows = sql.query(*build(d))
+            try:
+                rows = sql.query(*build(d))
+            except SqlMissingColumn:
+                if fallback is None:
+                    raise
+                log.warning(
+                    "read of %s names a column its view lacks; reading it with the fallback statement", d
+                )
+                rows = sql.query(*fallback(d))
         except SqlDenied as exc:
             if not exc.not_found:
                 refused.append(d)
@@ -72,7 +84,14 @@ def matrix(
         dept, skill = skill_ref.parse_fqn(cfg, fqn)  # an unknown schema or name is 404 skill_not_found
     # An unknown dept is rejected by queries._check_dept (UnknownDepartment, 404 department_not_found).
     depts = [dept] if dept else list(cfg.departments)
-    return _read_departments(sql, depts, lambda d: queries.matrix_sql(cfg, d, skill), response)
+    # A view from before the model catalog has no profile_kind: that department is read without it.
+    return _read_departments(
+        sql,
+        depts,
+        lambda d: queries.matrix_sql(cfg, d, skill),
+        response,
+        fallback=lambda d: queries.matrix_sql(cfg, d, skill, legacy=True),
+    )
 
 
 @router.get("/results/cases")
@@ -105,6 +124,14 @@ def _dashboard_statement(sql: UserSql, statement: str, params: dict[str, object]
         raise
 
 
+def _dashboard_section(
+    sql: UserSql, statements: dict[str, tuple[str, dict[str, object]]]
+) -> dict[str, list[dict]]:
+    return {
+        name: _dashboard_statement(sql, statement, params) for name, (statement, params) in statements.items()
+    }
+
+
 def _read_dashboard(sql: UserSql, cfg: HubConfig, response: Response) -> dict[str, list[dict]]:
     """The Dashboard's aggregate rows from every department the user can read, tagged with the department.
 
@@ -115,10 +142,15 @@ def _read_dashboard(sql: UserSql, cfg: HubConfig, response: Response) -> dict[st
     refused: list[str] = []
     for d in cfg.departments:
         try:
-            section = {
-                name: _dashboard_statement(sql, statement, params)
-                for name, (statement, params) in queries.dashboard_sql(cfg, d).items()
-            }
+            try:
+                section = _dashboard_section(sql, queries.dashboard_sql(cfg, d))
+            except SqlMissingColumn:
+                # A matrix view from before the model catalog has no profile_kind, and holds only hub.yaml rows.
+                # Any other SqlError (a timeout, a 5xx) is not retried: an unfiltered read would count catalog models.
+                log.warning(
+                    "dashboard read of %s names a column its view lacks; reading it without profile_kind", d
+                )
+                section = _dashboard_section(sql, queries.dashboard_sql(cfg, d, legacy=True))
         except SqlDenied:
             refused.append(d)
             continue

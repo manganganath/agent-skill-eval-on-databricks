@@ -4,7 +4,8 @@
 # and reused by the other Jobs.
 #
 # Run identities are set per Job under `targets.prod.resources.jobs` in databricks.yml:
-# skill-eval and skillhub-nightly run as ci_eval, skill-switch runs as ci, bootstrap runs as the deployer.
+# skill-eval, skillhub-probe and skillhub-nightly run as ci_eval, skill-switch runs as ci, bootstrap runs as the
+# deployer.
 # In dev every Job runs as the deployer, so nothing here may assume a CI principal is the run identity.
 resources:
   jobs:
@@ -110,6 +111,47 @@ resources:
             package_name: skillhub
             entry_point: skillhub-job
             parameters: ["sync", "--run-key", "{{job.parameters.run_key}}"]
+
+    # The connection test of one model catalog row (the Skill Hub's Models page). It runs as ci_eval, like every
+    # eval, so a pass proves what an eval of the row would use. It writes nothing: the Skill Hub reads its output.
+    skillhub_probe:
+      name: skillhub-probe
+      max_concurrent_runs: 4
+      parameters:
+        - {name: name, default: ""}
+        - {name: route, default: ""}
+        - {name: endpoint, default: ""}
+        - {name: model_id, default: ""}
+        - {name: region, default: ""}
+        - {name: requested_by, default: ""}
+      # Only the app principal starts tests, after its reviewer check.
+      permissions:
+        - service_principal_name: ${var.app_principal}
+          level: CAN_MANAGE_RUN
+      environment_variables: *environment_variables
+      environments: *environments
+      tasks:
+        - task_key: probe
+          max_retries: 0  # a failed test is an answer, not a fault to retry
+          environment_key: default
+          environment_variables_key: skillhub_env
+          python_wheel_task:
+            package_name: skillhub
+            entry_point: skillhub-job
+            parameters:
+              - probe
+              - --name
+              - "{{job.parameters.name}}"
+              - --route
+              - "{{job.parameters.route}}"
+              - --endpoint
+              - "{{job.parameters.endpoint}}"
+              - --model-id
+              - "{{job.parameters.model_id}}"
+              - --region
+              - "{{job.parameters.region}}"
+              - --requested-by
+              - "{{job.parameters.requested_by}}"
 
     skill_switch:
       name: skill-switch

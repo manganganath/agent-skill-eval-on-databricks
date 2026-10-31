@@ -336,3 +336,25 @@ def test_cli_lint_checks_against_the_repository_config(make_bundle, tmp_path, mo
     assert "department folder 'not_a_dept' is not a key in hub.yaml" in r.output
     r = CliRunner().invoke(app, ["--config", str(tmp_path / "missing.yaml"), "lint"])
     assert r.exit_code == 1 and "cannot read" in r.output
+
+
+def test_evals_json_models_must_be_hub_yaml_profiles(make_bundle, tmp_path):
+    b = make_bundle("common", "picky")
+    _evals(b, [_case(1)], models=["gpt", "nova-lite"])
+    msgs = _messages(lint_repo(tmp_path / "skills", models={"gpt", "claude-sonnet"}))
+    assert msgs == [
+        "evals.json models names 'nova-lite', which is not a hub.yaml model profile; catalog models are picked "
+        "per run in the Skill Hub"
+    ]
+    assert _messages(lint_repo(tmp_path / "skills")) == []  # without hub.yaml the names are not checked
+
+
+def test_cli_lint_reads_the_model_profile_names_from_hub_yaml(make_bundle, tmp_path, monkeypatch):
+    from skillhub.cli import app
+
+    monkeypatch.setenv("SKILLHUB_SKILLS", str(tmp_path / "skills"))
+    _evals(make_bundle("common", "picky"), [_case(1)], models=["nova-lite"])
+    config = Path(__file__).resolve().parents[2] / "config" / "hub.yaml"
+    r = CliRunner().invoke(app, ["--config", str(config), "lint"])
+    assert r.exit_code == 1, r.output
+    assert "evals.json models names 'nova-lite'" in r.output

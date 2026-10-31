@@ -47,7 +47,14 @@ MATRIX_COLUMNS = [
     "run_key",
     "trigger_source",
     "experiment_id",
+    "profile_kind",
 ]
+
+# The rows every gate and alert reads: hub.yaml profiles on the built-in agent loop. Rows written before either
+# column existed read as such.
+RELEASE_GATE = (
+    "COALESCE(harness, 'reference') = 'reference' AND COALESCE(profile_kind, 'hub_yaml') = 'hub_yaml'"
+)
 
 _TABLE_BLOCK = re.compile(r"CREATE TABLE IF NOT EXISTS \{evals\}\.(\w+) \((.*?)\)\s*TBLPROPERTIES", re.S)
 
@@ -74,8 +81,16 @@ def ensure_tables(cfg: HubConfig, sql: SqlClient) -> None:
         _add_run_columns(sql, ev)
 
 
-# Columns added to eval_runs after the tables were first created: harness, run_author.
-_ADDED_RUN_COLUMNS = (("harness", "STRING"), ("run_author", "STRING"))
+# Columns added to eval_runs after the tables were first created: harness, run_author, and the model catalog's.
+_ADDED_RUN_COLUMNS = (
+    ("harness", "STRING"),
+    ("run_author", "STRING"),
+    ("profile_kind", "STRING"),
+    ("route", "STRING"),
+    ("model_id", "STRING"),
+    ("region", "STRING"),
+    ("catalog_version", "BIGINT"),
+)
 
 
 def _add_run_columns(sql: SqlClient, ev: str) -> None:
@@ -92,8 +107,12 @@ def _add_run_columns(sql: SqlClient, ev: str) -> None:
 _DEPT_LITERAL = re.compile(r"^[a-z0-9_]+$")
 
 
-# Rows written before the harness column existed read as the built-in agent loop.
-_COALESCED = {"harness": "COALESCE(`harness`, 'reference') AS `harness`"}
+# Rows written before the harness column existed read as the built-in agent loop, and rows written before the model
+# catalog as hub.yaml profiles.
+_COALESCED = {
+    "harness": "COALESCE(`harness`, 'reference') AS `harness`",
+    "profile_kind": "COALESCE(`profile_kind`, 'hub_yaml') AS `profile_kind`",
+}
 
 
 def _union_view(

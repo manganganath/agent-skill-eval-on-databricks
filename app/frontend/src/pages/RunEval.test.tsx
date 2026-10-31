@@ -3,7 +3,7 @@ import { MemoryRouter } from "react-router-dom";
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import RunEval from "./RunEval";
 import { api, ApiError } from "../api/client";
-import type { CandidateSummary, Me } from "../api/types";
+import type { CandidateSummary, CatalogModel, Me } from "../api/types";
 
 vi.mock("../api/client", async (orig) => {
   const real = await orig<typeof import("../api/client")>();
@@ -11,7 +11,7 @@ vi.mock("../api/client", async (orig) => {
     ...real,
     api: {
       ...real.api, skills: vi.fn(), config: vi.fn(), startEval: vi.fn(), evalRun: vi.fn(), versions: vi.fn(),
-      me: vi.fn(), candidates: vi.fn(),
+      me: vi.fn(), candidates: vi.fn(), models: vi.fn(),
     },
   };
 });
@@ -49,6 +49,8 @@ beforeEach(() => {
   vi.mocked(api.me).mockResolvedValue(reader);
   vi.mocked(api.candidates).mockReset();
   vi.mocked(api.candidates).mockResolvedValue([candidate]);
+  vi.mocked(api.models).mockReset();
+  vi.mocked(api.models).mockResolvedValue({ models: [], catalog_available: true, bedrock_region: "us-east-1" });
 });
 
 describe("RunEval", () => {
@@ -250,5 +252,56 @@ describe("RunEval with drafts", () => {
       candidate: { run_key: DRAFT, skills: ["common/draft-skill"] }, models: ["claude-sonnet"],
       modes: ["trigger", "effectiveness"],
     });
+  });
+});
+
+const catalogRow = (over: Partial<CatalogModel>): CatalogModel => ({
+  name: "x", kind: "ug_model", route: "serving", endpoint: null, model_id: null, region: null, model_class: "fast",
+  harness: "reference", enabled: true, release_gate: false, price_in: null, price_out: null, tested_at: null,
+  test: null, updated_by: null, updated_at: null, ...over,
+});
+
+describe("RunEval, models from the model catalog", () => {
+  beforeEach(() => {
+    vi.mocked(api.models).mockResolvedValue({
+      catalog_available: true, bedrock_region: "us-east-1", models: [
+        catalogRow({ name: "claude-sonnet", kind: "hub_yaml", release_gate: true }),
+        catalogRow({ name: "nova-lite", kind: "external_model", route: "bedrock", model_id: "amazon.nova-lite-v1:0", region: "us-east-1" }),
+        catalogRow({ name: "llama", endpoint: "databricks-llama-4-maverick" }),
+        catalogRow({ name: "old-llama", endpoint: "databricks-llama-3", enabled: false }),
+        catalogRow({ name: "skill-agent", kind: "external_agent", harness: "agentcore" }),
+      ],
+    });
+  });
+
+  it("lists the release gate models first, then the enabled catalog models by group", async () => {
+    render(<MemoryRouter><RunEval /></MemoryRouter>);
+    await screen.findByRole("checkbox", { name: "nova-lite" });
+    const groups = screen.getAllByRole("heading", { level: 3 }).map((h) => h.textContent);
+    expect(groups.filter((g) => ["Release gate", "On Unity Gateway", "External models"].includes(g ?? ""))).toEqual(
+      ["Release gate", "On Unity Gateway", "External models"],
+    );
+    expect(within(screen.getByRole("group", { name: "External models" })).getByText(/amazon\.nova-lite-v1:0/)).toBeTruthy();
+    expect(screen.getAllByRole("checkbox", { name: "claude-sonnet" })).toHaveLength(1);
+    expect(screen.queryByRole("checkbox", { name: "old-llama" })).toBeNull(); // disabled
+    expect(screen.queryByRole("checkbox", { name: "skill-agent" })).toBeNull(); // not in this release
+  });
+
+  it("runs a catalog model next to a release gate model", async () => {
+    render(<MemoryRouter><RunEval /></MemoryRouter>);
+    fireEvent.click(await screen.findByRole("checkbox", { name: /audit-xls/i }));
+    fireEvent.click(screen.getByRole("checkbox", { name: "claude-sonnet" }));
+    fireEvent.click(await screen.findByRole("checkbox", { name: "nova-lite" }));
+    fireEvent.click(screen.getByRole("checkbox", { name: /trigger/i }));
+    fireEvent.click(screen.getByRole("button", { name: /start evaluation/i }));
+    await screen.findByText(/run hub_0123abcd/i);
+    expect(api.startEval).toHaveBeenCalledWith({ skills: [FQN], models: ["claude-sonnet", "nova-lite"], modes: ["trigger"] });
+  });
+
+  it("still offers the release gate models when the catalog cannot be loaded", async () => {
+    vi.mocked(api.models).mockRejectedValue(new ApiError(503, "catalog_unavailable"));
+    render(<MemoryRouter><RunEval /></MemoryRouter>);
+    expect(await screen.findByText(/model catalog could not be loaded/i)).toBeTruthy();
+    expect(screen.getByRole("checkbox", { name: "claude-sonnet" })).toBeTruthy();
   });
 });

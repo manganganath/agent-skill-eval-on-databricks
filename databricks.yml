@@ -107,6 +107,9 @@ targets:
         skillhub_nightly:
           run_as:
             service_principal_name: ${var.ci_eval_principal}
+        skillhub_probe:
+          run_as:
+            service_principal_name: ${var.ci_eval_principal}
     variables:
       catalog_suffix: ""
       app_name: skill-hub

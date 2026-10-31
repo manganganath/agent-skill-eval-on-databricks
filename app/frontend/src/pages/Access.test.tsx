@@ -57,3 +57,13 @@ describe("Access", () => {
     expect(screen.getByRole("heading", { name: "Who can do what" })).toBeTruthy();
   });
 });
+
+describe("Access, models", () => {
+  it("says that reviewers manage models and everyone sees the list", async () => {
+    vi.mocked(api.me).mockResolvedValue(reader);
+    open();
+    const table = await screen.findByRole("table", { name: "Who can do what" });
+    const row = within(table).getByRole("row", { name: /manage models/i });
+    expect(within(row).getAllByRole("cell").map((c) => c.textContent)).toEqual(["See the list", "See the list", "Yes"]);
+  });
+});

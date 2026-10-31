@@ -38,6 +38,8 @@ resources:
             value: ${resources.jobs.skill_eval.id}
           - name: SKILLHUB_JOB_ID_SWITCH
             value: ${resources.jobs.skill_switch.id}
+          - name: SKILLHUB_JOB_ID_PROBE
+            value: ${resources.jobs.skillhub_probe.id}
           # The eval service principal's application ID. The Dashboard counts its requests as evaluation tokens.
           - name: SKILLHUB_CI_EVAL_PRINCIPAL
             value: ${var.ci_eval_principal}
@@ -62,4 +64,8 @@ resources:
         - name: skill-switch-job
           job:
             id: ${resources.jobs.skill_switch.id}
+            permission: CAN_MANAGE_RUN
+        - name: skillhub-probe-job
+          job:
+            id: ${resources.jobs.skillhub_probe.id}
             permission: CAN_MANAGE_RUN

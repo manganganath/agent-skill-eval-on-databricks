@@ -1,10 +1,13 @@
 import io
+import sqlite3
 from dataclasses import replace
 from types import SimpleNamespace
 
 from backend import github, release
 from databricks.sdk.errors import NotFound, ResourceAlreadyExists
 from databricks.sdk.service.workspace import ObjectType
+
+from tests.fakes import FakeSql
 
 
 class FakeApi:
@@ -386,3 +389,13 @@ class FakeGitHub:
 
 
 MERGED_AT = "2026-10-29T12:00:00Z"
+
+
+class ThreadSql(FakeSql):
+    """tests.fakes.FakeSql for app routes: the TestClient runs each sync route in a worker thread, and a plain
+    sqlite connection refuses to be used from another thread."""
+
+    def __init__(self):
+        super().__init__()
+        self._db = sqlite3.connect(":memory:", check_same_thread=False)
+        self._db.row_factory = sqlite3.Row

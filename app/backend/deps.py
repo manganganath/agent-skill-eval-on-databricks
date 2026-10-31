@@ -77,6 +77,14 @@ def problem(status: int, reason: Reason) -> HTTPException:
     return HTTPException(status_code=status, detail={"reason": reason.value})
 
 
+def get_app_sql(
+    app_w: Annotated[WorkspaceClient, Depends(get_app_client)], cfg: Annotated[HubConfig, Depends(get_cfg)]
+) -> SqlClient:
+    """SQL as the app principal, for the model catalog only: users have no grant on it, and every signed-in user may
+    read the list. The API writes it only after its reviewer check."""
+    return SqlClient(app_w, cfg.workspace.sql_warehouse_id, timeout_s=60)
+
+
 def get_sql(
     w: Annotated[WorkspaceClient, Depends(get_user_client)], cfg: Annotated[HubConfig, Depends(get_cfg)]
 ) -> UserSql:

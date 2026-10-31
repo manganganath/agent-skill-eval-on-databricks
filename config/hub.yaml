@@ -42,6 +42,12 @@ defaults:
   min_reviewed_cases: 5             # per mode, needed for a gating verdict
   gating_modes: [trigger]           # verdicts that block the gates; effectiveness runs and is reported, add it once its cases are tuned
 
+# External model providers. Reviewers register the models themselves on the Skill Hub's Models page.
+external:
+  bedrock:
+    secret_scope: skillhub-aws      # holds aws-access-key-id, aws-secret-access-key, optional aws-session-token; READ for skillhub-ci-eval only
+    default_region: us-east-1       # the region a new Bedrock model gets unless the reviewer names another
+
 import:
   source: github.com/anthropics/financial-services@574ed3624aebd0418c7e96cd101262f30210ab26
   map:

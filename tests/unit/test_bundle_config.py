@@ -115,8 +115,14 @@ def jobs_by_name() -> dict[str, dict]:
     return {job["name"]: job for job in load_bundle()["resources"]["jobs"].values()}
 
 
-def test_the_bundle_defines_the_four_jobs():
-    assert set(jobs_by_name()) == {"skillhub-bootstrap", "skill-eval", "skill-switch", "skillhub-nightly"}
+def test_the_bundle_defines_the_five_jobs():
+    assert set(jobs_by_name()) == {
+        "skillhub-bootstrap",
+        "skill-eval",
+        "skill-switch",
+        "skillhub-nightly",
+        "skillhub-probe",
+    }
 
 
 def test_job_resource_keys_are_referenced_by_other_tasks():
@@ -125,7 +131,27 @@ def test_job_resource_keys_are_referenced_by_other_tasks():
         "skill_eval",
         "skill_switch",
         "skillhub_nightly",
+        "skillhub_probe",
     }
+
+
+def test_the_probe_job_tests_one_row_and_never_retries():
+    job = jobs_by_name()["skillhub-probe"]
+    assert [p["name"] for p in job["parameters"]] == [
+        "name",
+        "route",
+        "endpoint",
+        "model_id",
+        "region",
+        "requested_by",
+    ]
+    assert all(p["default"] == "" for p in job["parameters"])
+    [task] = job["tasks"]
+    assert task["max_retries"] == 0
+    params = task["python_wheel_task"]["parameters"]
+    assert params[0] == "probe"
+    for flag, name in (("--name", "name"), ("--model-id", "model_id"), ("--requested-by", "requested_by")):
+        assert params[params.index(flag) + 1] == "{{job.parameters." + name + "}}", flag
 
 
 def test_skill_eval_parameters_and_task_chain():
@@ -191,6 +217,7 @@ def test_run_permissions_follow_the_two_ci_identities():
         "${var.ci_principal}": "CAN_MANAGE_RUN",
         "${var.app_principal}": "CAN_MANAGE_RUN",
     }
+    assert grants_of("skillhub-probe") == {"${var.app_principal}": "CAN_MANAGE_RUN"}
 
 
 def test_jobs_do_not_set_run_as_in_dev():
@@ -205,10 +232,11 @@ def test_prod_run_as_is_set_per_job():
     prod = load_bundle()["targets"]["prod"]
     assert prod["run_as"]["service_principal_name"] == "${var.ci_principal}"
     jobs = prod["resources"]["jobs"]
-    assert set(jobs) == {"skill_eval", "skill_switch", "skillhub_nightly"}
+    assert set(jobs) == {"skill_eval", "skill_switch", "skillhub_nightly", "skillhub_probe"}
     ci_eval = {"service_principal_name": "${var.ci_eval_principal}"}
     assert jobs["skill_eval"]["run_as"] == ci_eval
     assert jobs["skillhub_nightly"]["run_as"] == ci_eval
+    assert jobs["skillhub_probe"]["run_as"] == ci_eval  # a test proves the eval identity's access
     assert jobs["skill_switch"]["run_as"] == {"service_principal_name": "${var.ci_principal}"}
     assert {"service_principal_name": "${var.ci_eval_principal}", "level": "CAN_VIEW"} in prod["permissions"]
 
