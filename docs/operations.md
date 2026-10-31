@@ -418,6 +418,80 @@ The unreleased experiment has no access list of its own. It inherits the root's,
 
 After an upgrade to a build that has the unreleased experiments, re-run the `skillhub-bootstrap` Job (or a person's bootstrap). Until then, an eval or a Try of a skill that has no experiment fails with "Run bootstrap", and `check-permissions` reports `missing_experiment`. Skills that already have an experiment are not affected.
 
+## Model catalog
+
+Besides the `models` in `config/hub.yaml`, an evaluation can run on the models that reviewers register on the Skill Hub's **Models** page. They are rows of `<catalog>.eval.model_profiles`, which bootstrap creates. `skillhub-ci-eval` reads the table, and only the app principal writes it, after it has checked that the user is a reviewer. A row is disabled, never deleted, so old results can still name it, and the table's Delta history keeps every change.
+
+- **Kinds.** A model on Unity Gateway is a serving endpoint of the workspace, called on the `serving` route. An external model is a model that Databricks does not serve, called through Amazon Bedrock on the `bedrock` route. External agents are not supported in this release.
+- **Connection test.** **Test** starts the `skillhub-probe` Job. It runs as `skillhub-ci-eval`, like every eval, reads the row, and makes one chat call of at most 16 tokens. A pass therefore proves what an eval of the model would use: that identity's read of the catalog, and its access to the endpoint, or its AWS keys and their Bedrock permissions. The Skill Hub records the result on the row when it reads the finished run. A model can be enabled only after its last test passed. Changing the endpoint, the model ID or the region disables the model and clears its test.
+- **What runs it.** Run eval lists the release gate models from `config/hub.yaml` first, then the enabled catalog models. A request that names an unknown or disabled model is refused before the Job starts: 404 `model_not_found` from the Skill Hub, and exit code 2 from `skillhub eval`.
+- **What gates.** Release gates, the pull request comment and the SQL alerts read only the `config/hub.yaml` models on the built-in agent loop: rows with `profile_kind` `hub_yaml` and `harness` `reference`. `defaults.models`, `judges`, `judges_pr`, `generator` and the `models` of an `evals.json` may name only `config/hub.yaml` profiles. `skillhub lint` and the config check enforce this.
+- **Results.** Each child run records `profile_kind` (`hub_yaml`, `ug_model` or `external_model`), `route`, `model_id`, `region` and `catalog_version`, the Delta version of the catalog the run read. Sync writes them to `eval_runs`. The Eval matrix shows the kind next to each model and filters by kind and by harness.
+- **Risk.** An external model receives the skill text and the test cases of every evaluation that runs on it. That is why only reviewers register models.
+
+### Amazon Bedrock
+
+The eval and probe Jobs call Bedrock with the access key of an IAM user. The key is stored in a Databricks secret scope that only `skillhub-ci-eval` can read. The app principal cannot read it and never calls Bedrock. `config/hub.yaml` names the scope and the default region:
+
+```yaml
+external:
+  bedrock:
+    secret_scope: skillhub-aws      # keys aws-access-key-id, aws-secret-access-key, optional aws-session-token
+    default_region: us-east-1
+```
+
+1. **Create a least-privilege IAM user.** It may invoke models and inference profiles and read model metadata, nothing else. The client calls the Converse API, which `bedrock:InvokeModel` authorizes. Narrow the resources to the models you register if you want; a cross-region inference profile also needs the foundation model in each region it routes to.
+
+   ```bash
+   cat > skillhub-bedrock.json <<'POLICY'
+   {
+     "Version": "2012-10-17",
+     "Statement": [
+       {"Sid": "InvokeModels", "Effect": "Allow", "Action": ["bedrock:InvokeModel", "bedrock:InvokeModelWithResponseStream",
+                   "bedrock:Converse", "bedrock:ConverseStream"],
+        "Resource": ["arn:aws:bedrock:*::foundation-model/*",
+                     "arn:aws:bedrock:*:<account-id>:inference-profile/*",
+                     "arn:aws:bedrock:*:<account-id>:application-inference-profile/*"]},
+       {"Sid": "ReadModelMetadata", "Effect": "Allow",
+        "Action": ["bedrock:ListFoundationModels", "bedrock:GetFoundationModel",
+                   "bedrock:ListInferenceProfiles", "bedrock:GetInferenceProfile"],
+        "Resource": "*"}
+     ]
+   }
+   POLICY
+   aws iam create-user --user-name skillhub-eval
+   aws iam put-user-policy --user-name skillhub-eval --policy-name skillhub-bedrock --policy-document file://skillhub-bedrock.json
+   aws iam create-access-key --user-name skillhub-eval   # prints the key once; keep it out of files and shell history
+   ```
+
+   Enable access to the models you plan to register in the Bedrock console of each region (Model access).
+
+2. **Store the key in the scope, readable by `skillhub-ci-eval` only.** `read -rs` keeps the values out of the shell history:
+
+   ```bash
+   databricks secrets create-scope skillhub-aws
+   read -rs AWS_KEY_ID && databricks secrets put-secret skillhub-aws aws-access-key-id --string-value "$AWS_KEY_ID" && unset AWS_KEY_ID
+   read -rs AWS_SECRET && databricks secrets put-secret skillhub-aws aws-secret-access-key --string-value "$AWS_SECRET" && unset AWS_SECRET
+   databricks secrets put-acl skillhub-aws <skillhub-ci-eval application ID> READ
+   databricks secrets list-acls skillhub-aws
+   ```
+
+   `list-acls` must show only `skillhub-ci-eval` with `READ` and the person who manages the key with `MANAGE`. Remove any other entry with `databricks secrets delete-acl skillhub-aws <principal>`. Never give the app principal or `users` access. For temporary keys, also store `aws-session-token`, and replace all three before they expire. In the `dev` target the Jobs run as the deployer, so a dev test needs `READ` for the deployer too.
+
+3. **Register and test.** On the Models page, add an external model with its model ID, for example `amazon.nova-lite-v1:0`, or an inference profile ID such as `us.anthropic.claude-sonnet-5-5` (Claude models are called by inference profile ID), and its region. Run **Test**, then enable it.
+
+A missing scope or key is a plain error in the test result and in the eval run, for example `the secret scope 'skillhub-aws' has no aws-access-key-id key, or the scope does not exist`. A key value never appears in a log, an error, a trace or a run parameter. Keep Databricks SDK debug logging off in Jobs, because it would log the responses to secret reads. Rotate the key in IAM, then put the new values into the same scope; each Job run reads them when it starts.
+
+Amazon Nova models refuse a tool name that contains a hyphen. For a model ID that starts with `amazon.`, the client sends tool names with hyphens turned into underscores and maps them back in the answer. It refuses a request in which two tools would get the same name.
+
+What **Test** shows: the result keeps an error's own message only for errors known to be safe: Bedrock call errors (already redacted), configuration and AWS credential errors (they name the scope and key, never a value), catalog errors, and serving endpoint errors. For example, a 403 `PERMISSION_DENIED` for a missing `CAN_QUERY` grant is shown as it is. Any other error shows only its type, as `<Type>: the call failed`.
+
+A Unity Catalog service credential is the recommended alternative where an admin can create one, because it stores no long-lived key. Support for it is planned.
+
+### Upgrade to the model catalog
+
+This release adds the `model_profiles` table, five `eval_runs` columns, the `profile_kind` column of the matrix views, and the `skillhub-probe` Job. After the deploy, run the `skillhub-bootstrap` Job before the next eval: sync writes the new columns, and the gates read them. If the matrix views belong to a person rather than `skillhub-ci`, that person runs `uv run skillhub bootstrap` once, so the views carry `profile_kind`. A matrix view from before this release has no `profile_kind`. Until bootstrap replaces it, the Eval matrix reads that department without the column and shows its rows as release gate models; other departments keep their kinds.
+
 ## Access to the app
 
 ### Try on skills under review
