@@ -29,7 +29,7 @@ It answers five questions for every skill before it reaches users:
 - **A skills registry in Unity Catalog.** Common skills and department skills are Unity Catalog securables, granted to groups like tables. Each release is an immutable version (`<dept>_versions.<skill>-v<N>`). A switch copies a version into the live skill (`<dept>.<skill>`), so rollback is one step and old versions are never deleted.
 - **Skill evaluation.**
   - **Trigger:** does the agent pick the skill when it should, and leave it alone for near-misses and unrelated requests? Accuracy, precision and recall per skill and model.
-  - **Effectiveness:** is the answer better with the skill than without it? A panel of MLflow judges scores both answers against a rubric. The difference is the *uplift*.
+  - **Effectiveness:** is the answer better with the skill than without it? A panel of MLflow judges scores both answers against a rubric and the cases' assertions. The difference is the *uplift*.
   - Every result is tied to the exact content hash, rubric and test cases. Every score links to the MLflow trace that earned it.
 - **CI/CD gates in GitHub Actions.** A pull request that changes a skill is evaluated automatically, and a failed trigger eval blocks the merge. A named reviewer approves each release in a GitHub environment before CI publishes it.
 - **The Skill Hub**, a Databricks App, governed by each user's own Unity Catalog permissions. In it you can:
@@ -119,6 +119,8 @@ A skill is a folder: `SKILL.md` (with `name` and `description` frontmatter), opt
   - unrelated requests;
   - optional effectiveness cases with fixtures and assertions.
 - `rubric.json` holds the effectiveness criteria. `uv run skillhub generate --skills <name>` drafts both. A reviewer then checks them and marks them reviewed. Only reviewed cases gate a release.
+
+A test-case file with assertions on its trigger cases works as it is. Each trigger case that should trigger and has assertions also runs with and without the skill, and the judges check its assertions; `rubric.json` is then optional. See [Test cases with assertions on trigger cases](docs/onboarding.md#test-cases-with-assertions-on-trigger-cases).
 
 [docs/onboarding.md](docs/onboarding.md) walks through it, including how to import a whole skill repository.
 
