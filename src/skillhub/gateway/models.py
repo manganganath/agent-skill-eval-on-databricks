@@ -13,7 +13,7 @@ import openai
 from skillhub.config import HubConfig, ModelProfile
 from skillhub.gateway.request_auth import HeaderAuth
 
-Provider = Literal["claude", "gpt", "gemini"]
+Provider = Literal["claude", "gpt", "gemini", "other"]
 RETRY_STATUSES = {429, 500, 502, 503, 504}
 MAX_TRIES = 3
 TIMEOUT_S = 180
