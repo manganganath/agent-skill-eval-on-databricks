@@ -37,8 +37,11 @@ def journal_sql(cfg: HubConfig, dept: str, skill: str | None = None) -> tuple[st
 MATRIX_COLUMNS = (
     "skill, skill_version, content_hash, model_profile, harness, endpoint, model_class, mode, verdict, run_id, "
     "experiment_id, n_cases, n_reviewed, pass_rate, spread, error_rate, accuracy, precision, recall, "
-    "pass_rate_without, uplift_task_quality, uplift_skill_format, started_at"
+    "pass_rate_without, uplift_task_quality, uplift_skill_format, started_at, profile_kind"
 )
+# An eval_matrix view from before the model catalog has no profile_kind. Bootstrap replaces the views, and until it
+# has, the matrix reads them without it: the UI reads a row without profile_kind as a hub.yaml profile.
+LEGACY_MATRIX_COLUMNS = MATRIX_COLUMNS.removesuffix(", profile_kind")
 CASE_COLUMNS = (
     "run_id, trace_id, assessment_name, case_id, repeat, mode, user_input, expected_skill, invoked_skill, "
     "trigger_outcome, value, rationale, judge_model, source_type, reviewed"
@@ -48,7 +51,10 @@ RESULT_LIMIT = 5000
 _FETCH = RESULT_LIMIT + 1
 
 
-def matrix_sql(cfg: HubConfig, dept: str, skill: str | None) -> tuple[str, dict[str, object]]:
+def matrix_sql(
+    cfg: HubConfig, dept: str, skill: str | None, *, legacy: bool = False
+) -> tuple[str, dict[str, object]]:
+    """`legacy`: the columns of a view from before the model catalog."""
     _check_dept(cfg, dept)
     where = ["1 = 1"]
     params: dict[str, object] = {}
@@ -56,7 +62,8 @@ def matrix_sql(cfg: HubConfig, dept: str, skill: str | None) -> tuple[str, dict[
         where.append("skill = :skill")
         params["skill"] = skill
     sql = (
-        f"SELECT {MATRIX_COLUMNS} FROM {evals_schema(cfg, dept)}.eval_matrix WHERE {' AND '.join(where)} "
+        f"SELECT {LEGACY_MATRIX_COLUMNS if legacy else MATRIX_COLUMNS} FROM {evals_schema(cfg, dept)}.eval_matrix "
+        f"WHERE {' AND '.join(where)} "
         f"ORDER BY started_at DESC, run_id LIMIT {_FETCH}"
     )
     return sql, params

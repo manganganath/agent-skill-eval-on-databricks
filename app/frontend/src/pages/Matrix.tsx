@@ -9,6 +9,10 @@ import { Loading } from "../components/Loading";
 import { VerdictChip } from "../components/VerdictChip";
 import { VerdictLegend } from "../components/VerdictLegend";
 import { mlflowRunUrl, traceUrl } from "../links";
+import { KIND_BADGES, KIND_LABELS, KIND_ORDER, kindOf } from "../models";
+
+const ALL = "all";
+const harnessOf = (r: MatrixRow) => r.harness ?? "reference";
 
 const pct = (v: number | null) => (v == null ? "-" : `${Math.round(v * 100)}%`);
 // with_skill rows: the pass rate minus the pass rate without the skill on the same cases, in percentage points.
@@ -41,6 +45,8 @@ export default function Matrix() {
   const matrix = useAsync<Listed<MatrixRow>>(() => api.matrix({ skill, dept }), [skill, dept]);
   const config = useAsync<AppConfig>(() => api.config(), []);
   const [open, setOpen] = useState<{ runId: string; experimentId: string } | null>(null);
+  const [kind, setKind] = useState(ALL);
+  const [harness, setHarness] = useState(ALL);
   const cases = useAsync<Listed<CaseRow>>(
     () => (open ? api.cases(open.runId) : Promise.resolve({ rows: [], deniedDepartments: [], truncated: false })),
     [open?.runId],
@@ -48,7 +54,11 @@ export default function Matrix() {
 
   if (matrix.loading) return <Loading label="Loading results" />;
   if (matrix.error) return <ErrorState error={matrix.error} onRetry={matrix.reload} />;
-  const rows = matrix.data?.rows ?? [];
+  const all = matrix.data?.rows ?? [];
+  const kinds = KIND_ORDER.filter((k) => all.some((r) => kindOf(r.profile_kind) === k));
+  const harnesses = [...new Set(all.map(harnessOf))].sort();
+  const rows = all.filter((r) => (kind === ALL || kindOf(r.profile_kind) === kind) &&
+    (harness === ALL || harnessOf(r) === harness));
   const hidden = matrix.data?.deniedDepartments ?? [];
   const caseRows = cases.data?.rows ?? [];
   const caseHidden = cases.data?.deniedDepartments ?? [];
@@ -72,10 +82,30 @@ export default function Matrix() {
           <p role="note" className="notice">MLflow links are unavailable because the workspace address is not configured.</p>
         )}
       </div>
-      {rows.length === 0 ? (
+      {all.length > 0 && (
+        <div className="dash-filters">
+          <div className="field">
+            <label htmlFor="matrix-kind">Kind</label>
+            <select id="matrix-kind" value={kind} onChange={(e) => setKind(e.target.value)}>
+              <option value={ALL}>All kinds</option>
+              {kinds.map((k) => <option key={k} value={k}>{KIND_LABELS[k]}</option>)}
+            </select>
+          </div>
+          <div className="field">
+            <label htmlFor="matrix-harness">Harness</label>
+            <select id="matrix-harness" value={harness} onChange={(e) => setHarness(e.target.value)}>
+              <option value={ALL}>All harnesses</option>
+              {harnesses.map((h) => <option key={h} value={h}>{h}</option>)}
+            </select>
+          </div>
+        </div>
+      )}
+      {all.length === 0 ? (
         <EmptyState title="No results yet">
           <p>No evaluation has run for this selection. Start one from Run eval.</p>
         </EmptyState>
+      ) : rows.length === 0 ? (
+        <EmptyState title="No rows match the filters" />
       ) : (
         <div className="table-scroll matrix-scroll" role="region" aria-label="Evaluation matrix" tabIndex={0}>
           <table className="matrix">
@@ -102,7 +132,8 @@ export default function Matrix() {
                     <td><span className="cell-main">{r.skill}</span></td>
                     <td className="nowrap">{versionLabel(r.skill_version)}</td>
                     <td>
-                      <span className="cell-main">{r.model_profile}</span>
+                      <span className="cell-main">{r.model_profile}</span>{" "}
+                      <span className="badge">{KIND_BADGES[kindOf(r.profile_kind)]}</span>
                       <span className="cell-sub">
                         <span>{classes[r.model_profile] ?? r.model_class}</span>{r.harness && <> <span>{r.harness}</span></>}
                       </span>

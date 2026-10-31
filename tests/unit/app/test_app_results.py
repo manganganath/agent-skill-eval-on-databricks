@@ -204,6 +204,7 @@ MATRIX_KEYS = {
     "uplift_task_quality",
     "uplift_skill_format",
     "started_at",
+    "profile_kind",
 }
 CASE_KEYS = {
     "run_id",
@@ -297,3 +298,30 @@ def test_matrix_by_fqn_with_an_unknown_schema_is_404(make_client):
     r = c.get("/api/results/matrix", params={"fqn": "skill_hub.dept_nope.earnings-preview"})
     assert r.status_code == 404 and r.json() == {"detail": {"reason": "skill_not_found"}}
     assert sql.calls == []
+
+
+class OldViewSql(FakeUserSql):
+    """A department view from before the model catalog: selecting profile_kind fails."""
+
+    def query(self, statement, params=None):
+        if "profile_kind" in statement:
+            self.calls.append((statement, params or {}))
+            raise SqlError("statement failed")
+        return super().query(statement, params)
+
+
+def test_matrix_reads_a_view_from_before_the_model_catalog_without_profile_kind(make_client):
+    rows = [{"skill": "audit-xls", "model_profile": "gpt", "run_id": RUN}]
+    sql = OldViewSql(rows={"common_evals": rows})
+    c = make_client(user_w=FakeWorkspace(), cfg=make_cfg(), sql=sql)
+    r = c.get("/api/results/matrix", params={"dept": "common"})
+    assert r.status_code == 200 and r.json() == [{**rows[0], "dept": "common"}]
+    assert "profile_kind" not in sql.calls[-1][0]
+
+
+def test_the_legacy_matrix_query_differs_only_by_profile_kind():
+    from backend import queries
+
+    new, _ = queries.matrix_sql(make_cfg(), "common", None)
+    old, _ = queries.matrix_sql(make_cfg(), "common", None, legacy=True)
+    assert _selected(new) - _selected(old) == {"profile_kind"}

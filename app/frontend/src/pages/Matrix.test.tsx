@@ -160,3 +160,44 @@ describe("Matrix verdict legend", () => {
     for (const v of ["Pass", "Warn", "Fail", "Inconclusive", "Advisory"]) expect(within(legend).getByText(v)).toBeTruthy();
   });
 });
+
+describe("Matrix, model kinds", () => {
+  const nova = { ...row, run_id: "r2", model_profile: "nova-lite", profile_kind: "external_model" as const, model_class: "fast" };
+  const codex = { ...row, run_id: "r3", harness: "codex" };
+
+  it("badges each model with its kind; a row without one is a release gate model", async () => {
+    vi.mocked(api.matrix).mockResolvedValue(listed([row, nova]));
+    render(<MemoryRouter><Matrix /></MemoryRouter>);
+    const table = await screen.findByRole("table", { name: /evaluation matrix/i });
+    const [, gate, external] = within(table).getAllByRole("row");
+    expect(within(gate).getByText("Release gate")).toBeTruthy();
+    expect(within(external).getByText("External model")).toBeTruthy();
+  });
+
+  it("filters the rows by kind and by harness", async () => {
+    vi.mocked(api.matrix).mockResolvedValue(listed([row, nova, codex]));
+    render(<MemoryRouter><Matrix /></MemoryRouter>);
+    const table = await screen.findByRole("table", { name: /evaluation matrix/i });
+    expect(within(table).getAllByRole("row")).toHaveLength(4);
+    fireEvent.change(screen.getByLabelText("Kind"), { target: { value: "external_model" } });
+    expect(within(table).getAllByRole("row")).toHaveLength(2);
+    expect(within(table).getByText("nova-lite")).toBeTruthy();
+    fireEvent.change(screen.getByLabelText("Kind"), { target: { value: "all" } });
+    fireEvent.change(screen.getByLabelText("Harness"), { target: { value: "codex" } });
+    expect(within(table).getAllByRole("row")).toHaveLength(2);
+    expect(within(table).getByText("codex")).toBeTruthy();
+    expect(Array.from((screen.getByLabelText("Kind") as HTMLSelectElement).options).map((o) => o.text)).toEqual(
+      ["All kinds", "Release gate", "External models"],
+    );
+  });
+
+  it("says so when the filters leave no row", async () => {
+    vi.mocked(api.matrix).mockResolvedValue(listed([row, nova, codex]));
+    render(<MemoryRouter><Matrix /></MemoryRouter>);
+    await screen.findByRole("table", { name: /evaluation matrix/i });
+    fireEvent.change(screen.getByLabelText("Kind"), { target: { value: "external_model" } });
+    fireEvent.change(screen.getByLabelText("Harness"), { target: { value: "codex" } });
+    expect(screen.queryByRole("table", { name: /evaluation matrix/i })).toBeNull();
+    expect(screen.getByRole("heading", { name: "No rows match the filters" })).toBeTruthy();
+  });
+});

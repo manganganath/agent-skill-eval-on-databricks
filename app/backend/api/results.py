@@ -72,7 +72,13 @@ def matrix(
         dept, skill = skill_ref.parse_fqn(cfg, fqn)  # an unknown schema or name is 404 skill_not_found
     # An unknown dept is rejected by queries._check_dept (UnknownDepartment, 404 department_not_found).
     depts = [dept] if dept else list(cfg.departments)
-    return _read_departments(sql, depts, lambda d: queries.matrix_sql(cfg, d, skill), response)
+    try:
+        return _read_departments(sql, depts, lambda d: queries.matrix_sql(cfg, d, skill), response)
+    except SqlError:  # a view from before the model catalog has no profile_kind: read it as it is
+        log.warning("matrix read failed; reading the views without profile_kind")
+        return _read_departments(
+            sql, depts, lambda d: queries.matrix_sql(cfg, d, skill, legacy=True), response
+        )
 
 
 @router.get("/results/cases")
