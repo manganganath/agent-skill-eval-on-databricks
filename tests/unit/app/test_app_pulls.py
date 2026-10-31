@@ -144,7 +144,7 @@ def test_a_draft_judged_on_its_assertions_gets_no_rubric_from_ci_and_the_body_sa
     r, _, _, _ = upload(make_client, archive_body(files), tree=tree)
     assert submit(make_client, tree, r.json()["run_key"]).status_code == 200
     assert "CI generates" not in gh.bodies[5]
-    assert "judges its trigger cases with assertions on their assertions only" in gh.bodies[5]
+    assert "needs none: the eval gate judges its trigger cases on their assertions" in gh.bodies[5]
 
 
 def test_resubmitting_is_409_with_the_pull_request(make_client, gh):

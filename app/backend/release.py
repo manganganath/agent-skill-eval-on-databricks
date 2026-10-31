@@ -84,8 +84,8 @@ def pull_body(
     if not has_rubric and rubric_optional:
         lines += [
             "",
-            "The draft has no `evals/rubric.json`. The eval gate judges its trigger cases with assertions on their "
-            "assertions only.",
+            "The draft has no `evals/rubric.json`, and needs none: the eval gate judges its trigger cases on their "
+            "assertions.",
         ]
     elif not has_rubric:
         lines += [
