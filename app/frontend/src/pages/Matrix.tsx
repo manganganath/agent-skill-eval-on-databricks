@@ -11,6 +11,12 @@ import { VerdictLegend } from "../components/VerdictLegend";
 import { mlflowRunUrl, traceUrl } from "../links";
 
 const pct = (v: number | null) => (v == null ? "-" : `${Math.round(v * 100)}%`);
+// with_skill rows: the pass rate minus the pass rate without the skill on the same cases, in percentage points.
+const passUplift = (r: MatrixRow) => {
+  if (r.mode !== "with_skill" || r.pass_rate == null || r.pass_rate_without == null) return "-";
+  const pp = Math.round((r.pass_rate - r.pass_rate_without) * 100);
+  return `${pp > 0 ? "+" : ""}${pp} pp`;
+};
 // The eval engine records version 0 when the skill content matches no published version (a repo or PR run).
 const versionLabel = (v: number) => (v > 0 ? `v${v}` : "unpublished");
 
@@ -80,6 +86,7 @@ export default function Matrix() {
                 <th scope="col">Verdict</th>
                 <th scope="col" className="num">Accuracy</th><th scope="col" className="num">Precision</th>
                 <th scope="col" className="num">Recall</th><th scope="col" className="num">Pass rate</th>
+                <th scope="col" className="num">Pass rate (without)</th><th scope="col" className="num">Uplift (pass)</th>
                 <th scope="col" className="num">Spread</th>
                 <th scope="col" className="num">Uplift (task)</th><th scope="col" className="num">Uplift (format)</th>
                 <th scope="col" className="num">Unreviewed</th><th scope="col">Links</th>
@@ -104,6 +111,7 @@ export default function Matrix() {
                     <td className="heat-verdict"><VerdictChip verdict={r.verdict} /></td>
                     <Num>{pct(r.accuracy)}</Num><Num>{pct(r.precision)}</Num><Num>{pct(r.recall)}</Num>
                     <Num>{pct(r.pass_rate)}</Num>
+                    <Num>{pct(r.pass_rate_without)}</Num><Num>{passUplift(r)}</Num>
                     <Num>{r.spread == null ? "-" : r.spread.toFixed(2)}</Num>
                     <Num>{pct(r.uplift_task_quality)}</Num><Num>{pct(r.uplift_skill_format)}</Num>
                     <td className="num">{Math.max(0, r.n_cases - r.n_reviewed)}</td>

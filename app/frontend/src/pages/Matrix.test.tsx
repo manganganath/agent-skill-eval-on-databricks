@@ -49,6 +49,21 @@ describe("Matrix", () => {
     expect(vi.mocked(api.matrix)).toHaveBeenCalledWith({ skill: "audit-xls", dept: "common" });
   });
 
+  it("shows a with_skill row's pass rate without the skill and the uplift in percentage points", async () => {
+    const effect = { ...row, accuracy: null, precision: null, recall: null };
+    vi.mocked(api.matrix).mockResolvedValue(listed([
+      { ...effect, mode: "with_skill" as const, pass_rate: 0.75, pass_rate_without: 0.25 },
+      { ...effect, run_id: "r2", mode: "without_skill" as const, pass_rate: 0.25 },
+    ]));
+    render(<MemoryRouter><Matrix /></MemoryRouter>);
+    const table = await screen.findByRole("table", { name: /evaluation matrix/i });
+    const head = within(table).getAllByRole("columnheader").map((h) => h.textContent);
+    expect(head.slice(8, 11)).toEqual(["Pass rate", "Pass rate (without)", "Uplift (pass)"]);
+    const [, withRow, withoutRow] = within(table).getAllByRole("row");
+    expect(within(withRow).getAllByRole("cell").slice(8, 11).map((c) => c.textContent)).toEqual(["75%", "25%", "+50 pp"]);
+    expect(within(withoutRow).getAllByRole("cell").slice(8, 11).map((c) => c.textContent)).toEqual(["25%", "-", "-"]);
+  });
+
   it("scrolls the wide tables inside their own region, not the whole page", async () => {
     vi.mocked(api.cases).mockResolvedValue(listed([{
       run_id: "r1", trace_id: "tr1", assessment_name: "triggered", case_id: 7, repeat: 0, mode: "trigger",
