@@ -23,9 +23,10 @@ class LintRefused(SkillHubError):
 class LintIssue:
     path: str
     message: str
+    warning: bool = False  # reported by lint_repo, but never fails lint (lint_warnings)
 
     def __str__(self) -> str:
-        return f"{self.path}: {self.message}"
+        return f"{self.path}: {'warning: ' if self.warning else ''}{self.message}"
 
 
 def lint_bundle(b: SkillBundle) -> list[LintIssue]:
@@ -77,6 +78,28 @@ def lint_bundle(b: SkillBundle) -> list[LintIssue]:
             if len(set(ids)) != len(ids):
                 bad("rubric criterion ids must be unique")
     return out
+
+
+def lint_warnings(b: SkillBundle) -> list[LintIssue]:
+    """What lint reports without failing: a case that should not trigger the skill has no answer to judge, so
+    its assertions are ignored. Only a trigger case that should fire is judged on its assertions."""
+    evals = b.root / "evals" / "evals.json"
+    if not evals.is_file():
+        return []
+    try:
+        ef = load_evals(evals)
+    except ValueError:
+        return []  # already reported by lint_bundle
+    return [
+        LintIssue(
+            b.root.as_posix(),
+            f"evals/evals.json: case {c.id}: its assertions are ignored: a case with should_trigger "
+            "false has no answer to judge",
+            warning=True,
+        )
+        for c in ef.evals
+        if c.kind == "trigger" and not c.should_trigger and c.assertions
+    ]
 
 
 def assert_clean(b: SkillBundle) -> None:
@@ -163,7 +186,8 @@ def lint_repo(
     """Lint every bundle under skills_root, or only the bundles that contain the given paths.
 
     With `departments` (hub.yaml keys), a department folder that is not a key is an issue. With `defaults`
-    (hub.yaml `defaults`), a per-skill threshold that would loosen the gate is an issue.
+    (hub.yaml `defaults`), a per-skill threshold that would loosen the gate is an issue. Issues with `warning`
+    set (lint_warnings) are reported but do not fail lint.
     """
     skills_root = skills_root or default_skills_root()
     issues: list[LintIssue] = []
@@ -219,4 +243,5 @@ def lint_repo(
         issues += _near_miss_issues(b, known)
         if defaults is not None:
             issues += _threshold_issues(b, defaults)
+        issues += lint_warnings(b)
     return issues

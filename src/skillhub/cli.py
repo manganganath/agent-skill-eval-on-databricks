@@ -132,7 +132,7 @@ def label(
 
 @app.command("lint")
 def lint_cmd(ctx: typer.Context, paths: list[str] = typer.Argument(None)) -> None:
-    """Lint skill bundles (no Databricks needed). Exit 1 on any issue.
+    """Lint skill bundles (no Databricks needed). Exit 1 on any issue; warnings are printed and do not fail.
 
     Department folders and per-skill thresholds are checked against hub.yaml when it is found. Its ${VARS}
     are not expanded, so no workspace settings are needed.
@@ -162,8 +162,10 @@ def lint_cmd(ctx: typer.Context, paths: list[str] = typer.Argument(None)) -> Non
     )
     for issue in issues:
         typer.echo(str(issue))
-    typer.echo(f"{len(issues)} issue(s)")
-    raise typer.Exit(1 if issues else 0)
+    errors = [i for i in issues if not i.warning]
+    warnings = len(issues) - len(errors)
+    typer.echo(f"{len(errors)} issue(s)" + (f", {warnings} warning(s)" if warnings else ""))
+    raise typer.Exit(1 if errors else 0)
 
 
 @app.command("import")

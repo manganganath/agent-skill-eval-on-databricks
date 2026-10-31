@@ -265,6 +265,42 @@ def test_case_ids_stay_in_their_ranges(make_bundle, tmp_path):
     ]
 
 
+def test_assertion_cases_need_none_of_the_effectiveness_case_rules(make_bundle, tmp_path):
+    """One assertion and no fixtures, on a trigger id: lint accepts it."""
+    case = {
+        "id": 3,
+        "prompt": "Guten Tag!",
+        "should_trigger": True,
+        "assertions": ["The answer is in German"],
+    }
+    _evals(make_bundle("common", "speak-german"), [case])
+    assert lint_repo(tmp_path / "skills") == []
+
+
+def test_assertions_on_a_case_that_should_not_trigger_are_a_warning(make_bundle, tmp_path, monkeypatch):
+    from skillhub.cli import app
+
+    cases = [
+        {"id": 1, "prompt": "p", "should_trigger": True, "assertions": ["a"]},
+        {"id": 2, "prompt": "q", "should_trigger": False, "assertions": ["b"]},
+        {"id": 3, "prompt": "r", "should_trigger": False, "assertions": []},
+    ]
+    b = make_bundle("common", "speak-german")
+    _evals(b, cases)
+    [issue] = lint_repo(tmp_path / "skills")
+    assert issue.warning
+    assert issue.message == (
+        "evals/evals.json: case 2: its assertions are ignored: a case with should_trigger false has no answer to judge"
+    )
+    assert assert_clean(b) is None  # a warning never refuses a publish
+    monkeypatch.setenv("SKILLHUB_SKILLS", str(tmp_path / "skills"))
+    monkeypatch.chdir(tmp_path)
+    r = CliRunner().invoke(app, ["lint"])
+    assert r.exit_code == 0, r.output
+    assert "speak-german: warning: evals/evals.json: case 2: its assertions are ignored" in r.output
+    assert "0 issue(s), 1 warning(s)" in r.output
+
+
 def test_department_folder_must_be_a_config_key(make_bundle, tmp_path):
     make_bundle("common", "fine")
     make_bundle("rogue_dept", "sneaky")
