@@ -47,6 +47,10 @@ scan:
   allowed_domains: [sec.gov, apache.org, w3.org, openxmlformats.org]   # hosts a skill may name in a URL; subdomains match
   llm: {enabled: true, model: claude-opus}  # the LLM reviewer in the PR gate; its findings are at most high
 
+# How long the results tables keep their write history (docs/retention.md). The rows themselves are append-only.
+retention:
+  history_days: 2555                # 7 years; bootstrap sets delta.logRetentionDuration on each results table
+
 # External model providers. Reviewers register the models themselves on the Skill Hub's Models page.
 external:
   bedrock:

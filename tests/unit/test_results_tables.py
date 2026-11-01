@@ -145,7 +145,8 @@ class DescribeSql(FakeSql):
 
 
 def alters(sql: FakeSql) -> list[str]:
-    return [s for s in stmts(sql) if s.lstrip().upper().startswith("ALTER")]
+    """The column additions: the history retention's property changes are tested on their own."""
+    return [s for s in stmts(sql) if s.lstrip().upper().startswith("ALTER") and "ADD COLUMNS" in s]
 
 
 ADDED = ["harness", "run_author", "profile_kind", "route", "model_id", "region", "catalog_version"]
@@ -228,3 +229,53 @@ def test_versions_all_unions_every_department_journal():
     for dept in cfg.departments:
         assert f"FROM {evals_schema(cfg, dept)}.skill_versions" in view
     assert "`action`" in view and "`ts`" in view and "`dept`" in view
+
+
+def _with_history(days):
+    cfg = make_cfg()
+    cfg.retention.history_days = days
+    return cfg
+
+
+def test_without_a_history_setting_no_table_property_is_changed():
+    cfg, sql = _with_history(None), FakeSql()
+    tables.ensure_tables(cfg, sql)
+    assert not [s for s in stmts(sql) if "logRetentionDuration" in s]
+
+
+def test_the_history_setting_is_set_on_every_results_table_of_every_department():
+    cfg, sql = _with_history(2555), FakeSql()
+    tables.ensure_tables(cfg, sql)
+    alters = [s for s in stmts(sql) if s.startswith("ALTER TABLE") and "logRetentionDuration" in s]
+    assert len(alters) == 4 * len(cfg.departments)
+    assert f"ALTER TABLE {evals_schema(cfg, 'common')}.skill_versions SET TBLPROPERTIES " in alters[0]
+    assert all(s.endswith("('delta.logRetentionDuration' = 'interval 2555 days')") for s in alters)
+
+
+class _HistorySet(FakeSql):
+    def execute(self, statement, params=None):
+        if statement.startswith("SHOW TBLPROPERTIES"):
+            self.calls.append((statement, dict(params or {})))
+            return [{"key": "delta.logRetentionDuration", "value": "interval 2555 days"}]
+        return super().execute(statement, params)
+
+
+def test_a_table_that_already_keeps_its_history_is_left_alone():
+    sql = _HistorySet()
+    tables.ensure_tables(_with_history(2555), sql)
+    assert not [s for s in stmts(sql) if s.startswith("ALTER TABLE") and "logRetentionDuration" in s]
+
+
+def test_a_refused_change_names_the_table_and_the_statement_its_owner_can_run():
+    from skillhub.sql import SqlError
+
+    class Refusing(FakeSql):
+        def execute(self, statement, params=None):
+            if "logRetentionDuration' =" in statement:
+                raise SqlError("PERMISSION_DENIED: not the owner")
+            return super().execute(statement, params)
+
+    with pytest.raises(
+        SqlError, match=r"cannot keep the write history of .*\.skill_versions .*Its owner can run: ALTER"
+    ):
+        tables.ensure_tables(_with_history(400), Refusing())

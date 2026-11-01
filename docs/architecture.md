@@ -243,7 +243,7 @@ MLflow is the source of truth. Delta is synced from it.
 - **Model kind.** `eval_runs.profile_kind` is `hub_yaml` for a `config/hub.yaml` profile, and `ug_model`, `external_model` or `external_agent` for an entry of the model catalog (see [Model catalog](operations.md#model-catalog)). Rows from before the column read as `hub_yaml`. The gates, the pull request comment and the alerts read only `hub_yaml` rows on harness `reference`.
 - `eval_matrix` shows the latest run per skill, version, model profile and mode. It carries the verdict, `n_reviewed` and `n_cases`, and the experiment ID so the UI can link to MLflow. The cross-department matrix shows `dept`.
 - The SQL alerts and the Genie space read these tables. The Skill Hub Dashboard tab reads each department's `eval_matrix`, `eval_runs` and `eval_cases` with the signed-in user's permissions, and reads token usage from `system.serving`.
-- Retention: product code never deletes rows. Delta time travel is not an audit trail.
+- Retention: the results tables are append-only, and product code never deletes rows. Delta time travel is not an audit trail. See [Retention and audit](retention.md) for what is kept where, and what to add for a multi-year retention period.
 - OpenTelemetry: traces are stored as OTel-shaped Delta tables in the customer's Unity Catalog account. The Unity Gateway unified trace table (Beta, enabled per workspace) can record skill usage across the workspace when it is available.
 
 ## Beta features and limitations
