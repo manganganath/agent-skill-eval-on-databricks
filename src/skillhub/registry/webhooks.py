@@ -102,10 +102,11 @@ def deliver(
     row: JournalRow,
     *,
     get_secret: SecretGetter | None = None,
-    post: Callable[..., Any] = httpx.post,
+    post: Callable[..., Any] | None = None,
     sleep: Callable[[float], None] = time.sleep,
 ) -> list[str]:
     """Send the row's event to each webhook that subscribes to its action. One warning per webhook not delivered."""
+    post = post or httpx.post
     hooks = [h for h in cfg.notifications.webhooks if row.action in RELEASE_EVENTS and row.action in h.events]
     if not hooks:
         return []
