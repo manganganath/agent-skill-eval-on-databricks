@@ -11,13 +11,15 @@ SELF = "tests/unit/test_no_internal_refs.py"
 RULING = "R" + "2-" + r"\d+"
 SPEC = "sp" + "ec" + r"\s+(?:§|section\s)\s*\d"
 CONTRACTS = "contr" + "acts" + r"\s+(?:§|section\s)\s*\d"
+# A ruling or decision cited by its number.
+DECISION = r"\b(?:rul" + "ing|deci" + "sion)" + r"\s+\d+\b"
 TRACK = r"\bT" + "[1-6]" + r"\b"
 MILESTONE = r"\bM" + "[12]" + r"\b"
 # A review finding or decision cited by its ID: a letter and a number in parentheses, or at the start of a docstring.
 FINDING = r"\((?:re-review )?[CDMN]" + r"[0-9]{1,2}(?: open question)?\)"
 FINDING_PREFIX = '"""[CDMN]' + "[0-9]{1,2}:"
 
-CASE_INSENSITIVE = re.compile("|".join([RULING, SPEC, CONTRACTS]), re.IGNORECASE)
+CASE_INSENSITIVE = re.compile("|".join([RULING, SPEC, CONTRACTS, DECISION]), re.IGNORECASE)
 CASE_SENSITIVE = re.compile("|".join([TRACK, MILESTONE, FINDING, FINDING_PREFIX]))
 
 PATHS = [

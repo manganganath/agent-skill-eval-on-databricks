@@ -994,6 +994,15 @@ def test_an_agent_run_with_an_errored_case_does_not_wait_for_its_missing_trace(m
     assert "late cases" not in caplog.text and "re-run sync" not in caplog.text
 
 
+def test_an_agent_run_whose_list_cannot_be_read_does_not_cap_the_expected_count(monkeypatch):
+    def unreadable(uri):
+        raise OSError("transient read failure")
+
+    monkeypatch.setattr(sync_mod.mlflow.artifacts, "load_dict", unreadable)
+    with pytest.raises(sync_mod.SyncIncomplete, match="0 of 2 cells"):
+        sync_mod.wait_for_traces(agent_run(n_cases=2), timeout_s=0, evals="skill_hub.common_evals")
+
+
 def test_an_agent_child_that_failed_before_its_cases_ran_syncs_with_no_cases(monkeypatch):
     def missing(uri):
         raise OSError("no such artifact")

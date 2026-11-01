@@ -38,7 +38,7 @@ The agent:
 
    Create `skillhub-agents` once as an **account** group and assign it to the workspace (account console, or the account-level groups API). Do not use `databricks groups create`: it makes a workspace-local group, and Unity Catalog cannot grant to those, so the grants would fail with `PRINCIPAL_DOES_NOT_EXIST`.
 
-   Then give the group its grants. The `skillhub-bootstrap` Job runs as `skillhub-ci` and grants the group its schema and table access. The group's `USE CATALOG` needs a person's `skillhub bootstrap` run by the catalog owner.
+   Then give the group its grants. The `skillhub-bootstrap` Job runs as `skillhub-ci` and grants the group its schema and table access. The agent's principal gets `USE CATALOG` through its department reader group, which it must join (see above).
 2. **The eval key may invoke the runtime.** The IAM user whose key is in the `skillhub-aws` secret scope needs `bedrock-agentcore:InvokeAgentRuntime` on `arn:aws:bedrock-agentcore:<region>:<account-id>:runtime/skillhub*`. The runtime name must therefore start with `skillhub`.
 3. **Network.** The serverless eval Job must reach `bedrock-agentcore.<region>.amazonaws.com`, and the runtime must reach the workspace.
 

@@ -312,16 +312,17 @@ def _read_listed(entry: dict) -> Any:
     return t
 
 
-def _listed_entries(run, evals: str | None) -> list:
+def _listed_entries(run, evals: str | None) -> list | None:
     """The entries of the child run's `agent_traces.json` that are in the department's own trace location
-    (`evals`) and of the run's mode. A run without the list (a child that failed before its cases ran) has none."""
+    (`evals`) and of the run's mode. A run without the list (a child that failed before its cases ran) has none.
+    None means the list could not be read, which is not the same as an empty list."""
     if evals is None:
         return []
     try:
         listed = mlflow.artifacts.load_dict(f"runs:/{run.info.run_id}/{AGENT_TRACES}").get("traces") or []
     except Exception as exc:
         log.info("run %s lists no agent traces: %s", run.info.run_id, type(exc).__name__)
-        return []
+        return None
     prefix, mode = f"trace:/{evals}.traces/", _param(run, "mode")
     entries = [e for e in listed if _listed(e, prefix, mode)]
     if len(entries) < len(listed):
@@ -336,7 +337,7 @@ def _listed_entries(run, evals: str | None) -> list:
 def agent_traces(run, evals: str | None) -> list:
     """An external agent's traces, from the child run's `agent_traces.json`, with the case's tags set on each as the
     runner's own traces carry them."""
-    entries = _listed_entries(run, evals)
+    entries = _listed_entries(run, evals) or []
     with ThreadPoolExecutor(max_workers=AGENT_READ_WORKERS, thread_name_prefix="agent-trace") as pool:
         got = list(pool.map(_read_listed, entries))
     return [t for t in got if t is not None]
@@ -409,14 +410,17 @@ def wait_for_traces(
     """Poll until every expected (case_id, repeat) cell has a ready trace.
 
     Rows land about 20 s after the run. Traces can arrive before their assessments, and a run row
-    marks the run complete, so both conditions are required (ruling 17). On timeout this raises
+    marks the run complete, so both conditions are required. On timeout this raises
     SyncIncomplete, unless allow_partial: then it logs a WARNING naming the missing cells and
     returns the tagged traces that are available.
     """
     expected = _expected_cells(run)
     if (_tag(run, "harness") or DEFAULT_HARNESS) != DEFAULT_HARNESS:
         # An errored case has no trace, so the list the run wrote (before its verdict) is the final count.
-        expected = min(expected, len(_listed_entries(run, evals)))
+        # A list that cannot be read must not cap the count: one failed read would otherwise expect 0 cases.
+        listed = _listed_entries(run, evals)
+        if listed is not None:
+            expected = min(expected, len(listed))
     start = time.monotonic()
     progress, changed_at = None, start
     while True:
