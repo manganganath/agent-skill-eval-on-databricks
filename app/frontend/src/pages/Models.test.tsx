@@ -26,6 +26,15 @@ const row = (over: Partial<CatalogModel>): CatalogModel => ({
 const GPT = row({ name: "gpt", kind: "hub_yaml", endpoint: "databricks-gpt-5-5", model_class: "frontier", enabled: true, release_gate: true });
 const LLAMA = row({ name: "llama", endpoint: "databricks-llama-4-maverick" });
 const NOVA = row({ name: "nova-lite", kind: "external_model", route: "bedrock", model_id: "amazon.nova-lite-v1:0", region: "us-east-1" });
+const ARN = "arn:aws:bedrock-agentcore:us-east-1:123456789012:runtime/skillhub_skill_agent-AbCd123456";
+const CC = row({
+  name: "cc-sonnet", kind: "external_agent", route: "ug-anthropic", endpoint: "databricks-claude-sonnet-5-5",
+  harness: "claude-code", agent: { cli_version: "2.1.314" }, model_class: "frontier",
+});
+const AGENTCORE = row({
+  name: "skill-agent", kind: "external_agent", route: "bedrock", model_id: "us.anthropic.claude-sonnet-5-5",
+  region: "us-east-1", harness: "agentcore", agent: { runtime_arn: ARN }, model_class: "frontier",
+});
 const list = (models: CatalogModel[], catalog_available = true): ModelsList =>
   ({ models, catalog_available, bedrock_region: "us-east-1" });
 
@@ -149,7 +158,7 @@ describe("Models", () => {
     }
   });
 
-  it("stops counting a test as running after five minutes and lets it start again", async () => {
+  it("stops counting a test as running after ten minutes and lets it start again", async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     try {
       vi.mocked(api.modelTest).mockResolvedValue({ state: "running", message: null, tested_at: null });
@@ -157,7 +166,7 @@ describe("Models", () => {
       const button = await screen.findByRole("button", { name: "Test nova-lite" });
       fireEvent.click(button);
       expect(await screen.findByText("Testing…")).toBeTruthy();
-      await act(async () => { await vi.advanceTimersByTimeAsync(5000 * 61); });
+      await act(async () => { await vi.advanceTimersByTimeAsync(5000 * 121); });
       expect(await screen.findByText("Still running. Start the test again later.")).toBeTruthy();
       expect(screen.queryByText(/Reload the page/)).toBeNull();
       expect(screen.getByRole("button", { name: "Test nova-lite" }).hasAttribute("disabled")).toBe(false);
@@ -203,5 +212,62 @@ describe("Models", () => {
     open();
     expect(await screen.findByText(/model catalog cannot be read/i)).toBeTruthy();
     expect(screen.queryByRole("table", { name: "External models" })).toBeNull();
+  });
+
+  it("lists the external agents in their own group, with their harness and settings", async () => {
+    vi.mocked(api.models).mockResolvedValue(list([GPT, CC, AGENTCORE]));
+    open();
+    const agents = await screen.findByRole("table", { name: "External agents" });
+    expect(within(agents).getByText("databricks-claude-sonnet-5-5 · CLI 2.1.314")).toBeTruthy();
+    expect(within(agents).getByText("us.anthropic.claude-sonnet-5-5 (us-east-1) · skillhub_skill_agent-AbCd123456")).toBeTruthy();
+    expect(within(agents).getByText("Claude Code")).toBeTruthy();
+    expect(within(agents).getByText("Amazon Bedrock AgentCore")).toBeTruthy();
+    expect(within(agents).getAllByText(/runs one case on the agent and waits for its trace/)).toHaveLength(2);
+  });
+
+  it("adds Claude Code with its pinned version and the serving endpoint it drives", async () => {
+    vi.mocked(api.servingEndpoints).mockResolvedValue([{ name: "databricks-claude-sonnet-5-5", task: "llm/v1/chat" }]);
+    open();
+    fireEvent.click(await screen.findByRole("button", { name: /add a model/i }));
+    fireEvent.click(screen.getByRole("radio", { name: /external agent/i }));
+    expect((screen.getByLabelText("Harness") as HTMLSelectElement).value).toBe("claude-code");
+    fireEvent.change(screen.getByLabelText("Name"), { target: { value: "cc-sonnet" } });
+    fireEvent.change(await screen.findByLabelText("Serving endpoint"), { target: { value: "databricks-claude-sonnet-5-5" } });
+    expect((screen.getByLabelText("Claude Code version") as HTMLInputElement).value).toBe("2.1.314");
+    fireEvent.click(screen.getByRole("button", { name: "Add model" }));
+    await waitFor(() => expect(api.addModel).toHaveBeenCalledWith({
+      name: "cc-sonnet", kind: "external_agent", harness: "claude-code", endpoint: "databricks-claude-sonnet-5-5",
+      agent: { cli_version: "2.1.314" }, model_class: "frontier", price_in: null, price_out: null,
+    }));
+  });
+
+  it("adds an AgentCore agent, which runs in its runtime's region unless one is given", async () => {
+    open();
+    fireEvent.click(await screen.findByRole("button", { name: /add a model/i }));
+    fireEvent.click(screen.getByRole("radio", { name: /external agent/i }));
+    fireEvent.change(screen.getByLabelText("Harness"), { target: { value: "agentcore" } });
+    fireEvent.change(screen.getByLabelText("Name"), { target: { value: "skill-agent" } });
+    fireEvent.change(screen.getByLabelText("Agent runtime ARN"), { target: { value: ` ${ARN} ` } });
+    fireEvent.change(screen.getByLabelText("Bedrock model ID"), { target: { value: "us.anthropic.claude-sonnet-5-5" } });
+    expect((screen.getByLabelText("Region") as HTMLInputElement).value).toBe("");
+    fireEvent.click(screen.getByRole("button", { name: "Add model" }));
+    await waitFor(() => expect(api.addModel).toHaveBeenCalledWith({
+      name: "skill-agent", kind: "external_agent", harness: "agentcore", model_id: "us.anthropic.claude-sonnet-5-5",
+      agent: { runtime_arn: ARN }, model_class: "frontier", price_in: null, price_out: null,
+    }));
+  });
+
+  it("changes an agent's pinned version, which the API answers by disabling it until a new test", async () => {
+    vi.mocked(api.models).mockResolvedValue(list([GPT, CC]));
+    vi.mocked(api.servingEndpoints).mockResolvedValue([{ name: "databricks-claude-sonnet-5-5", task: "llm/v1/chat" }]);
+    open();
+    fireEvent.click(await screen.findByRole("button", { name: "Edit cc-sonnet" }));
+    expect(screen.queryByLabelText("Harness")).toBeNull(); // fixed once added
+    fireEvent.change(screen.getByLabelText("Claude Code version"), { target: { value: "2.1.400" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
+    await waitFor(() => expect(api.updateModel).toHaveBeenCalledWith("cc-sonnet", {
+      endpoint: "databricks-claude-sonnet-5-5", agent: { cli_version: "2.1.400" }, model_class: "frontier",
+      price_in: null, price_out: null,
+    }));
   });
 });

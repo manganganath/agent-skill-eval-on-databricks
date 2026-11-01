@@ -20,6 +20,17 @@ export function groupByKind<T extends { kind: ProfileKind }>(rows: T[]): [Profil
     .filter(([, members]) => members.length > 0);
 }
 
-// What a model points at: its serving endpoint, or its Bedrock model and region.
-export const targetOf = (m: Pick<CatalogModel, "endpoint" | "model_id" | "region">) =>
-  m.model_id ? `${m.model_id} (${m.region ?? "no region"})` : m.endpoint ?? "-";
+// The external agents a reviewer can register, by harness.
+export const HARNESS_LABELS: Record<string, string> = {
+  "claude-code": "Claude Code", agentcore: "Amazon Bedrock AgentCore", reference: "reference",
+};
+
+// What a model points at: its serving endpoint, or its Bedrock model and region. An external agent also shows its
+// pinned CLI version or its runtime.
+export function targetOf(m: Pick<CatalogModel, "endpoint" | "model_id" | "region"> & Partial<Pick<CatalogModel, "kind" | "agent">>) {
+  const model = m.model_id ? `${m.model_id} (${m.region ?? "no region"})` : m.endpoint ?? "-";
+  if (m.kind !== "external_agent") return model;
+  const version = m.agent?.cli_version;
+  const runtime = m.agent?.runtime_arn?.split("/").pop();
+  return `${model} · ${version ? `CLI ${version}` : runtime ?? "no settings"}`;
+}

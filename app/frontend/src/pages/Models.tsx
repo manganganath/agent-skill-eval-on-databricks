@@ -1,32 +1,47 @@
 import { useEffect, useRef, useState, type ChangeEvent, type FormEvent } from "react";
 import { Link } from "react-router-dom";
 import { ApiError, api } from "../api/client";
-import type { CatalogModel, Me, ModelsList, ProbeStatus, ServingEndpoint } from "../api/types";
+import type { AgentHarness, CatalogModel, Me, ModelIn, ModelsList, ProbeStatus, ServingEndpoint } from "../api/types";
 import { useAsync } from "../hooks/useAsync";
 import { ErrorState } from "../components/ErrorState";
 import { Loading } from "../components/Loading";
-import { KIND_LABELS, groupByKind, targetOf } from "../models";
+import { HARNESS_LABELS, KIND_LABELS, groupByKind, targetOf } from "../models";
 
 const POLL_MS = 5000;
-const MAX_POLLS = 60; // five minutes: a serverless Job takes about a minute to start
+// Ten minutes: a serverless Job takes about a minute to start, and an agent's test also installs the agent and waits
+// up to two minutes for its trace.
+const MAX_POLLS = 120;
 const STILL_RUNNING = "Still running. Start the test again later.";
+const CLI_VERSION = "2.1.314"; // the Claude Code version this release was checked with
 
-type Kind = "ug_model" | "external_model";
+type Kind = "ug_model" | "external_model" | "external_agent";
 type Draft = {
   name: string; kind: Kind; endpoint: string; model_id: string; region: string; model_class: "frontier" | "fast";
-  price_in: string; price_out: string;
+  price_in: string; price_out: string; harness: AgentHarness; cli_version: string; runtime_arn: string;
 };
 // "stale": the five minutes of polling are over. The result is recorded only by polling, so the test must be started again.
 type Test = ProbeStatus | "starting" | "stale";
 
 const blank = (region: string): Draft => ({
   name: "", kind: "ug_model", endpoint: "", model_id: "", region, model_class: "frontier", price_in: "", price_out: "",
+  harness: "claude-code", cli_version: CLI_VERSION, runtime_arn: "",
 });
 const fromModel = (m: CatalogModel): Draft => ({
-  name: m.name, kind: m.kind === "external_model" ? "external_model" : "ug_model", endpoint: m.endpoint ?? "",
+  name: m.name, kind: m.kind === "hub_yaml" ? "ug_model" : m.kind, endpoint: m.endpoint ?? "",
   model_id: m.model_id ?? "", region: m.region ?? "", model_class: m.model_class,
   price_in: m.price_in == null ? "" : String(m.price_in), price_out: m.price_out == null ? "" : String(m.price_out),
+  harness: m.harness === "agentcore" ? "agentcore" : "claude-code", cli_version: m.agent?.cli_version ?? "",
+  runtime_arn: m.agent?.runtime_arn ?? "",
 });
+// The fields of a draft that say where it runs, as the API takes them.
+function targetFields(d: Draft): Pick<ModelIn, "endpoint" | "model_id" | "region" | "agent"> {
+  if (d.kind === "ug_model") return { endpoint: d.endpoint };
+  if (d.kind === "external_model") return { model_id: d.model_id.trim(), region: d.region.trim() };
+  if (d.harness === "claude-code") return { endpoint: d.endpoint, agent: { cli_version: d.cli_version.trim() } };
+  const region = d.region.trim(); // empty: the region of the runtime
+  return { model_id: d.model_id.trim(), agent: { runtime_arn: d.runtime_arn.trim() }, ...(region ? { region } : {}) };
+}
+const usesEndpoints = (d: Draft) => d.kind === "ug_model" || (d.kind === "external_agent" && d.harness === "claude-code");
 const price = (v: string): number | null => (v.trim() === "" ? null : Number(v));
 
 function LastTest({ model, test }: { model: CatalogModel; test?: Test }) {
@@ -64,12 +79,15 @@ function ModelTable({ title, rows, reviewer, tests, onTest, onToggle, onEdit }: 
               return (
                 <tr key={m.name}>
                   <th scope="row">{m.name}</th>
-                  <td>{m.route ?? "-"}</td><td>{targetOf(m)}</td><td>{m.model_class}</td><td>{m.harness}</td>
+                  <td>{m.route ?? "-"}</td><td>{targetOf(m)}</td><td>{m.model_class}</td><td>{HARNESS_LABELS[m.harness] ?? m.harness}</td>
                   <td>{m.release_gate ? "Release gate" : m.enabled ? "Enabled" : "Disabled"}</td>
                   <td>
                     {m.release_gate ? "-" : <LastTest model={m} test={tests[m.name]} />}
                     {m.kind === "ug_model" && !passed && (
                       <span className="cell-sub">Test it: the test checks that the eval service principal can query this endpoint.</span>
+                    )}
+                    {m.kind === "external_agent" && !passed && (
+                      <span className="cell-sub">Test it: the test runs one case on the agent and waits for its trace.</span>
                     )}
                   </td>
                   {reviewer && (
@@ -106,7 +124,7 @@ function ModelForm({ editing, region, onSaved, onCancel }: {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<unknown>(null);
   const loaded = useAsync<ServingEndpoint[]>(
-    () => (draft.kind === "ug_model" ? api.servingEndpoints() : Promise.resolve([])), [draft.kind],
+    () => (usesEndpoints(draft) ? api.servingEndpoints() : Promise.resolve([])), [draft.kind, draft.harness],
   );
   // The row's current endpoint stays an option when the list lacks it, so the form can still be saved.
   const endpoints = {
@@ -121,13 +139,12 @@ function ModelForm({ editing, region, onSaved, onCancel }: {
     e.preventDefault();
     setSaving(true);
     setError(null);
-    const target = draft.kind === "ug_model"
-      ? { endpoint: draft.endpoint }
-      : { model_id: draft.model_id.trim(), region: draft.region.trim() };
+    const target = targetFields(draft);
     const rest = { model_class: draft.model_class, price_in: price(draft.price_in), price_out: price(draft.price_out) };
+    const harness = draft.kind === "external_agent" ? { harness: draft.harness } : {};
     try {
       if (editing) await api.updateModel(editing.name, { ...target, ...rest });
-      else await api.addModel({ name: draft.name.trim(), kind: draft.kind, ...target, ...rest });
+      else await api.addModel({ name: draft.name.trim(), kind: draft.kind, ...harness, ...target, ...rest });
       onSaved();
     } catch (err) {
       setError(err);
@@ -140,7 +157,13 @@ function ModelForm({ editing, region, onSaved, onCancel }: {
   return (
     <form className="panel" aria-labelledby="model-form" onSubmit={save}>
       <h2 id="model-form">{editing ? `Edit ${editing.name}` : "Add a model"}</h2>
-      <p className="notice">A model outside Databricks receives the skill text and the test cases of every evaluation that runs on it.</p>
+      <p className="notice">A model or agent outside Databricks receives the skill text and the test cases of every evaluation that runs on it.</p>
+      {draft.kind === "external_agent" && (
+        <p className="hint">
+          An external agent runs each case itself, loads the live skills from the skills MCP, and sends its trace to
+          the department's trace table. It evaluates live skills only.
+        </p>
+      )}
       {editing && <p className="hint">Changing where it points disables it until it passes a new test.</p>}
       {!editing && (
         <fieldset className="form-group">
@@ -150,7 +173,20 @@ function ModelForm({ editing, region, onSaved, onCancel }: {
           <label className="field-inline"><input type="radio" name="kind" value="external_model"
             checked={draft.kind === "external_model"} onChange={() => setDraft({ ...draft, kind: "external_model" })} />
             {" "}External model (Amazon Bedrock)</label>
+          <label className="field-inline"><input type="radio" name="kind" value="external_agent"
+            checked={draft.kind === "external_agent"} onChange={() => setDraft({ ...draft, kind: "external_agent", region: "" })} />
+            {" "}External agent</label>
         </fieldset>
+      )}
+      {!editing && draft.kind === "external_agent" && (
+        <div className="field">
+          <label htmlFor="model-harness">Harness</label>
+          <select id="model-harness" value={draft.harness}
+            onChange={(e) => setDraft({ ...draft, harness: e.target.value as AgentHarness })}>
+            <option value="claude-code">{HARNESS_LABELS["claude-code"]}</option>
+            <option value="agentcore">{HARNESS_LABELS.agentcore}</option>
+          </select>
+        </div>
       )}
       {!editing && (
         <div className="field">
@@ -159,7 +195,7 @@ function ModelForm({ editing, region, onSaved, onCancel }: {
           <span className="hint">Lowercase letters, digits and hyphens. It names the model in results.</span>
         </div>
       )}
-      {draft.kind === "ug_model" ? (
+      {usesEndpoints(draft) ? (
         <div className="field">
           <label htmlFor="model-endpoint">Serving endpoint</label>
           {endpoints.loading ? <Loading label="Loading serving endpoints" />
@@ -170,9 +206,19 @@ function ModelForm({ editing, region, onSaved, onCancel }: {
                 {(endpoints.data ?? []).map((ep) => <option key={ep.name} value={ep.name}>{ep.name}</option>)}
               </select>
             )}
+          {draft.kind === "external_agent" && (
+            <span className="hint">The Claude model that Claude Code drives, on the Unity Gateway Anthropic route.</span>
+          )}
         </div>
       ) : (
         <>
+          {draft.kind === "external_agent" && (
+            <div className="field">
+              <label htmlFor="model-runtime">Agent runtime ARN</label>
+              <input id="model-runtime" value={draft.runtime_arn} onChange={set("runtime_arn")} required />
+              <span className="hint">arn:aws:bedrock-agentcore:&lt;region&gt;:&lt;account&gt;:runtime/&lt;runtime id&gt;</span>
+            </div>
+          )}
           <div className="field">
             <label htmlFor="model-id">Bedrock model ID</label>
             <input id="model-id" value={draft.model_id} onChange={set("model_id")} required />
@@ -180,9 +226,17 @@ function ModelForm({ editing, region, onSaved, onCancel }: {
           </div>
           <div className="field">
             <label htmlFor="model-region">Region</label>
-            <input id="model-region" value={draft.region} onChange={set("region")} required />
+            <input id="model-region" value={draft.region} onChange={set("region")} required={draft.kind !== "external_agent"} />
+            {draft.kind === "external_agent" && <span className="hint">Empty: the region of the runtime.</span>}
           </div>
         </>
+      )}
+      {draft.kind === "external_agent" && draft.harness === "claude-code" && (
+        <div className="field">
+          <label htmlFor="model-cli-version">Claude Code version</label>
+          <input id="model-cli-version" value={draft.cli_version} onChange={set("cli_version")} required />
+          <span className="hint">The pinned version that every evaluation installs, such as {CLI_VERSION}.</span>
+        </div>
       )}
       <div className="field">
         <label htmlFor="model-class">Class</label>
