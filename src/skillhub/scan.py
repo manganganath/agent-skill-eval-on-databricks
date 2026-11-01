@@ -16,6 +16,7 @@ from __future__ import annotations
 import base64
 import binascii
 import bisect
+import html
 import io
 import re
 import unicodedata
@@ -76,10 +77,11 @@ _BOM_CHAR = chr(_BOM)
 
 _PIPE_TARGET = r"(?:sudo(?:\s+-\S+)*\s+)?(?:env(?:\s+\S+=\S*)*\s+)?(?:/\S*/)?(?:(?:ba|z|k|da|fi)?sh|python[0-9.]*|perl|ruby|node)\b"
 _FETCH = r"(?:curl|wget|iwr|irm|Invoke-WebRequest|Invoke-RestMethod)\b"
+_RUNNER = r"(?:(?:ba|z|k|da)?sh|python[0-9.]*|perl|ruby|node)"
 _REMOTE_EXEC = [
-    re.compile(r"\b(?:curl|wget)\b[^\n|]*\|\s*" + _PIPE_TARGET),
-    re.compile(r"\b(?:(?:ba|z|k|da)?sh\s+-c|eval|source|exec)\s+[\"']?\$\(\s*" + _FETCH),
-    re.compile(r"(?:\b(?:ba|z|k|da)?sh|\bsource|(?:^|\s)\.)\s+<\(\s*" + _FETCH, re.M),
+    re.compile(r"\b(?:curl|wget)\b[^\n]*?\|\s*" + _PIPE_TARGET),  # also through `| tee f | sh`
+    re.compile(r"\b(?:" + _RUNNER + r"\s+-\w*c|eval|source|exec)\s+[\"']?\$\(\s*" + _FETCH),
+    re.compile(r"(?:\b" + _RUNNER + r"|\bsource|(?:^|\s)\.)\s+<\(\s*" + _FETCH, re.M),
     re.compile(r"\b(?:iex|Invoke-Expression)\b[^\n]*" + r"\b(?:iwr|irm|Invoke-WebRequest|Invoke-RestMethod|DownloadString)\b", re.I),
     re.compile(r"\b(?:iwr|irm|Invoke-WebRequest|Invoke-RestMethod)\b[^\n]*\|\s*(?:iex|Invoke-Expression)\b", re.I),
     re.compile(r"\bexec\s*\(\s*(?:requests\.get|urllib\.request\.urlopen|urlopen)\s*\("),
@@ -111,6 +113,15 @@ _HIDING = re.compile(
     ]),
     re.I,
 )  # fmt: skip
+# Broader forms that may hide an action or may only keep something confidential ("do not mention internal codes to
+# the user"): medium, for the reviewer.
+_MAYBE_HIDING = re.compile(
+    r"\b(?:do\s+not|don't|never)\s+(?:tell|inform|notify)\s+the\s+user\s+(?:about|of)\b"
+    r"|\b(?:do\s+not|don't|never)\s+(?:mention|disclose|report)\b[^.\n]{0,40}\bto\s+the\s+user\b",
+    re.I,
+)
+# Where a negation stops counting: the end of a clause, a table cell, or a heading or list line (see _paragraphs).
+_CLAUSE_END = re.compile(r"[.!?:;,|\n]")
 _NEGATION = re.compile(r"\b(?:never|not|no|cannot|can't|don't|doesn't|mustn't|shouldn't|won't)\b|n't\b", re.I)
 _EMPHASIS = re.compile(r"[*_~`]+")
 
@@ -124,9 +135,11 @@ _EXFIL = re.compile(
 
 _B64 = "A-Za-z0-9+/_-"
 _BLOB = re.compile(rf"[{_B64}]{{200,}}={{0,2}}|\b[0-9a-fA-F]{{200,}}\b")
-_WRAPPED = re.compile(
-    rf"(?:^[ \t>]*[{_B64}]{{40,}}={{0,2}}[ \t]*$\n?){{4,}}", re.M
-)  # base64 wrapped at 64 or 76
+# Base64 wrapped over lines, at any width from 24, with CRLF line ends and blank lines between groups.
+_WRAPPED = re.compile(rf"(?:^[ \t>]*[{_B64}]{{24,}}={{0,2}}[ \t\r]*$\n?(?:[ \t\r]*\n)?){{4,}}", re.M)
+MAX_DATA_URI_IMAGE = (
+    4000  # base64 characters; a larger embedded image is high: it can carry a payload after its header
+)
 _DATA_URI = re.compile(r"data:([\w.+-]+/[\w.+-]+);base64,\s*$", re.I)
 
 _RISKY = [
@@ -154,9 +167,13 @@ SCRIPT_SUFFIXES = frozenset(
     {".py", ".pyw", ".ipynb", ".sh", ".bash", ".zsh", ".ksh", ".csh", ".tcsh", ".fish", ".command", ".js", ".mjs",
      ".cjs", ".jsx", ".ts", ".tsx", ".ps1", ".psm1", ".bat", ".cmd", ".vbs", ".vba", ".bas", ".wsf", ".hta", ".rb",
      ".pl", ".php", ".lua", ".r", ".jl", ".sql", ".awk", ".tcl", ".groovy", ".scala", ".kts", ".swift",
-     ".applescript", ".scpt"}
+     ".applescript", ".scpt", ".mk"}
 )  # fmt: skip
 SCRIPT_NAMES = frozenset({"makefile", "gnumakefile", "dockerfile", "justfile", "rakefile"})
+# Extensionless files that are documents, not programs. Any other file without a suffix is read as a script.
+DOCUMENT_NAMES = frozenset(
+    {"license", "licence", "notice", "readme", "changelog", "authors", "copying", "contributors"}
+)
 SCRIPT_DIRS = frozenset({"scripts", "bin"})
 IMAGE_SUFFIXES = frozenset({".png", ".jpg", ".jpeg", ".gif", ".webp"})
 OFFICE_SUFFIXES = frozenset({".xlsx", ".xlsm", ".docx", ".docm", ".pptx", ".pptm", ".potx", ".dotx", ".xltx"})
@@ -190,6 +207,7 @@ def _is_script(path: str, text: str) -> bool:
     return (
         p.suffix.lower() in SCRIPT_SUFFIXES
         or p.name.lower() in SCRIPT_NAMES
+        or (not p.suffix and p.name.lower() not in DOCUMENT_NAMES)
         or any(part in SCRIPT_DIRS for part in p.parts[:-1])
         or text.startswith("#!")
     )
@@ -231,39 +249,53 @@ def _invisible(text: str) -> Iterator[tuple[int, int]]:
         yield i, cp
 
 
+_STRUCTURE = re.compile(r"^(?:#{1,6}\s|[-*+]\s|\d+[.)]\s|\|)")
+
+
 def _paragraphs(text: str) -> Iterator[tuple[str, Callable[[int], int]]]:
-    """Each paragraph's normalised text (its lines NFKC-normalised, without Markdown emphasis, joined by spaces), with
-    the line of an offset in it."""
+    """Each paragraph's normalised text, with the line of an offset in it. Its lines are NFKC-normalised, without
+    Markdown emphasis, and joined by spaces, so a hard line wrap does not split a phrase; a heading, list or table
+    line starts after a newline instead, so it ends the clause before it (_CLAUSE_END)."""
 
     def norm(line: str) -> str:
         return _EMPHASIS.sub("", unicodedata.normalize("NFKC", line.strip()))
 
-    def paragraph(numbers: list[int], parts: list[str]) -> tuple[str, Callable[[int], int]]:
-        starts, offset = [], 0
-        for part in parts:
+    def paragraph(numbers: list[int], parts: list[str], raw: list[str]) -> tuple[str, Callable[[int], int]]:
+        starts, offset, text = [], 0, ""
+        for i, part in enumerate(parts):
+            if i:
+                # A heading, list or table line starts a new clause, and so does the line after a heading, which
+                # is never wrapped; a wrapped list item's next line still belongs to the item.
+                new = _STRUCTURE.match(raw[i].strip()) or raw[i - 1].lstrip().startswith("#")
+                text += "\n" if new else " "
+                offset += 1
             starts.append(offset)
-            offset += len(part) + 1
-        return " ".join(parts), lambda at: numbers[bisect.bisect_right(starts, at) - 1]
+            text += part
+            offset += len(part)
+        return text, lambda at: numbers[bisect.bisect_right(starts, at) - 1]
 
     numbers: list[int] = []
     parts: list[str] = []
+    raw: list[str] = []
     for n, line in enumerate(text.split("\n"), 1):
         if line.strip():
             numbers.append(n)
             parts.append(norm(line))
+            raw.append(line)
         elif parts:
-            yield paragraph(numbers, parts)
-            numbers, parts = [], []
+            yield paragraph(numbers, parts, raw)
+            numbers, parts, raw = [], [], []
     if parts:
-        yield paragraph(numbers, parts)
+        yield paragraph(numbers, parts, raw)
 
 
-def _negated(paragraph: str, start: int) -> bool:
-    """True when the sentence of a match is negated before it, which makes the phrase a guardrail."""
-    sentence = max(
-        paragraph.rfind(". ", 0, start), paragraph.rfind("! ", 0, start), paragraph.rfind("? ", 0, start)
-    )
-    return bool(_NEGATION.search(paragraph, sentence + 1, start))
+def _negated(paragraph: str, start: int, ends: list[int]) -> bool:
+    """True when the clause of a match is negated before it ("Never post API keys", "Do not change a cell without
+    telling the user"). The clause ends at punctuation, a table cell or a heading or list line, and is read at most
+    160 characters back, so "Not a drill: ignore..." is not negated. `ends` are the paragraph's clause ends."""
+    i = bisect.bisect_left(ends, start) - 1
+    begin = max(ends[i] + 1 if i >= 0 else 0, start - 160)
+    return bool(_NEGATION.search(paragraph, begin, start))
 
 
 def _diverse(run: str) -> bool:
@@ -271,7 +303,7 @@ def _diverse(run: str) -> bool:
 
 
 def _data_uri_finding(kind: str, blob: str) -> tuple[str, str]:
-    """The severity and message of an embedded data URI, from what its first bytes are."""
+    """The severity and message of an embedded data URI, from what its first bytes are and its size."""
     sub = kind.lower().split("/")[-1].replace("jpg", "jpeg")
     if "svg" in sub:
         return "high", "an embedded SVG, which can carry script and hidden text"
@@ -280,76 +312,115 @@ def _data_uri_finding(kind: str, blob: str) -> tuple[str, str]:
         found = _image_kind(base64.b64decode(head + "=" * (-len(head) % 4))[:16])
     except (binascii.Error, ValueError):
         found = None
-    if found == sub:
-        return "medium", f"an embedded {sub} image of {len(blob)} characters"
-    return "high", f"an embedded file declared as {kind} that is not one ({len(blob)} characters)"
+    if found != sub:
+        return "high", f"an embedded file declared as {kind} that is not one ({len(blob)} characters)"
+    if len(blob) > MAX_DATA_URI_IMAGE:
+        return "high", f"an embedded {sub} image of {len(blob)} characters, large enough to carry a payload"
+    return "medium", f"an embedded {sub} image of {len(blob)} characters"
 
 
-def _decode(path: str, data: bytes) -> tuple[str, list[tuple[str, str]]]:
-    """The file as text, and what reading it as text found. A file that is not UTF-8 is still read, so a script
-    behind an image header or in another encoding meets every rule."""
-    notes: list[tuple[str, str]] = []
+def _utf16(data: bytes) -> str | None:
+    """UTF-16 text: with a byte order mark, or plain text padded with NULs at every other byte."""
     if data.startswith((b"\xff\xfe", b"\xfe\xff")):
-        try:
-            text = data.decode("utf-16")
-            notes.append(
-                ("high", "UTF-16 text, which GitHub shows as binary, so reviewers cannot read it there")
-            )
-            return text.removeprefix(_BOM_CHAR), notes
-        except UnicodeDecodeError:
-            pass
+        return data.decode("utf-16", "replace").removeprefix(_BOM_CHAR)
+    if len(data) >= 8 and data.count(b"\x00") * 3 >= len(data):
+        even, odd = data[0::2].count(0), data[1::2].count(0)
+        return data.decode("utf-16-be" if even > odd else "utf-16-le", "replace")
+    return None
+
+
+def _decode(path: str, data: bytes) -> tuple[str, list[tuple[str, str]], bool]:
+    """The file as text, what reading it as text found, and whether it is an image. A file that is not UTF-8 is
+    still read, so a script behind an image header or in another encoding meets every rule. Only a file with an
+    image's name and an image's first bytes counts as an image."""
+    name = PurePosixPath(path).name
+    text16 = _utf16(data)
+    if text16 is not None:
+        return (
+            text16,
+            [
+                (
+                    "high",
+                    "UTF-16 or NUL-padded text, which GitHub shows as binary, so reviewers cannot read it",
+                )
+            ],
+            False,
+        )
     try:
-        return data.decode("utf-8").removeprefix(_BOM_CHAR), notes
+        return data.decode("utf-8").removeprefix(_BOM_CHAR), [], False
     except UnicodeDecodeError:
         pass
     kind = _image_kind(data)
     if kind and PurePosixPath(path).suffix.lower() in IMAGE_SUFFIXES:
-        notes.append(("medium", f"a {kind} image; check that it shows what the skill says"))
-    elif kind:
-        notes.append(
-            ("high", f"a {kind} image named {PurePosixPath(path).name}, which is not an image file name")
+        return (
+            data.decode("utf-8", "replace"),
+            [("medium", f"a {kind} image; check that it shows what the skill says")],
+            True,
         )
+    if kind:
+        note = ("high", f"a {kind} image header on {name}, which is not an image file name")
     else:
-        notes.append(("high", "a file that is not UTF-8 text, so it cannot be reviewed as text"))
-    return data.decode("utf-8", "replace"), notes
+        note = ("high", "a file that is not UTF-8 text, so it cannot be reviewed as text")
+    return data.decode("utf-8", "replace"), [note], False
 
 
-def _office_parts(data: bytes) -> tuple[list[tuple[str, bytes]], list[tuple[str, str]]]:
-    """The XML parts of an Office file, to scan as text, and what its package says: macros are high."""
+_XML_BREAK = re.compile(r"</(?:w:p|a:p|si|text:p|c)>|<w:br\s*/>|<w:tab\s*/>|<a:br\s*/>", re.I)
+_XML_TAG = re.compile(r"<[^>]*>")
+_OFFICE_MEDIA = (".png", ".jpg", ".jpeg", ".gif", ".emf", ".wmf", ".bmp", ".tif", ".tiff", ".svg")
+
+
+def _office_text(xml: str) -> str:
+    """The text of an Office XML part: runs joined, as Word splits a word across runs, and paragraphs on lines."""
+    return html.unescape(_XML_TAG.sub("", _XML_BREAK.sub("\n", xml)))
+
+
+def _office_parts(data: bytes) -> tuple[list[tuple[str, str]], list[tuple[str, str]]]:
+    """The text of an Office file's parts, to scan, and what its package says. Macros, embedded objects and other
+    binary parts are high: the pull request cannot show them."""
     try:
         with zipfile.ZipFile(io.BytesIO(data)) as z:
             infos = z.infolist()
-            if any(i.filename.lower().endswith("vbaproject.bin") for i in infos):
-                notes = [("high", "an Office file with macros (vbaProject.bin)")]
-            else:
-                notes = [("medium", "an Office file; its text is scanned, check its content")]
+            names = [i.filename.lower() for i in infos]
+            notes = []
+            if any(n.endswith("vbaproject.bin") for n in names):
+                notes.append(("high", "an Office file with macros (vbaProject.bin)"))
+            binary = [n for n in names if not n.endswith(("/", ".xml", ".rels", *_OFFICE_MEDIA))]
+            binary = [n for n in binary if "vbaproject" not in n and "printersettings" not in n]
+            if binary or any("embeddings/" in n or "activex" in n for n in names):
+                notes.append(("high", "an Office file with embedded objects or binary parts"))
+            if not notes:
+                notes.append(("medium", "an Office file; its text is scanned, check its content"))
             parts, total = [], 0
             for info in infos:
-                if not info.filename.lower().endswith((".xml", ".rels")):
+                low = info.filename.lower()
+                if not low.endswith((".xml", ".rels")):
                     continue
                 total += info.file_size
                 if total > MAX_UNZIPPED:
                     notes.append(("high", "an Office file too large to read in full"))
                     break
-                parts.append((info.filename, z.read(info)))
+                xml = z.read(info).decode("utf-8", "replace")
+                parts.append((info.filename, xml if low.endswith(".rels") else _office_text(xml)))
             return parts, notes
-    except (zipfile.BadZipFile, OSError, ValueError):
+    except (zipfile.BadZipFile, OSError, ValueError, RuntimeError):
         return [], [("high", "an Office file that is not a valid package")]
 
 
 def scan_file(skill: str, path: str, data: bytes, *, allowed_domains: Iterable[str] = ()) -> list[Finding]:
-    """The findings of one file of a bundle."""
+    """The findings of one file of a bundle. One rule reports at most MAX_PER_RULE findings in a file, counting its
+    parts, and one more finding says that more were left out."""
     out: list[Finding] = []
-    per_rule: dict[tuple[str, str], int] = {}
-    over: dict[tuple[str, str], str] = {}
+    per_rule: dict[str, int] = {}
+    over: dict[str, str] = {}
 
-    def add(at: str, line: int, rule: str, severity: str, message: str) -> None:
-        key = (at, rule)
-        per_rule[key] = per_rule.get(key, 0) + 1
-        if per_rule[key] > MAX_PER_RULE:
-            over[key] = min(over.get(key, severity), severity, key=SEVERITIES.index)
-            return
+    def add(at: str, line: int, rule: str, severity: str, message: str) -> bool:
+        """Record a finding; False once the rule's cap is reached, so the caller can stop matching."""
+        per_rule[rule] = per_rule.get(rule, 0) + 1
+        if per_rule[rule] > MAX_PER_RULE:
+            over[rule] = min(over.get(rule, severity), severity, key=SEVERITIES.index)
+            return False
         out.append(Finding(skill, at, line, rule, severity, mask_secrets(message)))
+        return True
 
     if _executable(data):
         add(path, 0, "binary", "critical", "an executable file; a skill must not ship programs")
@@ -361,39 +432,84 @@ def scan_file(skill: str, path: str, data: bytes, *, allowed_domains: Iterable[s
             parts, notes = [], [("high", "an archive, whose content cannot be reviewed in the pull request")]
         for severity, message in notes:
             add(path, 0, "binary", severity, message)
-        for part, content in parts:
-            _scan_text(
-                add, f"{path}!{part}", content.decode("utf-8", "replace"), allowed_domains, script=False
-            )
+        for part, text in parts:
+            _scan_text(add, f"{path}!{part}", text, allowed_domains, script=False)
     else:
-        text, notes = _decode(path, data)
+        text, notes, image = _decode(path, data)
         for severity, message in notes:
             add(path, 0, "binary", severity, message)
-        image = bool(notes) and _image_kind(data) is not None
         _scan_text(add, path, text, allowed_domains, script=_is_script(path, text), image=image)
-    for (at, rule), severity in over.items():
-        n = per_rule[(at, rule)] - MAX_PER_RULE
-        out.append(Finding(skill, at, 0, rule, severity, f"{n} more {rule} finding(s) in this file"))
+    for rule, severity in over.items():
+        out.append(
+            Finding(skill, path, 0, rule, severity, f"more {rule} findings in this file are not listed")
+        )
     return out
+
+
+def _scan_paragraph(
+    add, path: str, para: str, at: Callable[[int], int], allowed_domains: Iterable[str]
+) -> None:
+    """The phrase rules on one normalised paragraph. A negated override or exfiltration phrase is medium: most
+    likely a guardrail, so the reviewer sees it, but it does not block."""
+    ends = [m.start() for m in _CLAUSE_END.finditer(para)]
+
+    def phrase(m: re.Match) -> str:
+        return repr(" ".join(m.group(0).split())[:80])
+
+    def run(pattern: re.Pattern, rule: str, finding) -> None:
+        for m in pattern.finditer(para):
+            got = finding(m)
+            if got and not add(path, at(m.start()), rule, got[0], got[1]):
+                return
+
+    def override(m: re.Match):
+        if _negated(para, m.start(), ends):
+            return "medium", f"an instruction-override phrase in a negated sentence: {phrase(m)}"
+        return "high", f"an instruction-override phrase: {phrase(m)}"
+
+    def exfil(m: re.Match):
+        host = _host(m.group(1))
+        if not host or _allowed(host, allowed_domains):
+            return None
+        return (
+            "medium" if _negated(para, m.start(), ends) else "high"
+        ), f"sends what the agent holds to {host}"
+
+    run(_OVERRIDE, "prompt-injection", override)
+    hiding = [m.span() for m in _HIDING.finditer(para)]
+    run(
+        _HIDING,
+        "prompt-injection",
+        lambda m: ("high", f"a phrase that hides what the agent did: {phrase(m)}"),
+    )
+
+    def maybe_hiding(m: re.Match):
+        if any(a < m.end() and m.start() < b for a, b in hiding):  # already reported as high
+            return None
+        return "medium", f"a phrase that may hide an action from the user: {phrase(m)}"
+
+    run(_MAYBE_HIDING, "prompt-injection", maybe_hiding)
+    run(_EXFIL, "exfiltration", exfil)
 
 
 def _scan_text(
     add, path: str, body: str, allowed_domains: Iterable[str], *, script: bool, image: bool = False
 ):
+    """Run the text rules. `add` returns False once a rule's cap is reached, and that rule stops matching."""
     starts = [0] + [i + 1 for i, ch in enumerate(body) if ch == "\n"]
 
     def line(offset: int) -> int:
         return bisect.bisect_right(starts, offset)
 
+    def each(pattern: re.Pattern, text: str, rule: str, finding) -> None:
+        for m in pattern.finditer(text):
+            got = finding(m)
+            if got and not add(path, got[0], rule, got[1], got[2]):
+                return
+
     for label, pattern in _SECRETS:
-        for m in pattern.finditer(body):
-            add(
-                path,
-                line(m.start()),
-                "secret",
-                "critical",
-                f"{label} ({m.group(0)[:4]}...); remove it and rotate it",
-            )
+        each(pattern, body, "secret",
+             lambda m, label=label: (line(m.start()), "critical", f"{label} ({m.group(0)[:4]}...); remove it and rotate it"))  # fmt: skip
 
     if not image:  # an image's bytes, read as text, can spell anything
         hidden: dict[int, set[int]] = {}
@@ -402,65 +518,47 @@ def _scan_text(
         for n, points in sorted(hidden.items()):
             severity = "high" if points == {_SOFT_HYPHEN} else "critical"
             names = ", ".join(_code_point(cp) for cp in sorted(points))
-            add(path, n, "hidden-unicode", severity, f"invisible characters that can hide text: {names}")
+            if not add(
+                path, n, "hidden-unicode", severity, f"invisible characters that can hide text: {names}"
+            ):
+                break
 
     for pattern in _REMOTE_EXEC:
-        for m in pattern.finditer(body):
-            add(path, line(m.start()), "remote-exec", "critical", "downloads code and runs it")
+        each(
+            pattern,
+            body,
+            "remote-exec",
+            lambda m: (line(m.start()), "critical", "downloads code and runs it"),
+        )
 
     for para, at in _paragraphs(body):
-        for m in _OVERRIDE.finditer(para):
-            if not _negated(para, m.start()):
-                phrase = " ".join(m.group(0).split())[:80]
-                add(
-                    path,
-                    at(m.start()),
-                    "prompt-injection",
-                    "high",
-                    f"an instruction-override phrase: {phrase!r}",
-                )
-        for m in _HIDING.finditer(para):
-            phrase = " ".join(m.group(0).split())[:80]
-            add(
-                path,
-                at(m.start()),
-                "prompt-injection",
-                "high",
-                f"a phrase that hides what the agent did: {phrase!r}",
-            )
-        for m in _EXFIL.finditer(para):
-            host = _host(m.group(1))
-            if host and not _allowed(host, allowed_domains) and not _negated(para, m.start()):
-                add(path, at(m.start()), "exfiltration", "high", f"sends what the agent holds to {host}")
+        _scan_paragraph(add, path, para, at, allowed_domains)
 
-    for m in _BLOB.finditer(body):
+    def blob(m):
         if not _diverse(m.group(0)):
-            continue
+            return None
         uri = _DATA_URI.search(body, max(0, m.start() - 80), m.start())
         if uri:
-            severity, message = _data_uri_finding(uri.group(1), m.group(0))
-        else:
-            severity, message = (
-                "high",
-                f"an encoded run of {len(m.group(0))} characters that a reviewer cannot read",
-            )
-        add(path, line(m.start()), "encoded-blob", severity, message)
-    for m in _WRAPPED.finditer(body):
+            return (line(m.start()), *_data_uri_finding(uri.group(1), m.group(0)))
+        return (
+            line(m.start()),
+            "high",
+            f"an encoded run of {len(m.group(0))} characters that a reviewer cannot read",
+        )
+
+    def wrapped(m):
         run = re.sub(r"[\s>]", "", m.group(0))
         if len(run) >= 200 and _diverse(run) and not _BLOB.search(m.group(0)):
-            add(
-                path,
-                line(m.start()),
-                "encoded-blob",
-                "high",
-                f"an encoded block of {len(run)} characters over lines",
-            )
+            return line(m.start()), "high", f"an encoded block of {len(run)} characters over lines"
+        return None
+
+    each(_BLOB, body, "encoded-blob", blob)
+    each(_WRAPPED, body, "encoded-blob", wrapped)
 
     if script:
         add(path, 0, "script", "medium", "a script; a reviewer should read it")
         for label, pattern in _RISKY:
-            for m in pattern.finditer(body):
-                add(path, line(m.start()), "risky-call", "high", label)
+            each(pattern, body, "risky-call", lambda m, label=label: (line(m.start()), "high", label))
         m = _NETWORK.search(body)
         if m:
             add(path, line(m.start()), "network-call", "low", "makes network calls")
@@ -469,17 +567,19 @@ def _scan_text(
     for m in _URL.finditer(body):
         host = _host(m.group(0))
         if host is None:
-            add(
+            if not add(
                 path,
                 line(m.start()),
                 "url",
                 "high",
                 "a URL that does not parse, as a lookalike character can make",
-            )
+            ):
+                break
         elif host and not _allowed(host, allowed_domains):
             hosts.setdefault(host, line(m.start()))
     for host, n in sorted(hosts.items(), key=lambda kv: kv[1]):
-        add(path, n, "url", "medium", f"a URL on {host}, which is not in scan.allowed_domains")
+        if not add(path, n, "url", "medium", f"a URL on {host}, which is not in scan.allowed_domains"):
+            break
 
 
 def scan_bundle(bundle: SkillBundle, *, allowed_domains: Iterable[str] = ()) -> list[Finding]:

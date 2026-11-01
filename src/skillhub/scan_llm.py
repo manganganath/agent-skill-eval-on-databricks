@@ -88,6 +88,15 @@ def review_bundle(bundle: SkillBundle, model: ModelClient) -> list[Finding]:
         return person_must(
             "the reviewer's answer could not be read after three tries; a person must read this skill"
         )
+    except (
+        Exception
+    ) as e:  # an endpoint that refuses this input (a guardrail, say) is a finding, not an outage
+        code = getattr(e, "status_code", None) or getattr(getattr(e, "response", None), "status_code", None)
+        if isinstance(code, int) and 400 <= code < 500 and code not in (401, 403, 404, 408, 429):
+            return person_must(
+                f"the reviewer's endpoint refused this skill (HTTP {code}); a person must read it"
+            )
+        raise
     out = []
     for item in parsed.findings:
         evidence = _clean(item.evidence, MAX_EVIDENCE_CHARS)

@@ -78,9 +78,11 @@ jobs:
             head_sha="$EVENT_HEAD_SHA"
             requested_by="$ACTOR"
           fi
-          # The security scan's override label. It accepts the scan's high findings while it is on the PR, when the
-          # last to add it is a person (not a bot) other than the PR's author, and only until the next push: a push
-          # removes it, except on a re-run, which a reviewer starts after adding it.
+          # The security scan's override label. It accepts the scan's high findings only when the last to add it is a
+          # person (not a bot) other than the PR's author, after this run was created, so after the commits it
+          # checks. A re-run keeps its run's creation time. A dispatched run, which the bot starts after it commits
+          # generated files, compares with the PR's latest pull_request run instead. A push also removes the label,
+          # so it visibly lapses.
           label="${SCAN_OVERRIDE_LABEL:-skillhub-scan-override}"
           if ! [[ "$label" =~ ^[A-Za-z0-9][A-Za-z0-9\ ._:/-]{0,49}$ ]]; then
             echo "::error::The repository variable SKILLHUB_SCAN_OVERRIDE_LABEL is not a label name."
@@ -92,12 +94,22 @@ jobs:
               gh api -X DELETE "repos/$GITHUB_REPOSITORY/issues/$PR_NUMBER/labels/$(jq -rn --arg l "$label" '$l | @uri')" > /dev/null
               echo "::notice::New commits arrived, so the $label label was removed. A reviewer adds it again after reading them, then re-runs this job."
             else
+              since=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" --jq .created_at)
+              if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+                head_ref=$(jq -r .headRefName "$RUNNER_TEMP/pr.json")
+                pr_run=$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/skills-pr.yml/runs?event=pull_request&per_page=1&branch=$(jq -rn --arg b "$head_ref" '$b | @uri')" \
+                  --jq '.workflow_runs[0].created_at // empty')
+                since="${pr_run:-$since}"
+              fi
               gh api --paginate "repos/$GITHUB_REPOSITORY/issues/$PR_NUMBER/events?per_page=100" > "$RUNNER_TEMP/events.json"
               by=$(jq -rs --arg l "$label" 'add | map(select(.event == "labeled" and .label.name == $l)) | last
-                | "\(.actor.type // "")/\(.actor.login // "")"' "$RUNNER_TEMP/events.json")
+                | "\(.actor.type // "")/\(.created_at // "")/\(.actor.login // "")"' "$RUNNER_TEMP/events.json")
               author=$(jq -r .author.login "$RUNNER_TEMP/pr.json")
-              if [ "${by%%/*}" = "User" ] && [ "${by#*/}" != "$author" ]; then
+              by_type="${by%%/*}"; rest="${by#*/}"; added="${rest%%/*}"; by_login="${rest#*/}"
+              if [ "$by_type" = "User" ] && [ "$by_login" != "$author" ] && [[ "$added" > "$since" ]]; then
                 scan_accepted=true
+              elif [ "$by_type" = "User" ] && [ "$by_login" != "$author" ]; then
+                echo "::notice::The $label label was added before this run's commits. A reviewer adds it again after reading them, then re-runs this job."
               fi
             fi
           fi

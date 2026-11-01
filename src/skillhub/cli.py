@@ -218,6 +218,13 @@ def scan_cmd(
     with _guard():
         bundles = discover_bundles()
     targets = _select_skills(bundles, skills) if _opt(skills) else bundles
+    if (
+        llm and not llm_only and not settings.llm.enabled
+    ):  # an operator asked for the reviewer, as the runbook does
+        typer.echo(
+            "error: scan.llm is not enabled in hub.yaml, so --llm cannot run the LLM reviewer", err=True
+        )
+        raise typer.Exit(1)
     findings, warnings = [], []
     if not llm_only:
         for b in targets:

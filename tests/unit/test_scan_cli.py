@@ -150,15 +150,31 @@ def test_a_severity_or_category_the_reviewer_words_differently_is_kept_as_high(r
     assert r.exit_code == 1 and "common/clean/SKILL.md: high: llm-review: policy: x" in r.output
 
 
+def test_a_refusal_of_the_skill_by_the_reviewers_endpoint_is_a_high_finding(repo, llm):
+    class Refused(Exception):
+        status_code = 400
+
+    llm["model"] = _Model([Refused("input guardrail")])
+    r = _scan(repo, "--llm-only", "--skills", "common/clean")
+    assert (
+        r.exit_code == 1
+        and "high: llm-review: the reviewer's endpoint refused this skill (HTTP 400)" in r.output
+    )
+
+
 def test_an_answer_the_reviewer_never_gets_right_is_a_high_finding(repo, llm):
     llm["model"] = _Model(["not json", "still not", "no"])
     r = _scan(repo, "--llm-only", "--skills", "common/clean")
     assert r.exit_code == 1 and "high: llm-review: the reviewer's answer could not be read" in r.output
 
 
-def test_without_the_reviewer_enabled_llm_still_runs_the_rules_and_says_so(repo):
+def test_without_the_reviewer_enabled_llm_fails_and_llm_only_warns(repo):
     (repo / "hub.yaml").write_text(HUB.replace("enabled: true", "enabled: false"), encoding="utf-8")
-    r = _scan(repo, "--llm", "--skills", "pushy")
-    assert r.exit_code == 1 and "high: prompt-injection" in r.output and "scan.llm is not enabled" in r.output
-    r = _scan(repo, "--llm-only", "--skills", "pushy")
+    r = _scan(
+        repo, "--llm", "--skills", "common/clean"
+    )  # an operator asked for the reviewer: say it did not run
+    assert r.exit_code == 1 and "scan.llm is not enabled" in r.output
+    r = _scan(
+        repo, "--llm-only", "--skills", "pushy"
+    )  # the pull request step: a deployment without a reviewer
     assert r.exit_code == 0 and "scan.llm is not enabled" in r.output
