@@ -217,4 +217,28 @@ describe("Matrix, filters after the data changes", () => {
     expect((screen.getByLabelText("Kind") as HTMLSelectElement).value).toBe("all");
     expect((screen.getByLabelText("Harness") as HTMLSelectElement).value).toBe("all");
   });
+
+  it("links an external agent's case to the agent's own trace and notes that harnesses differ", async () => {
+    const agent = { ...row, run_id: "a1", model_profile: "cc-sonnet", harness: "claude-code", profile_kind: "external_agent" as const };
+    vi.mocked(api.matrix).mockResolvedValue(listed([row, agent]));
+    const traceId = "trace:/skill_hub.common_evals.traces/0af7651916cd43dd8448eb211c80319c";
+    vi.mocked(api.cases).mockResolvedValue(listed([{
+      run_id: "a1", trace_id: traceId, assessment_name: "skill_trigger", case_id: 3, repeat: 0, mode: "trigger",
+      user_input: "u", expected_skill: "audit-xls", invoked_skill: "audit-xls", trigger_outcome: "correct", value: "correct",
+      rationale: null, judge_model: null, source_type: "CODE", reviewed: true, dept: "common",
+    }]));
+    render(<MemoryRouter><Matrix /></MemoryRouter>);
+    expect((await screen.findByText(/compare like with like only within one harness/)).getAttribute("role")).toBe("note");
+    fireEvent.click(screen.getByRole("button", { name: /show cases for cc-sonnet/i }));
+    const link = await screen.findByRole("link", { name: "Agent trace for case 3" });
+    expect(link.getAttribute("href")).toBe(
+      `https://ws.example.test/ml/experiments/e1/traces?selectedEvaluationId=${encodeURIComponent(traceId)}`,
+    );
+  });
+
+  it("has no harness note when every row is on one harness", async () => {
+    render(<MemoryRouter><Matrix /></MemoryRouter>);
+    await screen.findByRole("table", { name: /evaluation matrix/i });
+    expect(screen.queryByText(/within one harness/)).toBeNull();
+  });
 });

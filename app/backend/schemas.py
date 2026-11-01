@@ -321,6 +321,7 @@ class ModelOut(BaseModel):
     region: str | None
     model_class: Literal["frontier", "fast"]
     harness: str
+    agent: dict[str, str] | None = None  # an external agent's settings
     enabled: bool
     release_gate: bool
     price_in: float | None = None

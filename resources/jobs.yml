@@ -123,6 +123,7 @@ resources:
         - {name: endpoint, default: ""}
         - {name: model_id, default: ""}
         - {name: region, default: ""}
+        - {name: agent, default: ""}
         - {name: requested_by, default: ""}
       # Only the app principal starts tests, after its reviewer check.
       permissions:
@@ -150,6 +151,8 @@ resources:
               - "{{job.parameters.model_id}}"
               - --region
               - "{{job.parameters.region}}"
+              - --agent
+              - "{{job.parameters.agent}}"
               - --requested-by
               - "{{job.parameters.requested_by}}"
 

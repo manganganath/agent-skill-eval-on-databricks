@@ -269,7 +269,9 @@ describe("RunEval, models from the model catalog", () => {
         catalogRow({ name: "nova-lite", kind: "external_model", route: "bedrock", model_id: "amazon.nova-lite-v1:0", region: "us-east-1" }),
         catalogRow({ name: "llama", endpoint: "databricks-llama-4-maverick" }),
         catalogRow({ name: "old-llama", endpoint: "databricks-llama-3", enabled: false }),
-        catalogRow({ name: "skill-agent", kind: "external_agent", harness: "agentcore" }),
+        catalogRow({ name: "skill-agent", kind: "external_agent", harness: "agentcore", route: "bedrock",
+          model_id: "us.anthropic.claude-sonnet-5-5", region: "us-east-1",
+          agent: { runtime_arn: "arn:aws:bedrock-agentcore:us-east-1:123456789012:runtime/skillhub_skill_agent-AbCd123456" } }),
       ],
     });
   });
@@ -278,13 +280,13 @@ describe("RunEval, models from the model catalog", () => {
     render(<MemoryRouter><RunEval /></MemoryRouter>);
     await screen.findByRole("checkbox", { name: "nova-lite" });
     const groups = screen.getAllByRole("heading", { level: 3 }).map((h) => h.textContent);
-    expect(groups.filter((g) => ["Release gate", "On Unity Gateway", "External models"].includes(g ?? ""))).toEqual(
-      ["Release gate", "On Unity Gateway", "External models"],
+    expect(groups.filter((g) => ["Release gate", "On Unity Gateway", "External models", "External agents"].includes(g ?? ""))).toEqual(
+      ["Release gate", "On Unity Gateway", "External models", "External agents"],
     );
     expect(within(screen.getByRole("group", { name: "External models" })).getByText(/amazon\.nova-lite-v1:0/)).toBeTruthy();
     expect(screen.getAllByRole("checkbox", { name: "claude-sonnet" })).toHaveLength(1);
     expect(screen.queryByRole("checkbox", { name: "old-llama" })).toBeNull(); // disabled
-    expect(screen.queryByRole("checkbox", { name: "skill-agent" })).toBeNull(); // not in this release
+    expect(within(screen.getByRole("group", { name: "External agents" })).getByText(/skillhub_skill_agent-AbCd123456/)).toBeTruthy();
   });
 
   it("runs a catalog model next to a release gate model", async () => {
@@ -296,6 +298,42 @@ describe("RunEval, models from the model catalog", () => {
     fireEvent.click(screen.getByRole("button", { name: /start evaluation/i }));
     await screen.findByText(/run hub_0123abcd/i);
     expect(api.startEval).toHaveBeenCalledWith({ skills: [FQN], models: ["claude-sonnet", "nova-lite"], modes: ["trigger"] });
+  });
+
+  it("runs an external agent on live skills", async () => {
+    render(<MemoryRouter><RunEval /></MemoryRouter>);
+    fireEvent.click(await screen.findByRole("checkbox", { name: /audit-xls/i }));
+    fireEvent.click(await screen.findByRole("checkbox", { name: "skill-agent" }));
+    fireEvent.click(screen.getByRole("checkbox", { name: /trigger/i }));
+    expect(screen.queryByRole("note")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: /start evaluation/i }));
+    await screen.findByText(/run hub_0123abcd/i);
+    expect(api.startEval).toHaveBeenCalledWith({ skills: [FQN], models: ["skill-agent"], modes: ["trigger"] });
+  });
+
+  it("leaves an external agent out of a run on a pinned version, and says so", async () => {
+    render(<MemoryRouter><RunEval /></MemoryRouter>);
+    fireEvent.click(await screen.findByRole("checkbox", { name: /audit-xls/i }));
+    fireEvent.change(await screen.findByLabelText("Version of audit-xls"), { target: { value: "2" } });
+    fireEvent.click(screen.getByRole("checkbox", { name: "claude-sonnet" }));
+    fireEvent.click(await screen.findByRole("checkbox", { name: "skill-agent" }));
+    fireEvent.click(screen.getByRole("checkbox", { name: /trigger/i }));
+    expect(screen.getByRole("note").textContent).toMatch(/External agents evaluate live skills only, so skill-agent is left\s+out/);
+    fireEvent.click(screen.getByRole("button", { name: /start evaluation/i }));
+    await screen.findByText(/run hub_0123abcd/i);
+    expect(api.startEval).toHaveBeenCalledWith({
+      skills: [FQN], models: ["claude-sonnet"], modes: ["trigger"], versions: { [FQN]: 2 },
+    });
+  });
+
+  it("cannot start a candidate run whose only model is an external agent", async () => {
+    vi.mocked(api.me).mockResolvedValue(author);
+    render(<MemoryRouter><RunEval /></MemoryRouter>);
+    fireEvent.click(await screen.findByRole("checkbox", { name: /common\/new-skill/i }));
+    fireEvent.click(await screen.findByRole("checkbox", { name: "skill-agent" }));
+    fireEvent.click(screen.getByRole("checkbox", { name: /trigger/i }));
+    expect(screen.getByRole("note").textContent).toMatch(/skill-agent is left/);
+    expect(screen.getByRole("button", { name: /start evaluation/i })).toBeDisabled();
   });
 
   it("still offers the release gate models when the catalog cannot be loaded", async () => {

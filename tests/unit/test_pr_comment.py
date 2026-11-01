@@ -557,3 +557,37 @@ def test_gates_and_the_pr_comment_read_only_hub_yaml_profiles_on_the_reference_h
         ("gpt", "trigger"), ("gpt", "with_skill"), ("gpt", "without_skill"),
     }  # fmt: skip
     assert {r["verdict"] for r in rows if r["mode"] == "trigger"} == {"pass"}
+
+
+def test_no_gate_result_changes_when_external_agent_rows_share_the_gates_run_key(cfg):
+    """External agents' rows are on their own harness and kind: a gate, the pull request comment and the alerts read
+    exactly what they read without them, even when the rows carry the gate's run key and fail."""
+    from skillhub.ci.pr_comment import blocking_verdicts, load_matrix_rows, render_matrix_markdown
+    from skillhub.naming import evals_schema
+    from tests.fakes import FakeSql
+    from tests.unit.eval_rows import TRUSTED, add_rows
+
+    def gate(with_agents: bool):
+        sql = FakeSql()
+        add_rows(sql, cfg, "common", "audit-xls", "merge_k", "sha256:h")
+        if with_agents:
+            t = f"{evals_schema(cfg, 'common')}.eval_runs"
+            for i, (harness, mode) in enumerate(
+                [("claude-code", "trigger"), ("agentcore", "trigger"), ("claude-code", "with_skill")]
+            ):
+                sql.execute(
+                    f"INSERT INTO {t} (run_id, parent_run_id, run_key, dept, skill, content_hash, model_profile, "
+                    "profile_kind, harness, mode, verdict, started_at, synced_at, run_author) VALUES (:rid, 'p', "
+                    "'merge_k', 'common', 'audit-xls', 'sha256:h', 'gpt', 'external_agent', :harness, :mode, "
+                    "'fail', '2026-11-02T00:00:00', '2026-11-02T00:00:00', :author)",
+                    {"rid": f"agent-{i}", "harness": harness, "mode": mode, "author": TRUSTED},
+                )
+        rows = load_matrix_rows(sql.execute, cfg, "merge_k", trusted={TRUSTED})
+        return rows, blocking_verdicts(rows, ["trigger"]), render_matrix_markdown(rows, run_key="merge_k")
+
+    assert gate(with_agents=True) == gate(with_agents=False)
+    rows, verdicts, _ = gate(with_agents=True)
+    assert {(r["model_profile"], r["mode"]) for r in rows} == {
+        ("gpt", "trigger"), ("gpt", "with_skill"), ("gpt", "without_skill"),
+    }  # fmt: skip
+    assert verdicts == ["pass"]

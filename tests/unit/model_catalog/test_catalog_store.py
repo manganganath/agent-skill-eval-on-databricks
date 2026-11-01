@@ -57,6 +57,23 @@ def test_an_update_writes_only_the_editable_columns_and_can_clear_the_test(cat):
     assert (row.test_result, row.tested_at, row.updated_by) == (None, None, "ravi@example.com")
 
 
+def test_an_agents_settings_are_stored_as_canonical_json_and_can_be_changed(cat):
+    cfg, sql = cat
+    arn = "arn:aws:bedrock-agentcore:us-east-1:123456789012:runtime/skillhub_skill_agent-AbCd123456"
+    agent = CatalogEntry(
+        name="skill-agent", kind="external_agent", harness="agentcore", route="bedrock", model_class="frontier",
+        model_id="us.anthropic.claude-sonnet-5-5", region="us-east-1", agent={"runtime_arn": arn},
+    )  # fmt: skip
+    store.insert_entry(sql, cfg, agent, "rita@example.com", NOW)
+    moved = agent.model_copy(
+        update={"agent": agent.agent.replace("AbCd123456", "ZyXw987654"), "harness": "x"}
+    )
+    store.update_entry(sql, cfg, moved, "ravi@example.com", NOW, clear_test=True)
+    [row], _ = store.read_entries(sql, cfg)
+    assert row.agent_fields == {"runtime_arn": arn.replace("AbCd123456", "ZyXw987654")}
+    assert row.harness == "agentcore" and row.runnable  # the harness is fixed
+
+
 def test_a_test_is_recorded_only_on_the_target_it_tested(cat):
     cfg, sql = cat
     store.insert_entry(sql, cfg, NOVA, "rita@example.com", NOW)

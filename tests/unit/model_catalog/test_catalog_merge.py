@@ -38,6 +38,20 @@ def test_only_enabled_model_rows_are_merged_and_hub_yaml_wins_a_clash():
     assert set(cfg.models) == set(make_cfg().models)  # the loaded config is not changed
 
 
+def test_an_enabled_external_agent_is_merged_with_its_harness_and_settings():
+    agent = CatalogEntry(
+        name="cc-sonnet", kind="external_agent", harness="claude-code", route="ug-anthropic", enabled=True,
+        endpoint="databricks-claude-sonnet-5-5", model_class="frontier", agent={"cli_version": "2.1.314"},
+    )  # fmt: skip
+    merged = resolve(make_cfg(), [*ROWS, agent], 11, ["cc-sonnet"])
+    profile = merged.models["cc-sonnet"]
+    assert (profile.kind, profile.harness, profile.agent) == (
+        "external_agent",
+        "claude-code",
+        {"cli_version": "2.1.314"},
+    )
+
+
 def test_a_connection_test_may_merge_a_disabled_row():
     merged = with_catalog(make_cfg(), ROWS, 4, only=["old-nova"], include_disabled=True)
     assert "old-nova" in merged.models and "nova-lite" not in merged.models

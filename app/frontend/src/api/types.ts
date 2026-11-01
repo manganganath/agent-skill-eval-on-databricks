@@ -174,19 +174,25 @@ export interface Dashboard extends DashboardOut { deniedDepartments: string[] }
 // The Models page. Mirrors ModelOut, ModelsOut, ProbeStarted, ProbeStatus and ServingEndpointOut in
 // app/backend/schemas.py. A release gate row (`release_gate`) comes from hub.yaml and is changed only there.
 export interface ModelTest { status: "passed" | "failed"; message: string; job_run_id: number | null }
+// An external agent's harness, and its settings: {cli_version} for Claude Code, {runtime_arn} for AgentCore.
+export type AgentHarness = "claude-code" | "agentcore";
 export interface CatalogModel {
   name: string; kind: ProfileKind; route: string | null; endpoint: string | null; model_id: string | null;
-  region: string | null; model_class: "frontier" | "fast"; harness: string; enabled: boolean; release_gate: boolean;
+  region: string | null; model_class: "frontier" | "fast"; harness: string; agent?: Record<string, string> | null;
+  enabled: boolean; release_gate: boolean;
   price_in: number | null; price_out: number | null; tested_at: string | null; test: ModelTest | null;
   updated_by: string | null; updated_at: string | null;
 }
 export interface ModelsList { models: CatalogModel[]; catalog_available: boolean; bedrock_region: string }
 export interface ModelIn {
-  name: string; kind: "ug_model" | "external_model"; endpoint?: string; model_id?: string; region?: string;
+  name: string; kind: "ug_model" | "external_model" | "external_agent"; harness?: AgentHarness;
+  agent?: Record<string, string>; endpoint?: string; model_id?: string; region?: string;
   model_class: "frontier" | "fast"; price_in?: number | null; price_out?: number | null;
 }
 export type ModelPatch = Partial<Pick<CatalogModel,
-  "endpoint" | "model_id" | "region" | "model_class" | "price_in" | "price_out" | "enabled">>;
+  "endpoint" | "model_id" | "region" | "model_class" | "price_in" | "price_out" | "enabled">> & {
+  agent?: Record<string, string>;
+};
 export interface ProbeStarted { job_run_id: number }
 // `stale`: the model changed while it was tested, so the result was not recorded.
 export interface ProbeStatus { state: "running" | "passed" | "failed" | "stale"; message: string | null; tested_at: string | null }

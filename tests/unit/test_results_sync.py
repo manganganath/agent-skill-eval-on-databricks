@@ -239,7 +239,7 @@ def test_a_new_skill_syncs_rows_like_an_existing_skill(monkeypatch):
     """The eval tables, the matrix and the Hub's candidate pages read dept, skill and experiment_id from the row."""
     _experiments(monkeypatch, (f"{ROOT}/common/_unreleased", "15"))
     _search(monkeypatch, [run("n1", skill="estimate-revision", experiment_id="15", n_cases=0)])
-    monkeypatch.setattr(sync_mod, "_traces", lambda r: [])
+    monkeypatch.setattr(sync_mod, "_traces", lambda r, evals=None: [])
     sql = ScriptedSql()
     sync_mod.sync_run(make_cfg(), sql, "pr12_ab12cd3", trusted=TRUSTED)
     [(stmt, params)] = sql.inserts("eval_runs")
@@ -278,7 +278,7 @@ def test_tag_fail_plus_param_pass_never_syncs_as_pass(monkeypatch, caplog):
     and fail closed."""
     _experiments(monkeypatch, (f"{ROOT}/common/earnings-preview", "11"))
     _search(monkeypatch, [_planted_verdict_param(), run("r2", n_cases=0)])
-    monkeypatch.setattr(sync_mod, "_traces", lambda r: [])
+    monkeypatch.setattr(sync_mod, "_traces", lambda r, evals=None: [])
     sql = ScriptedSql()
     with caplog.at_level("WARNING", logger=sync_mod.__name__):
         sync_mod.sync_run(make_cfg(), sql, "pr12_ab12cd3", trusted=TRUSTED)
@@ -361,7 +361,7 @@ def test_sync_run_passes_trusted_authors_to_child_runs(monkeypatch):
         return [run("r1", n_cases=0)]
 
     monkeypatch.setattr(sync_mod, "child_runs", fake)
-    monkeypatch.setattr(sync_mod, "_traces", lambda r: [])
+    monkeypatch.setattr(sync_mod, "_traces", lambda r, evals=None: [])
     sync_mod.sync_run(make_cfg(), ScriptedSql(), "pr12_ab12cd3", trusted=TRUSTED)
     assert seen["trusted"] == TRUSTED
 
@@ -898,3 +898,117 @@ def test_a_catalog_param_set_as_a_tag_marks_the_run_as_tampered():
     r = run("r1")
     r.data.tags["profile_kind"] = "hub_yaml"
     assert "runner param(s) set as tags: profile_kind" in sync_mod.tampering(r)
+
+
+def agent_run(run_id="ag1", n_cases=2, harness="claude-code", mode="trigger"):
+    r = run(run_id, n_cases=n_cases)
+    r.data.tags["harness"] = harness
+    r.data.params.update({"mode": mode, "profile_kind": "external_agent"})
+    return r
+
+
+EVALS_PREFIX = "trace:/skill_hub.common_evals.traces/"
+
+
+def agent_trace(otel_id, assessments):
+    """An agent's trace as mlflow.get_trace reads it: no case tags and no prompt of its own."""
+    return NS(
+        info=NS(
+            trace_id=EVALS_PREFIX + otel_id, request_preview=None, assessments=list(assessments), tags={}
+        ),
+        data=NS(request=None, spans=[]),
+    )
+
+
+def _agent_listing(monkeypatch, entries, traces):
+    monkeypatch.setattr(sync_mod.mlflow.artifacts, "load_dict", lambda uri: {"traces": entries})
+    monkeypatch.setattr(sync_mod.mlflow, "get_trace", lambda trace_id: traces.get(trace_id))
+    monkeypatch.setattr(
+        sync_mod.mlflow,
+        "search_traces",
+        lambda **kw: (_ for _ in ()).throw(AssertionError("searched by run")),
+    )
+
+
+def entry(
+    otel_id, case_id, repeat=0, mode="trigger", prompt="Audit the model", reviewed=True, prefix=EVALS_PREFIX
+):
+    return {"trace_id": prefix + otel_id, "case_id": case_id, "repeat": repeat, "mode": mode, "prompt": prompt,
+            "reviewed": reviewed}  # fmt: skip
+
+
+def test_an_agent_runs_traces_are_read_by_the_ids_its_run_listed(monkeypatch):
+    trig = assess(
+        "skill_trigger", "correct", metadata={"invoked_skill": "audit-xls", "expected_skill": "audit-xls"}
+    )
+    traces = {
+        EVALS_PREFIX + "aa": agent_trace("aa", [trig]),
+        EVALS_PREFIX + "bb": agent_trace("bb", [assess("skill_trigger", "correct_reject")]),
+    }
+    _agent_listing(monkeypatch, [entry("aa", 1), entry("bb", 2, reviewed=False)], traces)
+    monkeypatch.setattr(sync_mod, "child_runs", lambda *a, **kw: [agent_run()])
+    sql = ScriptedSql()
+    report = sync_mod.sync_run(make_cfg(), sql, "pr12_ab12cd3", timeout_s=5)
+    assert report.runs_inserted == 1 and report.cases_inserted == 2
+    [(_, params)] = sql.inserts("eval_cases")
+    rows = {r["trace_id"]: r for r in json.loads(params["rows"])}
+    aa = rows[EVALS_PREFIX + "aa"]
+    assert (aa["case_id"], aa["repeat"], aa["mode"], aa["user_input"], aa["reviewed"]) == (
+        1, 0, "trigger", "Audit the model", True,
+    )  # fmt: skip
+    assert aa["invoked_skill"] == "audit-xls" and rows[EVALS_PREFIX + "bb"]["reviewed"] is False
+    [(_, run_params)] = sql.inserts("eval_runs")
+    [row] = json.loads(run_params["rows"])
+    assert (row["harness"], row["profile_kind"]) == ("claude-code", "external_agent")
+
+
+@pytest.mark.parametrize(
+    "bad",
+    [
+        entry(
+            "cc", 3, prefix="trace:/skill_hub.dept_equity_research_evals.traces/"
+        ),  # another department's trace
+        entry("cc", 3, mode="with_skill"),  # another mode than the run's
+        entry("cc", "3"),  # not a case number
+        "trace:/skill_hub.common_evals.traces/cc",
+    ],
+)
+def test_an_agent_run_reads_only_its_own_departments_traces_of_its_mode(monkeypatch, caplog, bad):
+    traces = {EVALS_PREFIX + "aa": agent_trace("aa", [A])}
+    _agent_listing(monkeypatch, [entry("aa", 1), bad], traces)
+    got = sync_mod.agent_traces(agent_run(), "skill_hub.common_evals")
+    assert [t.info.trace_id for t in got] == [EVALS_PREFIX + "aa"]
+    assert "skipped 1 listed agent traces" in caplog.text
+
+
+def test_an_agent_run_with_an_errored_case_does_not_wait_for_its_missing_trace(monkeypatch, caplog):
+    """An errored case has no listed trace, so it never becomes ready: the list is final, so sync expects only it."""
+    traces = {EVALS_PREFIX + "aa": agent_trace("aa", [A])}
+    _agent_listing(monkeypatch, [entry("aa", 1)], traces)
+    with caplog.at_level("WARNING", logger="skillhub.results.sync"):
+        got, waited = sync_mod.wait_for_traces(
+            agent_run(n_cases=2), timeout_s=300, allow_partial=True, evals="skill_hub.common_evals"
+        )
+    assert [t.info.trace_id for t in got] == [EVALS_PREFIX + "aa"]
+    assert waited < sync_mod.STALL_S
+    assert "late cases" not in caplog.text and "re-run sync" not in caplog.text
+
+
+def test_an_agent_run_whose_list_cannot_be_read_does_not_cap_the_expected_count(monkeypatch):
+    def unreadable(uri):
+        raise OSError("transient read failure")
+
+    monkeypatch.setattr(sync_mod.mlflow.artifacts, "load_dict", unreadable)
+    with pytest.raises(sync_mod.SyncIncomplete, match="0 of 2 cells"):
+        sync_mod.wait_for_traces(agent_run(n_cases=2), timeout_s=0, evals="skill_hub.common_evals")
+
+
+def test_an_agent_child_that_failed_before_its_cases_ran_syncs_with_no_cases(monkeypatch):
+    def missing(uri):
+        raise OSError("no such artifact")
+
+    monkeypatch.setattr(sync_mod.mlflow.artifacts, "load_dict", missing)
+    monkeypatch.setattr(sync_mod, "child_runs", lambda *a, **kw: [agent_run(n_cases=0, harness="agentcore")])
+    sql = ScriptedSql()
+    report = sync_mod.sync_run(make_cfg(), sql, "pr12_ab12cd3", timeout_s=5)
+    assert (report.runs_inserted, report.cases_inserted) == (1, 0)

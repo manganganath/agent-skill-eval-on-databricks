@@ -2,7 +2,9 @@
 
 The Job runs as skillhub-ci-eval, the identity every eval runs as, so a passing test proves what an eval of the row
 would use: that identity's read of the model catalog, and its access to the serving endpoint, or its AWS keys in the
-secret scope and their Bedrock permissions. The test is one chat call of at most 16 tokens.
+secret scope and their Bedrock permissions. The test of a model is one chat call of at most 16 tokens. The test of an
+external agent is one case, run as an eval runs it (the agent loads common's skills), then a wait of up to two minutes
+for the agent's trace to reach common's trace table.
 
 The probe reads the row itself, as an eval would, and refuses a row whose target is not the one the Skill Hub asked
 to test. It prints one line, `SKILLHUB_PROBE {json}`, which the Skill Hub reads from the Job run's output, and exits
@@ -12,13 +14,14 @@ to test. It prints one line, `SKILLHUB_PROBE {json}`, which the Skill Hub reads 
 from __future__ import annotations
 
 import json
+import secrets
 import time
 from collections.abc import Callable
 from dataclasses import asdict, dataclass
 from typing import Any, Literal
 
 from skillhub.config import HubConfig
-from skillhub.model_catalog.entry import CatalogEntry, Target
+from skillhub.model_catalog.entry import CatalogEntry, Target, problems
 from skillhub.model_catalog.merge import with_catalog
 
 RESULT_PREFIX = "SKILLHUB_PROBE "
@@ -26,6 +29,8 @@ PROMPT = "Reply with the single word: ok"
 MAX_TOKENS = 16
 TIMEOUT_S = 60
 MESSAGE_MAX = 500
+AGENT_DEPT = "common"  # an agent's test loads common's skills and writes to common's trace table
+AGENT_TRACE_WAIT_S = 120
 
 
 @dataclass(frozen=True)
@@ -93,6 +98,77 @@ def _client(cfg: HubConfig, name: str) -> Any:
     return model_client(cfg, name, auth_headers, max_tries=1, timeout=TIMEOUT_S)
 
 
+def _agent(cfg: HubConfig, name: str) -> Any:
+    from skillhub.agents import agent_for
+
+    return agent_for(cfg, name)
+
+
+def _wait(sql: Any, table: str, expected: set, **kw: Any) -> dict:
+    from skillhub.agents.traces import wait_for_traces
+
+    return wait_for_traces(sql, table, expected, **kw)
+
+
+def probe_agent(
+    cfg: HubConfig,
+    name: str,
+    *,
+    sql: Any,
+    agent_for: Callable[[HubConfig, str], Any] | None = None,
+    wait: Callable[..., dict] | None = None,
+    clock: Callable[[], float] = time.monotonic,
+) -> ProbeResult:
+    """One case on the agent, then its trace in common's trace table. `cfg` holds the row as a profile."""
+    from skillhub.agents.contract import AgentCase, attributes, skills_urls, trace_table
+
+    try:
+        agent = (agent_for or _agent)(cfg, name)
+        run_key, trace_key = f"probe_{secrets.token_hex(6)}", secrets.token_hex(16)
+        table = trace_table(cfg, AGENT_DEPT)
+        case = AgentCase(
+            prompt=PROMPT,
+            mode="trigger",
+            skills_mcp=skills_urls(cfg, AGENT_DEPT),
+            attributes=attributes(
+                run_key=run_key, trace_key=trace_key, case_id=0, repeat=0, mode="trigger", profile=name
+            ),
+            trace_table=table,
+            max_turns=1,
+        )
+    except Exception as exc:
+        return failed(name, describe(exc))
+    since_ns = time.time_ns() - 60 * 10**9
+    start = clock()
+    try:
+        answer = agent.run(case)
+    except Exception as exc:
+        return failed(name, describe(exc))
+    if answer.error is not None:
+        return failed(name, f"the agent did not answer: {answer.error}")
+    ms = int((clock() - start) * 1000)
+    try:
+        found = (wait or _wait)(
+            sql,
+            table,
+            {(0, 0)},
+            run_key=run_key,
+            trace_key=trace_key,
+            since_ns=since_ns,
+            timeout_s=AGENT_TRACE_WAIT_S,
+        )
+    except Exception as exc:
+        return failed(
+            name, f"the agent answered in {ms} ms, but its trace could not be read: {describe(exc)}"
+        )
+    if (0, 0) not in found:
+        return failed(
+            name,
+            f"the agent answered in {ms} ms, but its trace did not reach {table} within {AGENT_TRACE_WAIT_S} s",
+        )
+    return ProbeResult(name, "passed", f"answered in {ms} ms, and its trace reached {table}", ms)
+
+
 def run_probe(
     cfg: HubConfig,
     entries: list[CatalogEntry],
@@ -101,17 +177,23 @@ def run_probe(
     expect: Target,
     *,
     client_for: Callable[[HubConfig, str], Any] | None = None,
+    sql: Any = None,
+    agent_for: Callable[[HubConfig, str], Any] | None = None,
+    wait: Callable[..., dict] | None = None,
     clock: Callable[[], float] = time.monotonic,
 ) -> ProbeResult:
-    """Test the row `name`, enabled or not, if its target is still `expect`. Every failure is the test's answer."""
+    """Test the row `name`, enabled or not, if its target is still `expect`. Every failure is the test's answer.
+    `sql` reads the trace table for an external agent's test."""
     entry = next((e for e in entries if e.name == name), None)
     if entry is None:
         return failed(name, f"there is no model named {name!r} in the model catalog")
     if not entry.runnable:
-        return failed(name, f"a {entry.kind} cannot be tested in this release")
+        return failed(name, f"{name} cannot be tested: {'; '.join(problems(entry)) or 'its kind is unknown'}")
     if entry.target() != expect:
         return failed(name, "the model changed after the test was started; test it again")
     merged = with_catalog(cfg, [entry], version, include_disabled=True)
+    if entry.kind == "external_agent":
+        return probe_agent(merged, name, sql=sql, agent_for=agent_for, wait=wait, clock=clock)
     start = clock()
     try:
         (client_for or _client)(merged, name).chat(

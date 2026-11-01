@@ -134,6 +134,23 @@ class FixtureStore:
             return f"Error: {type(e).__name__}: {e}"
         return f"Error: unknown tool {name}"
 
+    def payload(self, case: EvalCase) -> dict:
+        """The case's files as the fixture tools return them, and the search index over them, for an agent that runs
+        elsewhere and cannot read these files: {"files": {path: text}, "search_index": {keyword: [path, ...]}}.
+        A workbook's text is its read_workbook dump. An agent that answers web_search from these returns what
+        web_search returns here."""
+        files = {
+            rel: self.call("read_workbook" if rel.endswith(".xlsx") else "read_file", {"path": rel}, case)
+            for rel in sorted(case.fixtures)
+        }
+        try:
+            index = self._index()
+        except FixtureIndexError:
+            index = {}
+        in_scope = set(case.fixtures)
+        search = {kw: sorted({d for d in docs if d in in_scope}) for kw, docs in index.items()}
+        return {"files": files, "search_index": {kw: docs for kw, docs in sorted(search.items()) if docs}}
+
     def _index(self) -> dict[str, list[str]]:
         if self._index_cache is None:
             index: dict[str, list[str]] = {}

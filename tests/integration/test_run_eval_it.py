@@ -1,4 +1,4 @@
-"""One real run_eval: one skill, trigger mode, one repeat (preflight ruling 25).
+"""One real run_eval: one skill, trigger mode, one repeat.
 
 It checks what the unit tests fake: `evaluate` inside an active child run, trace read-back through
 `search_traces(run_id=...)`, the real `info.assessments` shape, and the tags sync depends on.

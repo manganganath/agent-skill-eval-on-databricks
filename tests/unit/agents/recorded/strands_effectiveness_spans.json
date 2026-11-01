@@ -1,0 +1,15 @@
+{
+  "name": "invoke_agent skillhub_skill_agent",
+  "attributes": {"gen_ai.operation.name": "invoke_agent", "gen_ai.usage.input_tokens": 9999,
+                 "gen_ai.usage.output_tokens": 9999, "skillhub.case_id": "101", "skillhub.repeat": "1"},
+  "children": [
+    {"name": "chat", "span_type": "CHAT_MODEL",
+     "attributes": {"gen_ai.operation.name": "chat", "gen_ai.usage.input_tokens": 3000, "gen_ai.usage.output_tokens": 50}},
+    {"name": "execute_tool read_workbook",
+     "attributes": {"gen_ai.operation.name": "execute_tool", "gen_ai.tool.name": "read_workbook"}},
+    {"name": "execute_tool skill_skill_hub_common_audit_xls",
+     "attributes": {"gen_ai.operation.name": "execute_tool", "gen_ai.tool.name": "skill_skill_hub_common_audit_xls"}},
+    {"name": "chat", "span_type": "CHAT_MODEL",
+     "attributes": {"gen_ai.operation.name": "chat", "gen_ai.usage.input_tokens": 5000, "gen_ai.usage.output_tokens": 700}}
+  ]
+}

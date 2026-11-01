@@ -109,10 +109,17 @@ export default function RunEval() {
     setPickedCandidates([choiceId(fromLink)]);
   }, [fromLink, cands.loading, reviewing]);
 
+  // External agents load the live skills by their names, so a candidate run or a pinned version leaves them out.
+  const agents = new Set((catalog.data?.models ?? []).filter((m) => m.kind === "external_agent").map((m) => m.name));
+  const pinnedNow = Object.keys(pins).some((fqn) => picked.includes(fqn));
+  const liveOnly = candidateKey !== null || pinnedNow;
+  const leftOut = liveOnly ? models.filter((m) => agents.has(m)) : [];
+  const runModels = models.filter((m) => !leftOut.includes(m));
+
   const active = run !== null && !gaveUp && !pollError &&
     !(status && (status.result_state !== null || TERMINAL.includes(status.state)));
   const chosen = picked.length > 0 || pickedCandidates.length > 0;
-  const ready = chosen && models.length > 0 && runModes.length > 0 && !submitting && !active;
+  const ready = chosen && runModels.length > 0 && runModes.length > 0 && !submitting && !active;
 
   // Polls every 5 s. Stops on a result state, on unmount (the timer is cleared) or after MAX_POLLS.
   useEffect(() => {
@@ -162,9 +169,9 @@ export default function RunEval() {
     const body: EvalRunIn = candidateKey !== null
       ? {
         candidate: { run_key: candidateKey, skills: pickedCandidates.map((id) => id.split("|")[1]) },
-        models, modes: runModes,
+        models: runModels, modes: runModes,
       }
-      : { skills: picked, models, modes, ...(Object.keys(pinned).length > 0 ? { versions: pinned } : {}) };
+      : { skills: picked, models: runModels, modes, ...(Object.keys(pinned).length > 0 ? { versions: pinned } : {}) };
     try {
       const out = await api.startEval(body);
       if (mounted.current) setRun({ key: out.run_key, jobRunId: out.job_run_id });
@@ -180,9 +187,9 @@ export default function RunEval() {
   if (skills.error) return <ErrorState error={skills.error} onRetry={skills.reload} />;
   if (config.error) return <ErrorState error={config.error} onRetry={config.reload} />;
 
-  // Models on Unity Gateway, then external models. External agents are not offered in this release.
+  // Models on Unity Gateway, then external models, then external agents.
   const catalogGroups = groupByKind((catalog.data?.models ?? []).filter(
-    (m) => !m.release_gate && m.enabled && (m.kind === "ug_model" || m.kind === "external_model"),
+    (m) => !m.release_gate && m.enabled && m.kind !== "hub_yaml",
   ));
   const liveOf = (fqn: string) => (skills.data ?? []).find((s) => s.fqn === fqn)?.live_version ?? null;
   const liveChoices = (
@@ -302,6 +309,12 @@ export default function RunEval() {
             </div>
           </div>
         ))}
+        {leftOut.length > 0 && (
+          <p role="note" className="hint">
+            External agents evaluate live skills only, so {leftOut.join(", ")} {leftOut.length === 1 ? "is" : "are"} left
+            out of this run.
+          </p>
+        )}
         {catalog.loading && <Loading label="Loading the model catalog" />}
         {catalog.error ? (
           <ErrorState error={catalog.error} onRetry={catalog.reload}

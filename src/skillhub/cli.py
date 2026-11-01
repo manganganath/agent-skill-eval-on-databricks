@@ -1158,9 +1158,13 @@ def probe_cmd(
     endpoint: str = typer.Option("", "--endpoint", help="Empty means unset."),
     model_id: str = typer.Option("", "--model-id", help="Empty means unset."),
     region: str = typer.Option("", "--region", help="Empty means unset."),
+    agent: str = typer.Option(
+        "", "--agent", help="An external agent's settings as stored. Empty means unset."
+    ),
     requested_by: str = typer.Option("", "--requested-by", help="The reviewer who started the test."),
 ) -> None:
-    """Test one model catalog row as this identity: one chat call of at most 16 tokens.
+    """Test one model catalog row as this identity: one chat call of at most 16 tokens, or for an external agent one
+    case and its trace.
 
     Prints `SKILLHUB_PROBE {json}` and exits 1 when the test failed. The row's target must still be the one given.
     """
@@ -1173,16 +1177,15 @@ def probe_cmd(
     from skillhub.sql import SqlClient
 
     cfg = _cfg(ctx)
-    expect = Target(route=route, endpoint=endpoint, model_id=model_id, region=region)
+    expect = Target(route=route, endpoint=endpoint, model_id=model_id, region=region, agent=agent)
     with redirect_stdout(sys.stderr):  # library output must not mix with the result line
         try:
-            entries, version = read_entries(
-                SqlClient(workspace_client(), cfg.workspace.sql_warehouse_id), cfg
-            )
+            sql = SqlClient(workspace_client(), cfg.workspace.sql_warehouse_id)
+            entries, version = read_entries(sql, cfg)
         except Exception as e:  # the eval identity's read of the catalog is part of what the test proves
             result = failed(name, f"this identity cannot read the model catalog: {describe(e)}")
         else:
-            result = run_probe(cfg, entries, version, name, expect)
+            result = run_probe(cfg, entries, version, name, expect, sql=sql)
     if requested_by:
         typer.echo(f"connection test of {name} requested by {requested_by}", err=True)
     typer.echo(result.line())

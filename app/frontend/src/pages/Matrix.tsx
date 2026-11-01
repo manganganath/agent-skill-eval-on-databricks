@@ -44,7 +44,7 @@ export default function Matrix() {
   const dept = params.get("dept") ?? undefined;
   const matrix = useAsync<Listed<MatrixRow>>(() => api.matrix({ skill, dept }), [skill, dept]);
   const config = useAsync<AppConfig>(() => api.config(), []);
-  const [open, setOpen] = useState<{ runId: string; experimentId: string } | null>(null);
+  const [open, setOpen] = useState<{ runId: string; experimentId: string; agent: boolean } | null>(null);
   const [kind, setKind] = useState(ALL);
   const [harness, setHarness] = useState(ALL);
   const cases = useAsync<Listed<CaseRow>>(
@@ -83,6 +83,12 @@ export default function Matrix() {
         {matrix.data?.truncated && <p role="note" className="notice">Only the first 5000 rows are shown.</p>}
         {!host && !config.loading && (
           <p role="note" className="notice">MLflow links are unavailable because the workspace address is not configured.</p>
+        )}
+        {harnesses.length > 1 && (
+          <p role="note" className="notice">
+            Trigger metrics compare like with like only within one harness: each external agent shows the skill tools
+            to its model in its own way.
+          </p>
         )}
       </div>
       {all.length > 0 && (
@@ -155,7 +161,9 @@ export default function Matrix() {
                           aria-label={`MLflow run for ${label}`}>MLflow run</a>{" "}</>
                       )}
                       <button type="button" className="btn-sm" aria-label={`Show cases for ${label}`}
-                        onClick={() => setOpen({ runId: r.run_id, experimentId: r.experiment_id })}>
+                        onClick={() => setOpen({
+                          runId: r.run_id, experimentId: r.experiment_id, agent: kindOf(r.profile_kind) === "external_agent",
+                        })}>
                         Show cases
                       </button>
                     </td>
@@ -191,7 +199,7 @@ export default function Matrix() {
                       <td>
                         {host ? (
                           <a href={traceUrl(host, open.experimentId, c.trace_id)} target="_blank" rel="noreferrer">
-                            Trace for case {c.case_id}
+                            {open.agent ? "Agent trace" : "Trace"} for case {c.case_id}
                           </a>
                         ) : "-"}
                       </td>

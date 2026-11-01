@@ -265,3 +265,26 @@ def test_malformed_web_index_returns_specific_error(fx):
     (fx / "northwind" / "web_index.json").write_text("{not json")
     out = FixtureStore(fx).call("web_search", {"query": "nvda"}, case(["northwind/overnight_news.md"]))
     assert out == "Error: invalid web_index.json (northwind/web_index.json)"
+
+
+def test_the_payload_of_a_case_is_its_files_as_the_tools_show_them_and_its_part_of_the_index():
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[3] / "fixtures"
+    store = FixtureStore(root)
+    case = EvalCase(id=1, prompt="p", should_trigger=True,
+                    fixtures=["northwind/model.xlsx", "northwind/press_release_q3.md"])  # fmt: skip
+    got = store.payload(case)
+    assert got["files"] == {
+        "northwind/model.xlsx": store.call("read_workbook", {"path": "northwind/model.xlsx"}, case),
+        "northwind/press_release_q3.md": store.call(
+            "read_file", {"path": "northwind/press_release_q3.md"}, case
+        ),
+    }
+    assert got["search_index"] and all(
+        set(docs) <= set(case.fixtures) for docs in got["search_index"].values()
+    )
+    assert store.payload(EvalCase(id=2, prompt="p", should_trigger=False)) == {
+        "files": {},
+        "search_index": {},
+    }

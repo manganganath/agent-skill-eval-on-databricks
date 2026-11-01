@@ -2622,3 +2622,123 @@ def test_unreadable_aws_keys_make_the_bedrock_profile_an_error_before_staging(wi
         ("nova-lite", "model profile 'nova-lite' cannot be served: the secret scope 'skillhub-aws' has no "
                       "aws-access-key-id key"),
     }  # fmt: skip
+
+
+# --- external agents -----------------------------------------------------------------------------------------------
+
+AGENT = ModelProfile(
+    route="ug-anthropic", endpoint="databricks-claude-sonnet-5-5", kind="external_agent", catalog_version=4,
+    harness="claude-code", agent={"cli_version": "2.1.314"}, **{"class": "frontier"},
+)  # fmt: skip
+
+
+class _Judge:
+    def __init__(self, name, value):
+        self.name, self.value = name, value
+
+    def run(self, **kw):
+        from mlflow.entities import Feedback
+
+        return Feedback(name=self.name, value=self.value)
+
+
+def _agent_scorers(cfg, rubric, profiles, mode, *, skill_name, cases=None, fixtures_root=None):
+    if mode == "trigger":
+        return []  # the agent path builds its own trigger scorer
+    out = [_Judge(f"rubric_{c.id}__gpt", True) for c in CRITERIA] + [_Judge("assertions__gpt", "yes")]
+    return out + ([_Judge("planted_bugs_found", 0.5)] if skill_name == "audit-xls" else [])
+
+
+@pytest.fixture
+def agent_run(wired, monkeypatch):
+    """The wired runner with one external agent profile, `cc`, whose agent calls the skill under test when a case
+    should trigger it."""
+    from skillhub.agents import cases as agent_cases
+    from tests.unit.agents.fake_agent import FakeAgent
+
+    def calls(case):
+        if not case.case.should_trigger or not case.skills_mcp:
+            return None
+        skill = (
+            "common_audit-xls"
+            if "common_evals" in case.trace_table
+            else "dept_equity_research_earnings-preview"
+        )
+        return f"skill_cat_{skill}"
+
+    agent = FakeAgent(calls_skill=calls)
+    monkeypatch.setitem(CFG.models, "cc", AGENT)
+    monkeypatch.setattr(runner, "agent_for", lambda cfg, name: agent)
+    monkeypatch.setattr(agent_cases, "wait_for_traces", agent.wait_for_traces)
+    wired["scorers"] = _agent_scorers
+    wired["agent"] = agent
+    return wired
+
+
+def test_an_external_agent_runs_live_skills_in_child_runs_that_carry_its_harness(agent_run):
+    summary = run_eval(CFG, request(models=["cc"], source="live"))
+    assert summary.errors == [] and len(summary.children) == 6
+    assert agent_run["evaluate_calls"] == 0  # the agent ran the cases; its traces were scored directly
+    client = MlflowClient()
+    for c in summary.children:
+        run = client.get_run(c.run_id)
+        assert c.harness == run.data.tags["harness"] == "claude-code"
+        assert (
+            run.data.params["profile_kind"] == "external_agent" and run.data.params["route"] == "ug-anthropic"
+        )
+    trig = child(summary, "audit-xls", "trigger")
+    assert (trig.verdict, trig.metrics["accuracy"], trig.metrics["n_cases"]) == ("pass", 1.0, 2)
+    assert child(summary, "earnings-preview", "with_skill").metrics["pass_rate"] == 1.0
+    assert agent_run["synced"] == [RUN_KEY]
+
+
+def test_an_agents_child_runs_write_each_field_where_sync_reads_it(agent_run):
+    from skillhub.results.sync import CHILD_PARAMS, CHILD_TAGS, tampering
+
+    summary = run_eval(CFG, request(models=["cc"], source="live"))
+    for c in summary.children:
+        run = MlflowClient().get_run(c.run_id)
+        assert set(run.data.params) == CHILD_PARAMS
+        assert {k for k in run.data.tags if not k.startswith("mlflow.")} <= CHILD_TAGS
+        assert tampering(run) is None
+
+
+def test_an_external_agent_is_left_out_of_a_candidate_run_and_of_a_pinned_skill(agent_run, monkeypatch):
+    from skillhub.agents.contract import LIVE_ONLY
+
+    summary = run_eval(CFG, request(models=["cc", "gpt"], source="draft:1"))
+    assert {(e.skill, e.model_profile, e.message) for e in summary.errors} == {
+        ("earnings-preview", "cc", LIVE_ONLY), ("audit-xls", "cc", LIVE_ONLY),
+    }  # fmt: skip
+    assert {c.model_profile for c in summary.children} == {"gpt"} and agent_run["agent"].seen == []
+    pinned = run_eval(CFG, request(run_key="pr12_pinned", models=["cc"], source="live",
+                                   versions={"common/audit-xls": 2}))  # fmt: skip
+    assert [(e.skill, e.message) for e in pinned.errors] == [("audit-xls", LIVE_ONLY)]
+    assert {c.skill for c in pinned.children} == {"earnings-preview"}
+
+
+def test_an_agent_that_cannot_run_here_is_recorded_per_skill_before_staging(agent_run, monkeypatch):
+    from skillhub.config import ConfigError
+
+    def broken(cfg, name):
+        raise ConfigError("the agentcore harness is not supported")
+
+    monkeypatch.setattr(runner, "agent_for", broken)
+    summary = run_eval(CFG, request(models=["cc", "gpt"], source="live"))
+    assert {e.message for e in summary.errors} == {
+        "model profile 'cc' cannot be served: the agentcore harness is not supported"
+    }
+    assert {c.model_profile for c in summary.children} == {"gpt"}
+
+
+def test_a_run_on_hub_yaml_models_builds_no_agent_and_reads_no_agent_trace(wired, monkeypatch):
+    from skillhub.agents import cases as agent_cases
+
+    def no(*a, **k):
+        raise AssertionError("an agent was used")
+
+    monkeypatch.setitem(CFG.models, "cc", AGENT)  # in the catalog, but not requested
+    monkeypatch.setattr(runner, "agent_for", no)
+    monkeypatch.setattr(agent_cases, "run_agent_cases", no)
+    summary = run_eval(CFG, request())
+    assert summary.errors == [] and {c.harness for c in summary.children} == {"reference"}

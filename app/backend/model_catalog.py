@@ -61,15 +61,17 @@ def find(entries: Iterable[CatalogEntry], name: str) -> CatalogEntry | None:
     return next((e for e in entries if e.name == name), None)
 
 
-def require_runnable(sql: SqlExecutor, cfg: HubConfig, names: list[str]) -> None:
+def require_runnable(sql: SqlExecutor, cfg: HubConfig, names: list[str]) -> list[str]:
     """Refuse a model that is not a hub.yaml profile or an enabled catalog model: 404 model_not_found. The catalog is
-    read only when a name is not in hub.yaml, so a run on hub.yaml models never depends on it."""
+    read only when a name is not in hub.yaml, so a run on hub.yaml models never depends on it. Returns the names that
+    are external agents."""
     extra = [n for n in names if n not in cfg.models]
     if not extra:
-        return
+        return []
     known = {e.name: e for e in read_or_503(sql, cfg)}
     if any(n not in known or not known[n].enabled or not known[n].runnable for n in extra):
         raise problem(404, Reason.MODEL_NOT_FOUND)
+    return [n for n in extra if known[n].kind == "external_agent"]
 
 
 def hub_rows(cfg: HubConfig) -> list[ModelOut]:
@@ -102,6 +104,7 @@ def entry_out(e: CatalogEntry) -> ModelOut:
         region=e.region,
         model_class=e.model_class,
         harness=e.harness,
+        agent=e.agent_fields or None,
         enabled=e.enabled,
         release_gate=False,
         price_in=e.price_in,
