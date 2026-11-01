@@ -422,11 +422,11 @@ After an upgrade to a build that has the unreleased experiments, re-run the `ski
 
 Besides the `models` in `config/hub.yaml`, an evaluation can run on the models that reviewers register on the Skill Hub's **Models** page. They are rows of `<catalog>.eval.model_profiles`, which bootstrap creates. `skillhub-ci-eval` reads the table, and only the app principal writes it, after it has checked that the user is a reviewer. A row is disabled, never deleted, so old results can still name it, and the table's Delta history keeps every change.
 
-- **Kinds.** A model on Unity Gateway is a serving endpoint of the workspace, called on the `serving` route. An external model is a model that Databricks does not serve, called through Amazon Bedrock on the `bedrock` route. External agents are not supported in this release.
-- **Connection test.** **Test** starts the `skillhub-probe` Job. It runs as `skillhub-ci-eval`, like every eval, reads the row, and makes one chat call of at most 16 tokens. A pass therefore proves what an eval of the model would use: that identity's read of the catalog, and its access to the endpoint, or its AWS keys and their Bedrock permissions. The Skill Hub records the result on the row when it reads the finished run. A model can be enabled only after its last test passed. Changing the endpoint, the model ID or the region disables the model and clears its test.
+- **Kinds.** A model on Unity Gateway is a serving endpoint of the workspace, called on the `serving` route. An external model is a model that Databricks does not serve, called through Amazon Bedrock on the `bedrock` route. An external agent is a harness that runs each case itself: Claude Code, which the eval Job runs, or an agent on Amazon Bedrock AgentCore, which the eval Job invokes. See [External agents](#external-agents).
+- **Connection test.** **Test** starts the `skillhub-probe` Job. It runs as `skillhub-ci-eval`, like every eval, reads the row, and makes one chat call of at most 16 tokens. A pass therefore proves what an eval of the model would use: that identity's read of the catalog, and its access to the endpoint, or its AWS keys and their Bedrock permissions. The Skill Hub records the result on the row when it reads the finished run. A model can be enabled only after its last test passed. Changing the endpoint, the model ID or the region disables the model and clears its test. The test of an external agent runs one case on it, which loads `common`'s skills, and waits up to two minutes for its trace in `common`'s trace table; changing the agent's settings (its Claude Code version or its runtime ARN) also disables it.
 - **What runs it.** Run eval lists the release gate models from `config/hub.yaml` first, then the enabled catalog models. A request that names an unknown or disabled model is refused before the Job starts: 404 `model_not_found` from the Skill Hub, and exit code 2 from `skillhub eval`.
 - **What gates.** Release gates, the pull request comment and the SQL alerts read only the `config/hub.yaml` models on the built-in agent loop: rows with `profile_kind` `hub_yaml` and `harness` `reference`. `defaults.models`, `judges`, `judges_pr`, `generator` and the `models` of an `evals.json` may name only `config/hub.yaml` profiles. `skillhub lint` and the config check enforce this.
-- **Results.** Each child run records `profile_kind` (`hub_yaml`, `ug_model` or `external_model`), `route`, `model_id`, `region` and `catalog_version`, the Delta version of the catalog the run read. Sync writes them to `eval_runs`. The Eval matrix shows the kind next to each model and filters by kind and by harness.
+- **Results.** Each child run records `profile_kind` (`hub_yaml`, `ug_model`, `external_model` or `external_agent`), `route`, `model_id`, `region` and `catalog_version`, the Delta version of the catalog the run read. Sync writes them to `eval_runs`. The Eval matrix shows the kind next to each model and filters by kind and by harness.
 - **Risk.** An external model receives the skill text and the test cases of every evaluation that runs on it. That is why only reviewers register models.
 
 ### Amazon Bedrock
@@ -486,6 +486,63 @@ Amazon Nova models refuse a tool name that contains a hyphen. For a model ID tha
 What **Test** shows: the result keeps an error's own message only for errors known to be safe: Bedrock call errors (already redacted), configuration and AWS credential errors (they name the scope and key, never a value), catalog errors, and serving endpoint errors. For example, a 403 `PERMISSION_DENIED` for a missing `CAN_QUERY` grant is shown as it is. Any other error shows only its type, as `<Type>: the call failed`.
 
 A Unity Catalog service credential is the recommended alternative where an admin can create one, because it stores no long-lived key. Support for it is planned.
+
+### External agents
+
+An external agent runs each case itself and sends its OpenTelemetry trace to Databricks, so its own way of choosing and following a skill is what is measured. The eval Job hands it each case and repeat, with the same cases and modes as a model:
+
+| Field | Meaning |
+|---|---|
+| prompt, mode | The case's prompt; `trigger`, `with_skill` or `without_skill` |
+| skills MCP | One Unity Gateway skills MCP URL per live schema, the department's first, then `common`'s. None in `without_skill` mode |
+| trace attributes | `skillhub.run_key`, `skillhub.trace_key`, `skillhub.case_id`, `skillhub.repeat`, `skillhub.mode` and `skillhub.profile`, to put on every span |
+| trace table | `<catalog>.<dept>_evals.traces_otel_spans`. The agent sends its spans with OTLP/HTTP to `https://<workspace host>/api/2.0/otel/v1/traces`, with the header `X-Databricks-UC-Table-Name` |
+| fixtures | The case's files, served as the `web_search`, `read_file` and `read_workbook` tools of the built-in agent loop |
+
+The agent returns its final answer. Then the Job:
+1. finds the child run's traces in the department's trace table, in SQL, by the run key and the child run's random trace key, which no one else knows. It waits up to 5 minutes after the last answer. A case without an answer or without a trace is an error, never a fail;
+2. reads each trace and takes the invoked skill from the first tool span whose `gen_ai.tool.name` is a skill's tool, and the token counts from the model-call spans;
+3. runs the same scorers and judges as for a model, on the agent's trace and answer, and logs each result as an MLflow assessment on the agent's own trace;
+4. writes one child run per skill, profile and mode, with the tag `harness` (`claude-code` or `agentcore`), `profile_kind` `external_agent`, the metrics `agent_input_tokens` and `agent_output_tokens`, and the artifact `agent_traces.json`, which lists which trace is which case. Sync reads the traces back from that list, and only traces in the department's own trace location.
+
+Rules:
+- **Live skills only.** An agent loads the live skills by their production names, so a run on a candidate, a draft or a pinned version leaves external agents out: Run eval says so, `POST /api/eval-runs` answers 422 `agents_live_only`, and `skillhub eval` records an error for each such skill and agent.
+- **Release gates do not change.** The gates, the pull request comment and the alerts read only `config/hub.yaml` models on harness `reference`.
+- **Compare like with like.** An agent shows the skill tools to its model in its own way, so trigger metrics compare like with like only within one harness. The Eval matrix says so when it shows more than one harness.
+- **Risk.** An external agent receives the skill text and the test cases. Only reviewers register agents.
+- An agent's case links to its own trace from the Eval matrix (**Show cases**, then **Agent trace for case N**).
+
+### Claude Code
+
+The eval Job runs the Claude Code CLI as `skillhub-ci-eval`, inside the `skill-eval` Job's eval task:
+
+- **Register.** On the Models page, add an external agent with the harness Claude Code, the serving endpoint of the Claude model it drives, and the Claude Code version to install, for example `2.1.314`. **Test** installs that version and runs one case.
+- **Install.** Each Job installs the pinned native binary once, with `curl -fsSL https://claude.ai/install.sh | bash -s <version>`, and keeps it for the run. The serverless network policy must allow `claude.ai` and the download host the installer uses.
+- **Model.** Claude Code calls `https://<workspace host>/serving-endpoints/anthropic` with the eval identity's token and the row's endpoint as the model, also for its background calls. `skillhub-ci-eval` needs `CAN_QUERY` on that endpoint.
+- **Lockdown.** Each case runs non-interactively in a new scratch folder with its own configuration folder. `--tools ""` turns off every built-in tool (files, shell, web), so Claude Code has only the MCP servers the Job gives it with `--mcp-config` and `--strict-mcp-config`: one skills server per schema, and the case's fixture files. The skills MCP's authoring tools are removed with `--disallowedTools`. Trigger mode allows 3 turns, the other modes 8. The Job's own credentials are not passed on; the token reaches the CLI only in its environment and in a scratch file readable by the Job, both gone when the case ends.
+- **Trace.** Claude Code exports its own spans (`CLAUDE_CODE_ENABLE_TELEMETRY=1`, `OTEL_TRACES_EXPORTER=otlp`), one trace per case, with the trace attributes as resource attributes. Its answer is the `result` event of `--output-format stream-json`.
+- **Load.** At most 2 cases run at once in each eval worker process, because each is a CLI process.
+
+### Amazon Bedrock AgentCore
+
+The eval Job invokes an agent runtime on Amazon Bedrock AgentCore with the same IAM user key as the Bedrock models, from the `skillhub-aws` secret scope. `examples/agentcore/skill-agent/` is a sample agent: a Strands agent with a deploy script and a README.
+
+1. **Let the key invoke the runtime.** Add this statement to the IAM user's policy. The runtime's name must start with `skillhub`:
+
+   ```json
+   {"Sid": "InvokeSkillhubAgents", "Effect": "Allow", "Action": "bedrock-agentcore:InvokeAgentRuntime",
+    "Resource": "arn:aws:bedrock-agentcore:<region>:<account-id>:runtime/skillhub*"}
+   ```
+
+2. **Give the agent its own Databricks principal.** A workspace admin creates a service principal for the agent, with an OAuth secret, and adds it to the group `skillhub-agents` (`roles.agents` in `config/hub.yaml`) and to the reader group of each department whose skills it may load. Bootstrap gives `skillhub-agents` `USE SCHEMA` on each `<dept>_evals` schema and `MODIFY` and `SELECT` on its `traces_otel_spans` table, and nothing else there; the catalog-level `USE CATALOG` comes with the catalog owner's bootstrap run. Bootstrap skips these grants, and says so, while the group does not exist. The agent keeps its OAuth secret in AWS Secrets Manager.
+3. **Deploy the agent** with the sample's `deploy.sh`, signed in to AWS. It prints the runtime ARN.
+4. **Register and test.** On the Models page, add an external agent with the harness Amazon Bedrock AgentCore, the runtime ARN and the Bedrock model ID the agent calls. Register one row per model. **Test** invokes the runtime once and waits for the trace.
+
+Each case-repeat is a new runtime session. Throttling and quota errors are retried with backoff. The eval serverless network policy must allow `bedrock-agentcore.<region>.amazonaws.com`.
+
+### Upgrade to external agents
+
+This release adds the `agent` parameter of the `skillhub-probe` Job and the grants of the `skillhub-agents` group. After the deploy, run the `skillhub-bootstrap` Job. Claude Code needs nothing else. For an agent on AgentCore, create the `skillhub-agents` group first, and run bootstrap once as the catalog owner for its `USE CATALOG` grant.
 
 ### Upgrade to the model catalog
 

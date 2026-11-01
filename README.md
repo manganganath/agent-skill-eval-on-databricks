@@ -126,11 +126,11 @@ A test-case file with assertions on its trigger cases works as it is. Each trigg
 
 ### Evaluate on more models
 
-Reviewers register more models on the Skill Hub's **Models** page: any serving endpoint on Unity Gateway, or an Amazon Bedrock model. A **Test** runs one short call as the eval service principal, and a model can be enabled once its test passed. Run eval then lists it after the release gate models. Its results appear in the Eval matrix with a badge for its kind; only the `config/hub.yaml` models gate a release. See [Model catalog](docs/operations.md#model-catalog).
+Reviewers register more models on the Skill Hub's **Models** page: any serving endpoint on Unity Gateway, an Amazon Bedrock model, or an external agent (Claude Code, or an agent on Amazon Bedrock AgentCore) that runs each case itself and sends its OpenTelemetry trace to Databricks. A **Test** runs one short call, or one case on an agent, as the eval service principal, and a model can be enabled once its test passed. Run eval then lists it after the release gate models. Its results appear in the Eval matrix with a badge for its kind; only the `config/hub.yaml` models gate a release. See [Model catalog](docs/operations.md#model-catalog).
 
 ### Connect your own agents
 
-Agents outside the Skill Hub load skills from the Unity Gateway skills MCP (Beta), with the user's identity, so Unity Catalog grants apply. A connection offers at most 20 per-skill tools in this Beta, so add one MCP server per schema, for example one for the department and one for `common`. `src/skillhub/gateway/skills_mcp.py` is a reference client. The Skill Hub also has a REST API; see [docs/api.md](docs/api.md) and `/docs` on the app.
+Agents outside the Skill Hub load skills from the Unity Gateway skills MCP (Beta), with the user's identity, so Unity Catalog grants apply. A connection offers at most 20 per-skill tools in this Beta, so add one MCP server per schema, for example one for the department and one for `common`. `src/skillhub/gateway/skills_mcp.py` is a reference client, and `examples/agentcore/skill-agent/` a sample agent that the Skill Hub can evaluate (see [External agents](docs/operations.md#external-agents)). The Skill Hub also has a REST API; see [docs/api.md](docs/api.md) and `/docs` on the app.
 
 ## Deploy it in your workspace
 
@@ -267,6 +267,7 @@ uv run --frozen skillhub --help               # the CLI: generate, eval, sync, p
 | `docs/` | Architecture, operations, API and onboarding guides |
 | `fixtures/` | Synthetic test data for evaluations, with the Northwind Robotics suite |
 | `scripts/` | Helpers: `configure_github.sh`, `build_app.sh`, `mark_reviewed.py`, `wait_job_run.sh` |
+| `examples/agentcore/skill-agent/` | A sample agent on Amazon Bedrock AgentCore that the Skill Hub can evaluate, with its deploy script |
 
 Example skills are imported from [anthropics/financial-services](https://github.com/anthropics/financial-services) under the Apache-2.0 license; see `THIRD_PARTY_NOTICES`.
 

@@ -193,6 +193,27 @@ Naming rules:
 - A trigger case with `should_trigger: true` and assertions also runs in trigger mode, with the same ID. Each mode is its own child run and each trace carries its `mode`, so the results of the two modes never mix. A trigger case with `should_trigger: false` has no answer to judge, so its assertions are ignored.
 - Without `rubric.json`, these cases are judged on their assertions only: a case passes when the panel finds that its assertions hold, and no uplift by type is reported. Effectiveness cases (`kind: effectiveness`) need a rubric.
 
+**External agents.** An external agent (Claude Code, or an agent on Amazon Bedrock AgentCore) runs the same cases and modes itself, loads the live skills from the skills MCP, and sends its OpenTelemetry trace to the department's trace table. The eval Job finds the trace by its attributes, scores it with the same scorers and judges, and logs the scores on that trace. See [External agents](operations.md#external-agents).
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant Job as skill-eval Job (skillhub-ci-eval)
+    participant Agent as External agent
+    participant MCP as Unity Gateway skills MCP
+    participant Model as Agent's model
+    participant Spans as Department trace table
+    participant MLflow as MLflow (skill experiment)
+    Job->>Agent: one case: prompt, mode, skills MCP URLs, trace attributes
+    Agent->>MCP: load skills from the live schemas (not in without_skill)
+    Agent->>Model: model calls and tool calls
+    Agent->>Spans: OTLP spans carrying the trace attributes
+    Agent-->>Job: final answer
+    Job->>Spans: SQL: the traces of this child run, by run key and trace key
+    Job->>MLflow: read each trace, run the judges, log their assessments on it
+    Job->>MLflow: child run: verdict, metrics, agent_traces.json
+```
+
 **Scoring.**
 
 - Code scorers read the tool spans of the trace.
@@ -218,8 +239,8 @@ MLflow is the source of truth. Delta is synced from it.
 - One parent run per department for each eval, keyed by `run_key`. Child runs for each skill version, model profile and mode sit under it.
 - Child runs carry params (`skill_fqn`, `skill`, `dept`, `skill_version`, `content_hash`, `rubric_hash`, `dataset_digest`, `model_profile`, `endpoint`, `model_class`, `mode`, `judges`, `prompt_versions`, `git_sha`, `trigger_source`, `requested_by`, `run_key`, `repeats`, `profile_kind`, `route`, `model_id`, `region`, `catalog_version`), tags (`run_key`, `parent_run_id`, `harness`, `verdict`, `error`, `rubric_stale`) and metrics (`pass_rate`, `spread`, `error_rate`, accuracy, precision, recall, uplift by type, `pass_rate_without`, and `planted_bugs_recall` where it applies).
 - `skillhub sync --run-key <key>` reads each run back from MLflow and inserts missing rows into `eval_runs` and `eval_cases`. It never updates or deletes rows. It skips runs by untrusted authors, runs with a runner field in the wrong place (for example a `verdict` param), runs whose department differs from their experiment's, and runs in badly named experiments, with a warning. A run in a skill experiment must also name that skill; a run in the unreleased experiment names its own skill, which must be a valid skill name.
-- **Harness.** `eval_runs` has a `harness` column. The built-in agent loop is `reference`, and it is the only harness in this release. Other harnesses come later. The matrix, the alerts and the Skill Hub show the column.
-- **Model kind.** `eval_runs.profile_kind` is `hub_yaml` for a `config/hub.yaml` profile, and `ug_model` or `external_model` for a model from the model catalog (see [Model catalog](operations.md#model-catalog)). Rows from before the column read as `hub_yaml`. The gates, the pull request comment and the alerts read only `hub_yaml` rows on harness `reference`.
+- **Harness.** `eval_runs` has a `harness` column. The built-in agent loop is `reference`; an external agent's runs carry its own harness, `claude-code` or `agentcore`. The matrix, the alerts and the Skill Hub show the column.
+- **Model kind.** `eval_runs.profile_kind` is `hub_yaml` for a `config/hub.yaml` profile, and `ug_model`, `external_model` or `external_agent` for an entry of the model catalog (see [Model catalog](operations.md#model-catalog)). Rows from before the column read as `hub_yaml`. The gates, the pull request comment and the alerts read only `hub_yaml` rows on harness `reference`.
 - `eval_matrix` shows the latest run per skill, version, model profile and mode. It carries the verdict, `n_reviewed` and `n_cases`, and the experiment ID so the UI can link to MLflow. The cross-department matrix shows `dept`.
 - The SQL alerts and the Genie space read these tables. The Skill Hub Dashboard tab reads each department's `eval_matrix`, `eval_runs` and `eval_cases` with the signed-in user's permissions, and reads token usage from `system.serving`.
 - Retention: product code never deletes rows. Delta time travel is not an audit trail.
@@ -236,4 +257,5 @@ MLflow is the source of truth. Delta is synced from it.
 - **External skills.** Skills in the `external` department are readable by reviewers only. Pull requests evaluate them, but nothing from that department can be published in this release.
 - **Reviewed cases.** Generated cases are advisory until a member of the reviewers group marks them reviewed.
 - **External models.** Amazon Bedrock is the only external provider in this release. Its AWS key is stored in a Databricks secret scope; a Unity Catalog service credential is planned.
-- **Planned for later releases (not in this release):** editing skills in the Skill Hub, security scanning before release, approve-and-publish in the app, external agent evaluation, gating on model catalog models, GitHub OIDC federation, judge alignment, webhooks, and model routing through the Unity Gateway for Claude.
+- **External agents.** Claude Code and agents on Amazon Bedrock AgentCore, on live skills only: an agent sees the skills' production names, and candidates, drafts and pinned versions are staged under other names. Codex is not supported yet.
+- **Planned for later releases (not in this release):** editing skills in the Skill Hub, security scanning before release, approve-and-publish in the app, external agents on candidates and drafts, Codex, gating on model catalog models, GitHub OIDC federation, judge alignment, webhooks, and model routing through the Unity Gateway for Claude.
