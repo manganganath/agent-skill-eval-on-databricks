@@ -19,14 +19,20 @@ esac
 
 read -rs -p "OAuth secret of ${DATABRICKS_CLIENT_ID}: " CLIENT_SECRET
 echo
+# The secret goes to the AWS CLI through a private file, not the command line, where other users could read it.
+umask 077
+SECRET_FILE=$(mktemp)
+trap 'rm -f "$SECRET_FILE"' EXIT
+printf '%s' "$CLIENT_SECRET" > "$SECRET_FILE"
+unset CLIENT_SECRET
 if aws secretsmanager describe-secret --region "$REGION" --secret-id "$SECRET_NAME" >/dev/null 2>&1; then
   aws secretsmanager put-secret-value --region "$REGION" --secret-id "$SECRET_NAME" \
-    --secret-string "$CLIENT_SECRET" >/dev/null
+    --secret-string "file://$SECRET_FILE" >/dev/null
 else
-  aws secretsmanager create-secret --region "$REGION" --name "$SECRET_NAME" --secret-string "$CLIENT_SECRET" \
+  aws secretsmanager create-secret --region "$REGION" --name "$SECRET_NAME" --secret-string "file://$SECRET_FILE" \
     --tags Key=project,Value=skillhub >/dev/null
 fi
-unset CLIENT_SECRET
+rm -f "$SECRET_FILE"
 SECRET_ARN=$(aws secretsmanager describe-secret --region "$REGION" --secret-id "$SECRET_NAME" --query ARN --output text)
 
 agentcore configure --entrypoint agent.py --name "$NAME" --requirements-file requirements.txt --region "$REGION" \

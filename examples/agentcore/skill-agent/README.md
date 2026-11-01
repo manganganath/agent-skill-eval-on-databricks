@@ -69,7 +69,7 @@ export DATABRICKS_HOST=https://<workspace host> DATABRICKS_CLIENT_ID=<applicatio
 ./deploy.sh
 ```
 
-The script stores the OAuth secret in AWS Secrets Manager (`skillhub/agents/<name>`, read from the terminal without showing it), deploys the runtime `skillhub_skill_agent` with the starter toolkit, lets its execution role read that secret, and prints the runtime ARN. Everything it creates is named `skillhub*` and the secret is tagged `project=skillhub`. Run it again to deploy a change.
+The script stores the OAuth secret in AWS Secrets Manager (`skillhub/agents/<name>`, read from the terminal without showing it, and passed to the AWS CLI through a private temporary file that is removed when the script ends), deploys the runtime `skillhub_skill_agent` with the starter toolkit, lets its execution role read that secret, and prints the runtime ARN. Everything it creates is named `skillhub*` and the secret is tagged `project=skillhub`. Run it again to deploy a change.
 
 ## Register and test
 
