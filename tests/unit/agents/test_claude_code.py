@@ -1,7 +1,10 @@
 import json
+import os
+import signal
 import stat
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 import pytest
@@ -187,6 +190,37 @@ def test_a_cli_that_does_not_finish_in_time_is_killed_and_is_an_error(tmp_path, 
     assert agent.run(agent_case("trigger")).error == "Claude Code did not finish within 300 s"
 
 
+def test_a_cli_whose_child_keeps_the_pipe_open_is_killed_with_its_group_and_returns(tmp_path, monkeypatch):
+    """The fixtures server is a child of the CLI and inherits its stderr: killing only the CLI would leave
+    the read waiting until that child ends."""
+    child_pid = tmp_path / "child.pid"
+    script = tmp_path / "claude"
+    script.write_text(
+        f"#!{sys.executable}\n"
+        "import subprocess, sys, time\n"
+        f"child = subprocess.Popen([{sys.executable!r}, '-c', 'import time; time.sleep(60)'])\n"
+        f"open({str(child_pid)!r}, 'w').write(str(child.pid))\n"
+        "time.sleep(60)\n"
+    )
+    script.chmod(script.stat().st_mode | stat.S_IEXEC)
+    monkeypatch.setattr(claude_code, "TRIGGER_TIMEOUT_S", 2)
+    agent = ClaudeCodeAgent(host=HOST, endpoint="e", binary=script, token=lambda: TOKEN)
+    started = time.monotonic()
+    answer = agent.run(agent_case("trigger", root=tmp_path))
+    assert answer.error == "Claude Code did not finish within 2 s"
+    assert time.monotonic() - started < 20
+    pid = int(child_pid.read_text())
+    for _ in range(50):
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            break
+        time.sleep(0.1)
+    else:
+        os.kill(pid, signal.SIGKILL)
+        pytest.fail("the CLI's child is still running")
+
+
 class Installer:
     """Stands in for subprocess.run: `--version` answers what is on disk, the install script writes the binary."""
 
@@ -214,6 +248,25 @@ def test_the_pinned_version_is_installed_once_and_then_reused(tmp_path, monkeypa
     first = claude_code.ensure_cli("2.1.314", run=run, home=tmp_path)
     assert first == tmp_path / ".local/share/claude/versions/2.1.314" and run.installs == 1
     assert claude_code.ensure_cli("2.1.314", run=run, home=tmp_path) == first and run.installs == 1
+
+
+def test_the_installer_and_the_version_check_run_without_the_jobs_credentials(tmp_path, monkeypatch):
+    monkeypatch.setattr(claude_code, "_installed", {})
+    monkeypatch.setenv("DATABRICKS_TOKEN", TOKEN)
+    monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "test-key-id-0001")
+    monkeypatch.setenv("HOME", str(tmp_path))
+    seen = []
+
+    class Recording(Installer):
+        def __call__(self, argv, **kw):
+            seen.append(kw.get("env"))
+            return super().__call__(argv, **kw)
+
+    claude_code.ensure_cli("2.1.314", run=Recording(tmp_path, "2.1.314"), home=tmp_path)
+    assert len(seen) >= 2  # the install and the version check after it
+    for env in seen:
+        assert env is not None and "DATABRICKS_TOKEN" not in env and "AWS_SECRET_ACCESS_KEY" not in env
+        assert env["HOME"] == str(tmp_path) and "PATH" in env
 
 
 def test_an_install_that_fails_is_a_setup_error_that_names_the_version(tmp_path, monkeypatch):

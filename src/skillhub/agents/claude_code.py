@@ -26,6 +26,7 @@ import json
 import os
 import re
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
@@ -50,6 +51,7 @@ CASE_TIMEOUT_S = 900
 CONCURRENCY = 2
 FIXTURES_SERVER = "fx"
 STDERR_TAIL = 400
+KILL_READ_S = 10
 NO_RESULT = "Claude Code ended without a result"
 # Only these variables of the Job's environment reach the CLI. The Job's own credentials do not.
 _INHERIT = ("PATH", "HOME", "LANG", "LC_ALL", "TMPDIR", "TZ", "SSL_CERT_FILE", "SSL_CERT_DIR")
@@ -167,11 +169,16 @@ def _redact(text: str, *secrets: str) -> str:
     return text
 
 
+def _tool_env() -> dict[str, str]:
+    """What the installer and the version check see: the same allowlist as a case, never the Job's credentials."""
+    return {k: os.environ[k] for k in _INHERIT if k in os.environ}
+
+
 def _version_of(binary: Path, run: Runner) -> str | None:
     if not binary.is_file():
         return None
     try:
-        out = run([str(binary), "--version"], capture_output=True, text=True, timeout=60)
+        out = run([str(binary), "--version"], capture_output=True, text=True, timeout=60, env=_tool_env())
     except (OSError, subprocess.SubprocessError):
         return None
     found = _VERSION.search(out.stdout or "")
@@ -222,7 +229,11 @@ def ensure_cli(version: str, *, run: Runner = subprocess.run, home: Path | None 
                 script = f"set -o pipefail; curl -fsSL {INSTALL_URL} | bash -s {version}"
                 try:
                     res = run(
-                        ["bash", "-c", script], capture_output=True, text=True, timeout=INSTALL_TIMEOUT_S
+                        ["bash", "-c", script],
+                        capture_output=True,
+                        text=True,
+                        timeout=INSTALL_TIMEOUT_S,
+                        env=_tool_env(),
                     )
                 except subprocess.TimeoutExpired:
                     raise AgentSetupError(
@@ -245,6 +256,18 @@ def _bearer() -> str:
     if scheme != "Bearer" or not token:
         raise AgentSetupError("the eval identity has no bearer token to give Claude Code")
     return token
+
+
+def _kill_group(proc: subprocess.Popen) -> None:
+    """Kill the CLI and every process it started (its MCP servers), which share its session."""
+    pid = getattr(proc, "pid", None)
+    if isinstance(pid, int) and pid > 0:
+        try:
+            os.killpg(pid, signal.SIGKILL)
+            return
+        except OSError:  # the group is gone already
+            pass
+    proc.kill()
 
 
 class ClaudeCodeAgent:
@@ -293,15 +316,18 @@ class ClaudeCodeAgent:
             timeout = TRIGGER_TIMEOUT_S if case.mode == "trigger" else CASE_TIMEOUT_S
             proc = self._popen(
                 argv, cwd=work, env=env, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                text=True, encoding="utf-8", errors="replace",
+                text=True, encoding="utf-8", errors="replace", start_new_session=True,
             )  # fmt: skip
             try:
                 out, err = proc.communicate(
                     case.prompt, timeout=timeout
                 )  # on stdin: a leading "-" is no flag
             except subprocess.TimeoutExpired:
-                proc.kill()
-                proc.communicate()
+                _kill_group(proc)
+                with contextlib.suppress(subprocess.SubprocessError):
+                    proc.communicate(
+                        timeout=KILL_READ_S
+                    )  # give up reading if a process outside the group holds the pipe
                 return AgentAnswer(
                     "", f"Claude Code did not finish within {timeout} s", self._clock() - start
                 )
