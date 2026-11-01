@@ -7,8 +7,9 @@
 # Databricks service principal from the terminal without showing it, and stores it in AWS Secrets Manager.
 set -euo pipefail
 
+# No apostrophe inside "${...}": the bash 3.2 that macOS ships reads one as an opening quote.
 : "${DATABRICKS_HOST:?set DATABRICKS_HOST to the workspace URL, such as https://<workspace host>}"
-: "${DATABRICKS_CLIENT_ID:?set DATABRICKS_CLIENT_ID to the application ID of the agent's service principal}"
+: "${DATABRICKS_CLIENT_ID:?set DATABRICKS_CLIENT_ID to the application ID of the service principal of the agent}"
 REGION="${AWS_REGION:-us-east-1}"
 NAME="${AGENT_NAME:-skillhub_skill_agent}"
 SECRET_NAME="${SECRET_NAME:-skillhub/agents/${NAME}}"
