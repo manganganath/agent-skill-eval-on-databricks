@@ -1,0 +1,5 @@
+# The sample agent's own dependencies. The Skill Hub package is not one of them.
+strands-agents==1.62.0
+bedrock-agentcore==1.25.0
+opentelemetry-exporter-otlp-proto-http>=1.30,<2
+boto3>=1.43.115

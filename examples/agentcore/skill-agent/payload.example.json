@@ -1,0 +1,21 @@
+{
+  "prompt": "Check this model for errors before it goes to the investment committee.",
+  "mode": "trigger",
+  "skills_mcp": ["https://<workspace host>/ai-gateway/skills/?schema=<catalog>.common"],
+  "model": "us.anthropic.claude-sonnet-5-5",
+  "max_turns": 3,
+  "trace": {
+    "skillhub.run_key": "local_smoke",
+    "skillhub.trace_key": "0123456789abcdef0123456789abcdef",
+    "skillhub.case_id": "1",
+    "skillhub.repeat": "0",
+    "skillhub.mode": "trigger",
+    "skillhub.profile": "skill-agent"
+  },
+  "otel": {
+    "endpoint": "https://<workspace host>/api/2.0/otel/v1/traces",
+    "uc_table": "<catalog>.common_evals.traces_otel_spans"
+  },
+  "files": {},
+  "search_index": {}
+}

@@ -28,6 +28,7 @@ PATHS = [
     "config",
     "docs",
     "app",
+    "examples",
     "tests",
     "README.md",
     "databricks.yml",
