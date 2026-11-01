@@ -87,6 +87,13 @@ def test_a_text_answer_ends_the_turn():
     assert (res.text, res.tool_calls, res.finish_reason) == ("NVDA reports on 19 November.", [], "stop")
 
 
+@pytest.mark.parametrize("stop", ["content_filtered", "guardrail_intervened"])
+def test_a_filtered_answer_reads_as_content_filter_on_both_routes(stop):
+    response = {**load("bedrock_nova_text.json"), "stopReason": stop}
+    res = BedrockModelClient("nova-lite", NOVA, FakeRuntime(response)).chat(SYSTEM_AND_USER, [])
+    assert res.finish_reason == "content_filter"
+
+
 def test_no_request_carries_temperature_and_trigger_calls_keep_the_trigger_cap():
     runtime = FakeRuntime(load("bedrock_nova_text.json"), load("bedrock_nova_text.json"))
     client = BedrockModelClient("claude-bedrock", CLAUDE, runtime)

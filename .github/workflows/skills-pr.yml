@@ -49,7 +49,7 @@ jobs:
           fi
           fetch() {
             gh pr view "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" \
-              --json baseRefOid,headRefOid,headRefName,isCrossRepository,author > "$RUNNER_TEMP/pr.json"
+              --json baseRefOid,headRefOid,headRefName,isCrossRepository,author,labels > "$RUNNER_TEMP/pr.json"
           }
           fetch
           if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
@@ -75,7 +75,18 @@ jobs:
             head_sha="$EVENT_HEAD_SHA"
             requested_by="$ACTOR"
           fi
+          # The labels on the PR that someone other than its author added. A reviewer accepts the security scan's
+          # high findings with the override label (hub.yaml scan.override_label); an author cannot accept their own.
+          gh api --paginate "repos/$GITHUB_REPOSITORY/issues/$PR_NUMBER/events?per_page=100" > "$RUNNER_TEMP/events.json"
+          reviewer_labels=$(jq -rs --slurpfile pr "$RUNNER_TEMP/pr.json" '
+            add as $events | $pr[0].author.login as $author
+            | [ $pr[0].labels[].name as $label
+                | ($events | map(select(.event == "labeled" and .label.name == $label)) | last | .actor.login) as $by
+                | select($by != null and $by != $author and ($label | test("^[A-Za-z0-9 ._:/-]{1,50}$")))
+                | $label ]
+            | join(",")' "$RUNNER_TEMP/events.json")
           {
+            echo "reviewer_labels=$reviewer_labels"
             echo "base_sha=$(jq -r .baseRefOid "$RUNNER_TEMP/pr.json")"
             echo "head_sha=$head_sha"
             echo "head_ref=$(jq -r .headRefName "$RUNNER_TEMP/pr.json")"
@@ -124,6 +135,30 @@ jobs:
             echo "needs_rubric_only=$rubric"
             echo "run_key=pr${PR_NUMBER}-${HEAD_SHA:0:7}-a${RUN_ATTEMPT}"
           } >> "$GITHUB_OUTPUT"
+
+      # Before anything is generated or staged: a skill with a critical finding must never reach the workspace.
+      - name: 1b. Scan changed skills (no Databricks needed)
+        if: ${{ steps.changed.outputs.non_deleted != '' }}
+        env:
+          SKILLS: ${{ steps.changed.outputs.non_deleted }}
+          REVIEWER_LABELS: ${{ steps.pr.outputs.reviewer_labels }}
+        run: >-
+          uv run skillhub scan --skills "$SKILLS" --reviewer-labels "$REVIEWER_LABELS"
+          --json "$RUNNER_TEMP/scan.json" --summary "$GITHUB_STEP_SUMMARY"
+
+      # The LLM reviewer (hub.yaml scan.llm). Its findings are at most high; when it cannot be reached it warns.
+      - name: 1c. LLM review of changed skills
+        if: ${{ steps.pr.outputs.is_fork == 'false' && steps.changed.outputs.non_deleted != '' }}
+        env:
+          DATABRICKS_HOST: ${{ secrets.DATABRICKS_HOST }}
+          DATABRICKS_CLIENT_ID: ${{ secrets.DATABRICKS_CLIENT_ID }}
+          DATABRICKS_CLIENT_SECRET: ${{ secrets.DATABRICKS_CLIENT_SECRET }}
+          SQL_WAREHOUSE_ID: ${{ secrets.SQL_WAREHOUSE_ID }}
+          SKILLS: ${{ steps.changed.outputs.non_deleted }}
+          REVIEWER_LABELS: ${{ steps.pr.outputs.reviewer_labels }}
+        run: >-
+          uv run skillhub scan --llm --skills "$SKILLS" --reviewer-labels "$REVIEWER_LABELS"
+          --json "$RUNNER_TEMP/scan-llm.json" --summary "$GITHUB_STEP_SUMMARY"
 
       - name: 2. Generate missing evals and rubrics
         id: generate-cases
@@ -266,7 +301,9 @@ jobs:
           SKILL_HUB_URL: ${{ vars.SKILL_HUB_URL }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           RUN_LABEL: ${{ steps.changed.outputs.run_key }}
-        run: uv run skillhub pr-comment --run-key "$RUN_LABEL" --pr "$PR_NUMBER"
+        run: >-
+          uv run skillhub pr-comment --run-key "$RUN_LABEL" --pr "$PR_NUMBER"
+          --scan-file "$RUNNER_TEMP/scan.json" --scan-file "$RUNNER_TEMP/scan-llm.json"
 
       # The gate is bound to this checkout, which is the folder the eval uploaded: every gating row of
       # each changed skill must carry its content hash, rubric_hash and the dataset_digest of its cases and fixtures.

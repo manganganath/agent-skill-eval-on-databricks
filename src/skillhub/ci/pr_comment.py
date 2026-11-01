@@ -252,8 +252,9 @@ def render_matrix_markdown(
     links: bool = False,
     hub_url: str | None = None,
     gating_modes: Iterable[str] = REQUEST_MODES,
+    reserve: int = 0,
 ) -> str:
-    """The comment body. The repository can be public, so by default it holds no workspace host, run or
+    """The comment body. `reserve` characters are left for a section the caller adds after it. The repository can be public, so by default it holds no workspace host, run or
     experiment ID and no Skill Hub URL. `links` (SKILLHUB_PR_LINKS=true, for private repositories)
     adds an MLflow link per row (`run_url`) and the Skill Hub URL. A body too long for one GitHub comment shows
     the blocking rows first and says how many rows it leaves out."""
@@ -273,14 +274,15 @@ def render_matrix_markdown(
     table = [_matrix_line(r, links) for r in ordered]
     footer = ["", f"Skill Hub: {hub_url}" if links and hub_url else "Details in Skill Hub."]
     body = "\n".join([*lines, *table, *footer])
-    if len(body) <= COMMENT_MAX:
+    limit = COMMENT_MAX - reserve
+    if len(body) <= limit:
         return body
 
     def note(left_out: int) -> str:
         return f"{left_out} of {len(rows)} rows are not shown: a comment holds {COMMENT_MAX} characters."
 
     # Too long for one comment: the blocking rows first, then as many others as fit.
-    room = COMMENT_MAX - len("\n".join([*lines, "", note(len(rows)), *footer]))
+    room = limit - len("\n".join([*lines, "", note(len(rows)), *footer]))
     shown: list[str] = []
     for r in sorted(
         ordered, key=lambda r: not _blocking(r, gating_modes)

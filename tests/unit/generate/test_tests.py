@@ -6,7 +6,7 @@ import pytest
 
 from skillhub.bundle import SkillBundle
 from skillhub.gateway.models import ChatResult
-from skillhub.generate.tests import GenerationError, generate_trigger_cases, sibling_bundles
+from skillhub.generate.tests import ContentFiltered, GenerationError, generate_trigger_cases, sibling_bundles
 from tests.fakes import FakeModelClient
 
 CFG = SimpleNamespace(generator="claude-opus", catalog="cat")
@@ -109,6 +109,14 @@ def test_malformed_json_retried_twice_then_fails():
     with pytest.raises(GenerationError, match="3 attempts"):
         generate_trigger_cases(CFG, ME, [], model)
     assert len(model.calls) == 3
+
+
+def test_a_filtered_answer_is_not_retried_and_is_never_sent_back():
+    filtered = ChatResult("", [], "content_filter", {}, {"role": "assistant", "content": None})
+    model = FakeModelClient([filtered, reply(GOOD)])
+    with pytest.raises(ContentFiltered, match="content filter"):
+        generate_trigger_cases(CFG, ME, SIB, model)
+    assert len(model.calls) == 1
 
 
 def test_schema_mismatch_fails_with_generation_error():

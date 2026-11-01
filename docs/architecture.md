@@ -33,7 +33,7 @@ sequenceDiagram
   participant ML as MLflow
   participant D as Delta results
   A->>GH: Open or update a pull request
-  GH->>GH: lint, then generate missing cases and rubrics
+  GH->>GH: lint and security scan, then generate missing cases and rubrics
   GH->>WS: Upload candidate skills and fixtures
   GH->>J: Start with run key prN_sha7_aN
   J->>J: Stage run schemas with candidates and live skills in scope

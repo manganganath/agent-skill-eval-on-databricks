@@ -169,6 +169,101 @@ def lint_cmd(ctx: typer.Context, paths: list[str] = typer.Argument(None)) -> Non
     raise typer.Exit(1 if errors else 0)
 
 
+@app.command("scan")
+def scan_cmd(
+    ctx: typer.Context,
+    skills: str = typer.Option(
+        "", "--skills", help="Comma-separated `dept/name` or bare `name`. Empty: every skill."
+    ),
+    json_out: Path | None = typer.Option(None, "--json", help="Write the findings to this file as JSON."),
+    summary: Path | None = typer.Option(
+        None, "--summary", help="Append the Markdown summary to this file, such as $GITHUB_STEP_SUMMARY."
+    ),
+    allow_high: bool = typer.Option(False, "--allow-high", help="A reviewer accepted the high findings."),
+    reviewer_labels: str = typer.Option(
+        "",
+        "--reviewer-labels",
+        help="Comma-separated pull request labels that someone other than its author added. With "
+        "scan.override_label among them, a reviewer accepted the high findings.",
+    ),
+    llm: bool = typer.Option(
+        False, "--llm", help="Run the LLM reviewer (scan.llm) instead of the rules. Needs the workspace."
+    ),
+) -> None:
+    """Scan skill bundles for secrets, hidden text, prompt injection, encoded payloads and risky scripts.
+
+    The rules need no Databricks. Exit 1 on a critical finding, or on a high one without --allow-high; medium
+    and low findings are reported only. The LLM reviewer's findings are at most high, and a reviewer that cannot
+    be reached is a warning, not a failure.
+    """
+    import json
+    import os
+
+    from skillhub.bundle import discover_bundles
+    from skillhub.config import ScanSettings, load_lint_settings
+    from skillhub.scan import blocking, counts, markdown, scan_bundle
+
+    explicit = ctx.obj.get("config_path") or os.environ.get("SKILLHUB_CONFIG")
+    path = Path(explicit or "config/hub.yaml")
+    settings = ScanSettings()
+    if explicit or path.is_file():
+        with _guard():
+            try:
+                settings = load_lint_settings(path).scan
+            except OSError as e:
+                raise SkillHubError(f"cannot read {path}: {e.strerror}") from None
+    with _guard():
+        bundles = discover_bundles()
+    targets = _select_skills(bundles, skills) if _opt(skills) else bundles
+    allow_high = allow_high or settings.override_label in _csv(reviewer_labels)
+    findings, warnings = [], []
+    if llm:
+        if not settings.llm.enabled:
+            typer.echo("note: scan.llm is not enabled in hub.yaml; nothing to review", err=True)
+        else:
+            from skillhub.auth import auth_headers
+            from skillhub.gateway.models import model_client
+            from skillhub.scan_llm import review_bundle
+
+            cfg = _cfg(ctx)
+            model = model_client(cfg, settings.llm.model, auth_headers)
+            for b in targets:
+                try:
+                    findings += review_bundle(b, model)
+                except (
+                    Exception
+                ) as e:  # an outage or bad output must not block: the rules carry the guarantees
+                    warnings.append(
+                        f"{b.dept}/{b.name}: the LLM reviewer did not answer ({type(e).__name__})"
+                    )
+    else:
+        for b in targets:
+            findings += scan_bundle(b, allowed_domains=settings.allowed_domains)
+    stop = blocking(findings, allow_high=allow_high)
+    for f in findings:
+        typer.echo(str(f))
+    for w in warnings:
+        typer.echo(f"warning: {w}", err=True)
+    c = counts(findings)
+    typer.echo(
+        f"{len(targets)} skill(s); "
+        + ", ".join(f"{n} {sev}" for sev, n in c.items())
+        + f"; {len(stop)} blocking"
+    )
+    if json_out:
+        report = {"reviewer": "llm" if llm else "rules", "skills": [f"{b.dept}/{b.name}" for b in targets],
+                  "counts": c, "allow_high": allow_high, "blocking": len(stop), "warnings": warnings,
+                  "findings": [f.to_dict() for f in findings]}  # fmt: skip
+        json_out.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
+    if summary:
+        lines = list(markdown(findings, allow_high=allow_high, override_label=settings.override_label))
+        if llm:
+            lines[0] = "### Security scan: LLM reviewer"
+        with summary.open("a", encoding="utf-8") as fh:
+            fh.write("\n".join(lines + [f"- warning: {w}" for w in warnings]) + "\n\n")
+    raise typer.Exit(1 if stop else 0)
+
+
 @app.command("import")
 def import_cmd(
     ctx: typer.Context,
@@ -256,6 +351,22 @@ def _refuse_publish(journal, bundle, actual: str, message: str, *, git_sha, eval
     )
     typer.echo(f"error: refusing to publish {bundle.dept}/{bundle.name}: {message}", err=True)
     raise typer.Exit(2)
+
+
+def _refuse_unsafe(cfg, journal, bundle, actual: str, **provenance) -> None:
+    """Refuse a bundle with a critical security-scan finding: the last check before Unity Catalog, whatever the pull
+    request did. High findings were accepted by a reviewer in the pull request, and the production approval is the
+    sign-off for them here."""
+    from skillhub.scan import scan_bundle
+
+    critical = [
+        f for f in scan_bundle(bundle, allowed_domains=cfg.scan.allowed_domains) if f.severity == "critical"
+    ]
+    if critical:
+        first = f"{critical[0].path}:{critical[0].line} {critical[0].rule}: {critical[0].message}"
+        _refuse_publish(journal, bundle, actual,
+                        f"the security scan found {len(critical)} critical finding(s); the first is {first}",
+                        **provenance)  # fmt: skip
 
 
 def _require_evaluated(
@@ -414,6 +525,8 @@ def publish_cmd(
         _refuse_quarantined(cfg, dept, skill)
         w, uc, sql, journal = _services(cfg)
         bundle = _bundle(dept, skill)
+        _refuse_unsafe(cfg, journal, bundle, content_hash(bundle.files),
+                       git_sha=git_sha, eval_run_id=eval_run_id, actor=actor, job_run_id=_opt(job_run_id))  # fmt: skip
         check_provenance(git_sha, eval_run_id)
         digests = _local_eval_digests(bundle)
         _require_evaluated(
@@ -700,6 +813,8 @@ def _job_switch(
                 raise SkillHubError(
                     f"refusing to publish {dept}/{skill}: content hash {actual} is not the expected {expected}"
                 )
+            _refuse_unsafe(cfg, journal, bundle, actual,
+                           git_sha=git_sha, eval_run_id=eval_run_id, actor=actor, job_run_id=run_id)  # fmt: skip
             check_provenance(git_sha or "", eval_run_id or "")
             _require_ci_publisher(
                 w,
@@ -1219,6 +1334,11 @@ def pr_comment_cmd(
     ctx: typer.Context,
     run_key: str = typer.Option(..., "--run-key", help="Run label, for example pr12-ab12cd3-a1."),
     pr: int = typer.Option(..., "--pr"),
+    scan_file: list[Path] = typer.Option(
+        [],
+        "--scan-file",
+        help="A `skillhub scan --json` report to add to the comment. Repeatable; a missing file is skipped.",
+    ),
 ) -> None:
     """Upsert the sticky PR comment for a run. Exit 1 on fail, inconclusive or no results.
 
@@ -1258,9 +1378,13 @@ def pr_comment_cmd(
             if links:
                 add_run_links(rows, cfg.workspace.host)
             hub_url = (os.environ.get("SKILL_HUB_URL") or None) if links else None
+            scan = _scan_section(scan_file)
             body = render_matrix_markdown(
-                rows, run_key=key, links=links, hub_url=hub_url, gating_modes=cfg.defaults.gating_modes
-            )
+                rows, run_key=key, links=links, hub_url=hub_url, gating_modes=cfg.defaults.gating_modes,
+                reserve=len(scan) + 2 if scan else 0,
+            )  # fmt: skip
+            if scan:
+                body = f"{body}\n\n{scan}"
             action = upsert_pr_comment(repo=repo, pr=pr, body=body, token=token)
         except ValueError as e:
             raise SkillHubError(str(e)) from None
@@ -1270,6 +1394,23 @@ def pr_comment_cmd(
             raise SkillHubError(f"GitHub API call failed ({status})") from None
     typer.echo(f"pr comment {action}")
     raise typer.Exit(exit_code(blocking_verdicts(rows, cfg.defaults.gating_modes)))
+
+
+def _scan_section(paths: list[Path]) -> str:
+    """The security-scan section of the PR comment, from the scan reports that exist; empty without any."""
+    import json
+
+    from skillhub.scan import comment_section
+
+    reports = []
+    for path in paths:
+        try:
+            reports.append(json.loads(path.read_text(encoding="utf-8")))
+        except FileNotFoundError:
+            continue
+        except (OSError, ValueError) as e:
+            raise SkillHubError(f"cannot read the scan report {path}: {e}") from None
+    return comment_section(reports) if reports else ""
 
 
 @app.command("check-verdict")

@@ -299,6 +299,37 @@ A worker's log lines appear in the Job output, prefixed with `[dept/skill]`. A w
 
 One-off cleanup after you upgrade: treat MLflow traces written before this fix as holding expired `skillhub-ci-eval` tokens. Restrict or purge them.
 
+## Security scanning
+
+`skillhub scan` checks what a skill would publish: its bundle without `evals/`. Each finding has a severity:
+
+| Severity | Rules | Effect |
+|---|---|---|
+| critical | `secret` (a credential format: AWS key, GitHub, Databricks, Slack, OpenAI, Anthropic or Google key, private key, JWT); `hidden-unicode` (zero-width, bidirectional-control or Unicode-tag characters); `binary` (an executable); `remote-exec` (download and run, such as `curl … \| sh`) | Blocks the pull request and the publish. Fix it. A secret must also be rotated. |
+| high | `prompt-injection` (instruction override, or hiding actions from the user); `exfiltration` (sending the conversation, credentials or files to a URL outside `scan.allowed_domains`); `encoded-blob` (200 or more base64 or hex characters); `risky-call` in a script (`eval`, `exec`, `shell=True`, `os.system`, unpickling, `rm -rf` of a home or root folder, writes to shell profiles or SSH keys); `binary` that is not text; `llm-review` | Blocks the pull request unless a reviewer accepts it. |
+| medium | `script` (a reviewer should read it); `url` outside `scan.allowed_domains`; an embedded or attached image | Reported only. |
+| low | `network-call` in a script | Reported only. |
+
+Messages never quote a secret: they show at most its first four characters.
+
+**Where it runs:**
+- **In `skills-pr`, step 1b**, on the changed skills, before anything is generated or uploaded to the workspace. A blocked skill never reaches Unity Catalog. The findings go to the job summary and, when the eval runs, to the pull request comment.
+- **Step 1c is the LLM reviewer**, `scan.llm`, a `config/hub.yaml` model profile. It reads each changed skill for exfiltration, unsafe actions (trades or deletes without confirmation), deception and injection. Its findings are at most high. If its endpoint doesn't answer, the step warns and doesn't block, because the rules carry the hard guarantees. If the endpoint's content filter refuses to read a skill, that is itself a high finding: a person must read the skill.
+- **`skillhub publish` and the `skill-switch` Job** run the rules again and refuse a bundle with a critical finding, with a `publish_refused` journal row.
+
+**Accepting high findings.** A reviewer adds the label `scan.override_label` (default `skillhub-scan-override`) to the pull request, then re-runs the failed `skills-pr` job. The label counts only when someone other than the pull request's author added it. If the author removes it and adds it again, it no longer counts. Critical findings can't be accepted.
+
+Run it locally on any skill: `uv run --frozen skillhub scan --skills common/audit-xls`. It needs no workspace. Add `--llm` for the reviewer, which needs the workspace settings. `--json` writes a report, and `--summary` appends Markdown to a file.
+
+Configure it in `config/hub.yaml`:
+
+```yaml
+scan:
+  allowed_domains: [sec.gov]   # hosts a skill may name in a URL; subdomains match; example.com and *.invalid always pass
+  override_label: skillhub-scan-override
+  llm: {enabled: true, model: claude-opus}
+```
+
 ## Switch and rollback
 
 A switch is any of these:
@@ -331,7 +362,7 @@ CI blocks a change that moves a skill out of such a department, for example a re
 CI never promotes content out of quarantine. An operator does it, outside the pipeline:
 
 1. A reviewer reads the full skill content, including `references/`, and records the decision in the pull request.
-2. The operator creates the skill in the target department. Run `uv run skillhub lint`, then evaluate the new copy with `uv run skillhub eval --trigger-source merge` (see Run evals). Publish accepts only results with the merge eval's trigger source.
+2. The operator creates the skill in the target department. Run `uv run skillhub lint` and `uv run skillhub scan --skills <dept>/<skill> --llm`, which must report no critical or high finding, then evaluate the new copy with `uv run skillhub eval --trigger-source merge` (see Run evals). Publish accepts only results with the merge eval's trigger source.
 3. The operator publishes and switches it with the operator commands `skillhub publish` and `skillhub switch`. These need `skillhub-ci`-level grants and bypass the approval gate, so keep the review record from step 1.
 4. If the move was merged to `main`, the publish workflow diffs from the `skillhub/released` tag and fails on the move every time. After you release the skill by hand, move that tag to the merge commit.
 

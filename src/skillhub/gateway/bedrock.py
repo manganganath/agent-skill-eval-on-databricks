@@ -29,7 +29,8 @@ MAX_TOOL_NAME = 64
 CONNECT_TIMEOUT_S = 10
 # The assistant turn's own Converse content, kept on the echoed message so that the next call replays it unchanged.
 BEDROCK_CONTENT = "bedrock_content"
-FINISH = {"tool_use": "tool_calls", "end_turn": "stop", "stop_sequence": "stop", "max_tokens": "length"}
+FINISH = {"tool_use": "tool_calls", "end_turn": "stop", "stop_sequence": "stop", "max_tokens": "length",
+          "content_filtered": "content_filter", "guardrail_intervened": "content_filter"}  # fmt: skip
 
 
 class BedrockCallError(RuntimeError):

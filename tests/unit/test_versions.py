@@ -338,6 +338,21 @@ def test_cli_publish_refuses_a_quarantined_department(cli_reg, make_bundle, tmp_
     assert cli_reg.uc.list("skill_hub.external_versions") == []
 
 
+def test_cli_publish_refuses_a_critical_scan_finding_with_exit_2_and_a_journal_row(cli_reg, tmp_path):
+    """The last check before Unity Catalog: a credential in the bundle is never published, and the error does not
+    quote it."""
+    key = "AKIA" + "Q" * 16  # assembled here, so no file holds one
+    skill_md = tmp_path / "elsewhere" / "common" / "audit-xls" / "SKILL.md"
+    skill_md.write_text(skill_md.read_text(encoding="utf-8") + f"\nUse the key {key}.\n", encoding="utf-8")
+    r = _invoke()
+    assert r.exit_code == 2, r.output
+    assert "refusing to publish common/audit-xls: the security scan found 1 critical finding(s)" in r.output
+    assert "secret: an AWS access key ID (AKIA" in r.output and key not in r.output
+    (row,) = cli_reg.journal.history("common", "audit-xls")
+    assert row.action == "publish_refused"
+    assert cli_reg.uc.list("skill_hub.common_versions") == []
+
+
 def test_cli_publish_run_key_must_name_the_same_eval_as_eval_run_id(cli_reg):
     r = _invoke("--run-key", "pr9-other")
     assert r.exit_code == 2 and "different eval runs" in r.output
