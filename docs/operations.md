@@ -116,6 +116,7 @@ The script sets these variables:
 | `SKILLHUB_ALERT_DESTINATION_ID` | `production` | Notification destination for the SQL alerts and for failed `skill-switch` and nightly runs (with `--alert-destination-id`). See Reconcile alerts. |
 | `SKILL_HUB_URL` | `production`, `ci-eval` | Address of the Skill Hub, used in PR comment links (with `--skill-hub-url`) |
 | `SKILLHUB_PR_LINKS` | Repository | `true` or `false` (with `--pr-links`). See below. |
+| `SKILLHUB_SCAN_OVERRIDE_LABEL` | Repository | Optional. The label with which a reviewer accepts the security scan's high findings; the default is `skillhub-scan-override`. The script does not set it. See Security scanning. |
 
 ### Change one variable
 
@@ -301,32 +302,46 @@ One-off cleanup after you upgrade: treat MLflow traces written before this fix a
 
 ## Security scanning
 
-`skillhub scan` checks what a skill would publish: its bundle without `evals/`. Each finding has a severity:
+`skillhub scan` checks what a skill would publish: its bundle without `evals/`. It reads every file as text, whatever its first bytes or its encoding, so a script behind an image header is still scanned. It reads the XML parts of Office files too. It matches phrases per paragraph, after Unicode normalisation and without Markdown emphasis, so a line wrap, fullwidth letters or bold text do not hide them. Each finding has a severity:
 
 | Severity | Rules | Effect |
 |---|---|---|
-| critical | `secret` (a credential format: AWS key, GitHub, Databricks, Slack, OpenAI, Anthropic or Google key, private key, JWT); `hidden-unicode` (zero-width, bidirectional-control or Unicode-tag characters); `binary` (an executable); `remote-exec` (download and run, such as `curl … \| sh`) | Blocks the pull request and the publish. Fix it. A secret must also be rotated. |
-| high | `prompt-injection` (instruction override, or hiding actions from the user); `exfiltration` (sending the conversation, credentials or files to a URL outside `scan.allowed_domains`); `encoded-blob` (200 or more base64 or hex characters); `risky-call` in a script (`eval`, `exec`, `shell=True`, `os.system`, unpickling, `rm -rf` of a home or root folder, writes to shell profiles or SSH keys); `binary` that is not text; `llm-review` | Blocks the pull request unless a reviewer accepts it. |
-| medium | `script` (a reviewer should read it); `url` outside `scan.allowed_domains`; an embedded or attached image | Reported only. |
+| critical | `secret`: a credential format, such as an AWS, GitHub, Databricks, Slack, OpenAI, Anthropic or Google key, a private key or a JWT. `hidden-unicode`: format characters such as zero-width, bidirectional-control and tag characters, Hangul fillers, and the supplement's variation selectors. A byte order mark at the start of a file, and a joiner inside an emoji, are allowed. `binary`: an executable. `remote-exec`: download and run, such as `curl … \| sh`, `bash -c "$(curl …)"`, `source <(curl …)` or `iwr … \| iex`. | Blocks the pull request and the publish. Fix it. A credential must also be rotated. |
+| high | `prompt-injection`: an instruction override, or hiding what the agent did from the user. A negated sentence, such as "never post API keys in the chat", is a guardrail and is not reported. `exfiltration`: sending the conversation, credentials, holdings or files to a URL outside `scan.allowed_domains`. `encoded-blob`: 200 or more base64, base64url or hex characters, on one line or wrapped over several, or an embedded file that is not the image it claims to be. `risky-call` in a script: `eval`, `exec`, `shell=True`, `os.system`, unpickling, `rm -rf` of a home or root folder, writes to shell profiles or SSH keys. `binary`: text in another encoding, an archive, an Office file with macros, or a file that is not text. `url`: a URL that does not parse. `hidden-unicode`: a soft hyphen alone. `llm-review`. | Blocks the pull request unless a reviewer accepts it. |
+| medium | `script`: a file a reviewer should read, by suffix (`.py`, `.sh`, `.ipynb`, `.sql`, `.R`, `.ps1` and others), by name (`Makefile`), by folder (`scripts/`, `bin/`) or by a `#!` line. `url`: a host outside `scan.allowed_domains`. `binary`: an image, or an Office file without macros. | Reported only. |
 | low | `network-call` in a script | Reported only. |
 
-Messages never quote a secret: they show at most its first four characters.
+Messages never quote a credential: they show at most its first four characters. One rule reports at most 20 findings in a file, and counts the rest in one more finding.
 
 **Where it runs:**
 - **In `skills-pr`, step 1b**, on the changed skills, before anything is generated or uploaded to the workspace. A blocked skill never reaches Unity Catalog. The findings go to the job summary and, when the eval runs, to the pull request comment.
-- **Step 1c is the LLM reviewer**, `scan.llm`, a `config/hub.yaml` model profile. It reads each changed skill for exfiltration, unsafe actions (trades or deletes without confirmation), deception and injection. Its findings are at most high. If its endpoint doesn't answer, the step warns and doesn't block, because the rules carry the hard guarantees. If the endpoint's content filter refuses to read a skill, that is itself a high finding: a person must read the skill.
-- **`skillhub publish` and the `skill-switch` Job** run the rules again and refuse a bundle with a critical finding, with a `publish_refused` journal row.
+- **In step 1c, the LLM reviewer** (`scan.llm`, a `config/hub.yaml` model profile) reads each changed skill for exfiltration, unsafe actions such as trades or deletes without confirmation, deception, and injection. Its findings are at most high.
+  - If the reviewer's answer can't be read, or its endpoint's content filter refuses the skill, that is a high finding: a person must read the skill.
+  - If its endpoint can't be reached, the step warns and doesn't block. The rules carry the hard guarantees.
+- **In `skills-publish`,** the plan job writes the scan of the release to the run's summary, for the production approver. It doesn't block there.
+- **`skillhub publish` and the `skill-switch` Job** run the rules again, from `main`, and refuse a bundle with a critical finding, with a `publish_refused` journal row.
 
-**Accepting high findings.** A reviewer adds the label `scan.override_label` (default `skillhub-scan-override`) to the pull request, then re-runs the failed `skills-pr` job. The label counts only when someone other than the pull request's author added it. If the author removes it and adds it again, it no longer counts. Critical findings can't be accepted.
+**Accepting high findings.** A reviewer adds the label `skillhub-scan-override` to the pull request, then re-runs the failed `skills-pr` job. Set the repository variable `SKILLHUB_SCAN_OVERRIDE_LABEL` to use another label. The label counts only under these conditions:
+- the last to add it was a person, not a bot or an app;
+- that person is not the pull request's author;
+- no commits were pushed after it. Each push removes it, so a reviewer reads the new commits and adds it again.
 
-Run it locally on any skill: `uv run --frozen skillhub scan --skills common/audit-xls`. It needs no workspace. Add `--llm` for the reviewer, which needs the workspace settings. `--json` writes a report, and `--summary` appends Markdown to a file.
+Critical findings can't be accepted.
+
+For pull requests that the Skill Hub opens, the author is the account of its GitHub token, not the person who drafted the skill. Give triage access, which can add labels, only to reviewers.
+
+**What the scan trusts.** Like every pull request check, steps 1b and 1c run the pull request's own code and configuration. A pull request could change the scanner, `config/hub.yaml` (`scan.allowed_domains`, `scan.llm`) or the workflow itself. Review such changes as code: `.github/CODEOWNERS` names an owner for them, and branch protection can require that owner's review (see Approval gates). The publish check runs the scanner and the configuration of `main`.
+
+Run it locally on any skill:
+- `uv run --frozen skillhub scan --skills common/audit-xls` needs no workspace.
+- `--llm` adds the LLM reviewer to the rules, and needs the workspace settings. `--llm-only` runs only the reviewer.
+- `--json` writes a report, and `--summary` appends Markdown to a file.
 
 Configure it in `config/hub.yaml`:
 
 ```yaml
 scan:
   allowed_domains: [sec.gov]   # hosts a skill may name in a URL; subdomains match; example.com and *.invalid always pass
-  override_label: skillhub-scan-override
   llm: {enabled: true, model: claude-opus}
 ```
 
@@ -362,7 +377,7 @@ CI blocks a change that moves a skill out of such a department, for example a re
 CI never promotes content out of quarantine. An operator does it, outside the pipeline:
 
 1. A reviewer reads the full skill content, including `references/`, and records the decision in the pull request.
-2. The operator creates the skill in the target department. Run `uv run skillhub lint` and `uv run skillhub scan --skills <dept>/<skill> --llm`, which must report no critical or high finding, then evaluate the new copy with `uv run skillhub eval --trigger-source merge` (see Run evals). Publish accepts only results with the merge eval's trigger source.
+2. The operator creates the skill in the target department. Run `uv run skillhub lint`, then `uv run skillhub scan --skills <dept>/<skill> --llm`, which runs the rules and the LLM reviewer and must report no critical or high finding. Then evaluate the new copy with `uv run skillhub eval --trigger-source merge` (see Run evals). Publish accepts only results with the merge eval's trigger source.
 3. The operator publishes and switches it with the operator commands `skillhub publish` and `skillhub switch`. These need `skillhub-ci`-level grants and bypass the approval gate, so keep the review record from step 1.
 4. If the move was merged to `main`, the publish workflow diffs from the `skillhub/released` tag and fails on the move every time. After you release the skill by hand, move that tag to the merge commit.
 

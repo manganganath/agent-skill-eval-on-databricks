@@ -3,3 +3,8 @@
 # maintainer (0 required approving reviews). See scripts/configure_github.sh to enable it.
 skills/**/evals/**    @manganganath
 .github/**            @manganganath
+# The security scan and the configuration it reads: a pull request runs its own copy.
+config/**                                 @manganganath
+src/skillhub/scan.py                      @manganganath
+src/skillhub/scan_llm.py                  @manganganath
+src/skillhub/prompts/scan_reviewer.txt    @manganganath

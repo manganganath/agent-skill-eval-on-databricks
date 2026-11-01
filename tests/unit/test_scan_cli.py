@@ -19,7 +19,6 @@ defaults: {models: [m]}
 models: {m: {route: serving, endpoint: e}}
 scan:
   allowed_domains: [sec.gov]
-  override_label: scan-ok
   llm: {enabled: true, model: m}
 """
 
@@ -62,12 +61,6 @@ def test_a_high_finding_fails_unless_a_reviewer_accepted_it(repo):
     assert r.exit_code == 0 and "common/pushy/SKILL.md:5: high: prompt-injection" in r.output
 
 
-def test_the_override_label_among_the_reviewer_labels_accepts_high_findings(repo):
-    assert _scan(repo, "--skills", "pushy", "--reviewer-labels", "docs,scan-ok").exit_code == 0
-    assert _scan(repo, "--skills", "pushy", "--reviewer-labels", "docs,scan-ok-not").exit_code == 1
-    assert _scan(repo, "--skills", "pushy", "--reviewer-labels", "").exit_code == 1
-
-
 def test_a_critical_finding_fails_even_when_high_ones_are_accepted(repo):
     r = _scan(repo, "--skills", "equity_research/leaky", "--allow-high")
     assert r.exit_code == 1 and "critical: secret" in r.output and "Q" * 16 not in r.output
@@ -76,7 +69,9 @@ def test_a_critical_finding_fails_even_when_high_ones_are_accepted(repo):
 def test_without_skills_every_skill_is_scanned_and_the_reports_are_written(repo):
     summary = repo / "summary.md"
     summary.write_text("earlier step\n", encoding="utf-8")
-    r = _scan(repo, "--json", str(repo / "scan.json"), "--summary", str(summary))
+    r = _scan(
+        repo, "--json", str(repo / "scan.json"), "--summary", str(summary), "--override-label", "scan-ok"
+    )
     assert r.exit_code == 1
     report = json.loads((repo / "scan.json").read_text())
     assert report["reviewer"] == "rules" and report["blocking"] == 2 and report["allow_high"] is False
@@ -123,15 +118,16 @@ def test_the_llm_reviewer_reports_its_findings_as_high_at_most_and_masks_credent
     llm["model"] = _Model([json.dumps({"findings": [finding]})])
     r = _scan(repo, "--llm", "--skills", "common/clean", "--json", str(repo / "llm.json"))
     assert r.exit_code == 1 and llm["name"] == "m"
+    assert json.loads((repo / "llm.json").read_text())["reviewer"] == "rules and llm"
     assert "common/clean/SKILL.md: high: llm-review: exfiltration: Sends the conversation away." in r.output
     assert token not in r.output and "dapi..." in r.output
     assert json.loads((repo / "llm.json").read_text())["findings"][0]["source"] == "llm"
 
 
-def test_a_reviewer_that_does_not_answer_is_a_warning_not_a_failure(repo, llm):
+def test_a_reviewer_that_cannot_be_reached_is_a_warning_not_a_failure(repo, llm):
     llm["model"] = _Model([RuntimeError("endpoint down")])
-    r = _scan(repo, "--llm", "--skills", "common/clean")
-    assert r.exit_code == 0 and "the LLM reviewer did not answer (RuntimeError)" in r.output
+    r = _scan(repo, "--llm-only", "--skills", "common/clean")
+    assert r.exit_code == 0 and "the LLM reviewer could not be reached (RuntimeError)" in r.output
 
 
 def test_a_reviewer_whose_content_filter_refuses_the_skill_makes_a_high_finding(repo, llm):
@@ -145,16 +141,24 @@ def test_a_reviewer_whose_content_filter_refuses_the_skill_makes_a_high_finding(
     assert "common/clean/SKILL.md: high: llm-review: the reviewer model's content filter refused" in r.output
 
 
-def test_a_severity_above_high_from_the_reviewer_is_not_accepted(repo, llm):
-    bad = json.dumps(
-        {"findings": [{"file": "SKILL.md", "severity": "critical", "category": "policy", "why": "x"}]}
+def test_a_severity_or_category_the_reviewer_words_differently_is_kept_as_high(repo, llm):
+    odd = json.dumps(
+        {"findings": [{"file": "SKILL.md", "severity": "critical", "category": "deception", "why": "x"}]}
     )
-    llm["model"] = _Model([bad, bad, bad])
-    r = _scan(repo, "--llm", "--skills", "common/clean")
-    assert r.exit_code == 0 and "did not answer (GenerationError)" in r.output
+    llm["model"] = _Model([odd])
+    r = _scan(repo, "--llm-only", "--skills", "common/clean")
+    assert r.exit_code == 1 and "common/clean/SKILL.md: high: llm-review: policy: x" in r.output
 
 
-def test_the_llm_reviewer_does_nothing_when_it_is_not_enabled(repo):
+def test_an_answer_the_reviewer_never_gets_right_is_a_high_finding(repo, llm):
+    llm["model"] = _Model(["not json", "still not", "no"])
+    r = _scan(repo, "--llm-only", "--skills", "common/clean")
+    assert r.exit_code == 1 and "high: llm-review: the reviewer's answer could not be read" in r.output
+
+
+def test_without_the_reviewer_enabled_llm_still_runs_the_rules_and_says_so(repo):
     (repo / "hub.yaml").write_text(HUB.replace("enabled: true", "enabled: false"), encoding="utf-8")
-    r = _scan(repo, "--llm")
+    r = _scan(repo, "--llm", "--skills", "pushy")
+    assert r.exit_code == 1 and "high: prompt-injection" in r.output and "scan.llm is not enabled" in r.output
+    r = _scan(repo, "--llm-only", "--skills", "pushy")
     assert r.exit_code == 0 and "scan.llm is not enabled" in r.output

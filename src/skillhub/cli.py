@@ -180,21 +180,24 @@ def scan_cmd(
         None, "--summary", help="Append the Markdown summary to this file, such as $GITHUB_STEP_SUMMARY."
     ),
     allow_high: bool = typer.Option(False, "--allow-high", help="A reviewer accepted the high findings."),
-    reviewer_labels: str = typer.Option(
-        "",
-        "--reviewer-labels",
-        help="Comma-separated pull request labels that someone other than its author added. With "
-        "scan.override_label among them, a reviewer accepted the high findings.",
+    override_label: str = typer.Option(
+        "skillhub-scan-override",
+        "--override-label",
+        envvar="SKILLHUB_SCAN_OVERRIDE_LABEL",
+        help="The pull request label with which a reviewer accepts high findings, named in the summary.",
     ),
     llm: bool = typer.Option(
-        False, "--llm", help="Run the LLM reviewer (scan.llm) instead of the rules. Needs the workspace."
+        False, "--llm", help="Also run the LLM reviewer (scan.llm). Needs the workspace."
+    ),
+    llm_only: bool = typer.Option(
+        False, "--llm-only", help="Run only the LLM reviewer, after a rules-only step."
     ),
 ) -> None:
-    """Scan skill bundles for secrets, hidden text, prompt injection, encoded payloads and risky scripts.
+    """Scan skill bundles for secrets, hidden text, prompt injection, exfiltration, encoded payloads and risky scripts.
 
     The rules need no Databricks. Exit 1 on a critical finding, or on a high one without --allow-high; medium
-    and low findings are reported only. The LLM reviewer's findings are at most high, and a reviewer that cannot
-    be reached is a warning, not a failure.
+    and low findings are reported only. The LLM reviewer's findings are at most high; a reviewer that cannot be
+    reached is a warning, and an answer it cannot read is a high finding.
     """
     import json
     import os
@@ -215,11 +218,13 @@ def scan_cmd(
     with _guard():
         bundles = discover_bundles()
     targets = _select_skills(bundles, skills) if _opt(skills) else bundles
-    allow_high = allow_high or settings.override_label in _csv(reviewer_labels)
     findings, warnings = [], []
-    if llm:
+    if not llm_only:
+        for b in targets:
+            findings += scan_bundle(b, allowed_domains=settings.allowed_domains)
+    if llm or llm_only:
         if not settings.llm.enabled:
-            typer.echo("note: scan.llm is not enabled in hub.yaml; nothing to review", err=True)
+            warnings.append("scan.llm is not enabled in hub.yaml, so the LLM reviewer did not run")
         else:
             from skillhub.auth import auth_headers
             from skillhub.gateway.models import model_client
@@ -230,15 +235,11 @@ def scan_cmd(
             for b in targets:
                 try:
                     findings += review_bundle(b, model)
-                except (
-                    Exception
-                ) as e:  # an outage or bad output must not block: the rules carry the guarantees
+                except Exception as e:  # an outage must not block: the rules carry the hard guarantees
                     warnings.append(
-                        f"{b.dept}/{b.name}: the LLM reviewer did not answer ({type(e).__name__})"
+                        f"{b.dept}/{b.name}: the LLM reviewer could not be reached ({type(e).__name__})"
                     )
-    else:
-        for b in targets:
-            findings += scan_bundle(b, allowed_domains=settings.allowed_domains)
+    reviewer = "llm" if llm_only else "rules and llm" if llm else "rules"
     stop = blocking(findings, allow_high=allow_high)
     for f in findings:
         typer.echo(str(f))
@@ -251,14 +252,16 @@ def scan_cmd(
         + f"; {len(stop)} blocking"
     )
     if json_out:
-        report = {"reviewer": "llm" if llm else "rules", "skills": [f"{b.dept}/{b.name}" for b in targets],
-                  "counts": c, "allow_high": allow_high, "blocking": len(stop), "warnings": warnings,
+        report = {"reviewer": reviewer, "skills": [f"{b.dept}/{b.name}" for b in targets], "counts": c,
+                  "allow_high": allow_high, "blocking": len(stop), "warnings": warnings,
                   "findings": [f.to_dict() for f in findings]}  # fmt: skip
         json_out.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
     if summary:
-        lines = list(markdown(findings, allow_high=allow_high, override_label=settings.override_label))
-        if llm:
-            lines[0] = "### Security scan: LLM reviewer"
+        lines = list(markdown(findings, allow_high=allow_high, override_label=override_label))
+        lines[0] = {
+            "llm": "### Security scan: LLM reviewer",
+            "rules and llm": "### Security scan: rules and LLM reviewer",
+        }.get(reviewer, lines[0])
         with summary.open("a", encoding="utf-8") as fh:
             fh.write("\n".join(lines + [f"- warning: {w}" for w in warnings]) + "\n\n")
     raise typer.Exit(1 if stop else 0)

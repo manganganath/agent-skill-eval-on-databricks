@@ -136,7 +136,6 @@ class ExternalSettings(BaseModel):
 _DOMAIN = re.compile(
     r"(?=.{1,253}$)[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+"
 )
-_LABEL = re.compile(r"[A-Za-z0-9][A-Za-z0-9 ._:/-]{0,49}")
 
 
 class ScanLlmSettings(BaseModel):
@@ -149,10 +148,10 @@ class ScanLlmSettings(BaseModel):
 class ScanSettings(BaseModel):
     """The security scan of skill bundles (`skillhub scan`)."""
 
-    # Hosts a skill may name in a URL; a subdomain of one matches. Any other host is a medium finding.
+    # Hosts a skill may name in a URL; a subdomain of one matches. Any other host is a medium finding. The label with
+    # which a reviewer accepts high findings is the repository variable SKILLHUB_SCAN_OVERRIDE_LABEL, not a setting
+    # here: a pull request could change this file.
     allowed_domains: list[str] = []
-    # The pull-request label with which a reviewer accepts high findings. Labels need triage access.
-    override_label: str = "skillhub-scan-override"
     llm: ScanLlmSettings = ScanLlmSettings()
 
     @field_validator("allowed_domains")
@@ -163,13 +162,6 @@ class ScanSettings(BaseModel):
         if bad:
             raise ValueError(f"scan.allowed_domains: {', '.join(bad)} is not a host name such as sec.gov")
         return out
-
-    @field_validator("override_label")
-    @classmethod
-    def _label_is_a_label(cls, v: str) -> str:
-        if not _LABEL.fullmatch(v):
-            raise ValueError(f"scan.override_label {v!r} is not a pull-request label name")
-        return v
 
 
 class Defaults(BaseModel):

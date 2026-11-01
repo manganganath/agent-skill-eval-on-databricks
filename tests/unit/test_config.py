@@ -277,7 +277,7 @@ def test_an_external_agent_profile_survives_the_eval_worker_round_trip(cfg):
 def test_the_scan_settings_load_with_and_without_the_environment(cfg, monkeypatch):
     from skillhub.config import load_lint_settings
 
-    assert cfg.scan.override_label == "skillhub-scan-override" and cfg.scan.llm.model == "claude-opus"
+    assert cfg.scan.llm.model == "claude-opus" and cfg.scan.llm.enabled
     assert "sec.gov" in cfg.scan.allowed_domains
     for k in ("DATABRICKS_HOST", "SQL_WAREHOUSE_ID", "SKILLHUB_CATALOG"):
         monkeypatch.delenv(k, raising=False)
@@ -294,7 +294,6 @@ def test_the_scan_settings_load_with_and_without_the_environment(cfg, monkeypatc
             "scan.llm.model must name a model profile",
         ),
         ("allowed_domains: [sec.gov,", "allowed_domains: [https://sec.gov,", "is not a host name"),
-        ("override_label: skillhub-scan-override", "override_label: 'a,b'", "is not a pull-request label"),
     ],
 )
 def test_a_bad_scan_setting_is_refused_by_both_loaders(tmp_path, old, new, says):

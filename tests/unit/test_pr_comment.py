@@ -405,7 +405,7 @@ def test_pr_comment_adds_the_scan_reports_that_exist_after_the_matrix(cli_env, m
     body = posted["body"]
     assert body.index("### Skill evaluation") < body.index("### Security scan")
     assert "- **Rules:** 0 critical, 1 high, 2 medium, 0 low (high findings accepted by a reviewer)" in body
-    assert "| high | common/x | `SKILL.md:3` | prompt-injection | an instruction-override phrase |" in body
+    assert "| high | common/x | SKILL.md:3 | prompt-injection | an instruction-override phrase |" in body
 
 
 def test_the_matrix_leaves_room_for_a_section_after_it():

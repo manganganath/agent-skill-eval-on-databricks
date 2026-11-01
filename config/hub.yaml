@@ -45,7 +45,6 @@ defaults:
 # The security scan of skill bundles (`skillhub scan`, docs/operations.md "Security scanning").
 scan:
   allowed_domains: [sec.gov, apache.org, w3.org, openxmlformats.org]   # hosts a skill may name in a URL; subdomains match
-  override_label: skillhub-scan-override   # the pull-request label with which a reviewer accepts high findings
   llm: {enabled: true, model: claude-opus}  # the LLM reviewer in the PR gate; its findings are at most high
 
 # External model providers. Reviewers register the models themselves on the Skill Hub's Models page.

@@ -40,7 +40,10 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           EVENT_NAME: ${{ github.event_name }}
+          EVENT_ACTION: ${{ github.event.action }}
           EVENT_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          RUN_ATTEMPT: ${{ github.run_attempt }}
+          SCAN_OVERRIDE_LABEL: ${{ vars.SKILLHUB_SCAN_OVERRIDE_LABEL }}
         run: |
           # Runs before checkout: nothing from the PR is executed here.
           if ! [[ "$PR_NUMBER" =~ ^[1-9][0-9]*$ ]]; then
@@ -75,18 +78,32 @@ jobs:
             head_sha="$EVENT_HEAD_SHA"
             requested_by="$ACTOR"
           fi
-          # The labels on the PR that someone other than its author added. A reviewer accepts the security scan's
-          # high findings with the override label (hub.yaml scan.override_label); an author cannot accept their own.
-          gh api --paginate "repos/$GITHUB_REPOSITORY/issues/$PR_NUMBER/events?per_page=100" > "$RUNNER_TEMP/events.json"
-          reviewer_labels=$(jq -rs --slurpfile pr "$RUNNER_TEMP/pr.json" '
-            add as $events | $pr[0].author.login as $author
-            | [ $pr[0].labels[].name as $label
-                | ($events | map(select(.event == "labeled" and .label.name == $label)) | last | .actor.login) as $by
-                | select($by != null and $by != $author and ($label | test("^[A-Za-z0-9 ._:/-]{1,50}$")))
-                | $label ]
-            | join(",")' "$RUNNER_TEMP/events.json")
+          # The security scan's override label. It accepts the scan's high findings while it is on the PR, when the
+          # last to add it is a person (not a bot) other than the PR's author, and only until the next push: a push
+          # removes it, except on a re-run, which a reviewer starts after adding it.
+          label="${SCAN_OVERRIDE_LABEL:-skillhub-scan-override}"
+          if ! [[ "$label" =~ ^[A-Za-z0-9][A-Za-z0-9\ ._:/-]{0,49}$ ]]; then
+            echo "::error::The repository variable SKILLHUB_SCAN_OVERRIDE_LABEL is not a label name."
+            exit 1
+          fi
+          scan_accepted=false
+          if jq -e --arg l "$label" 'any(.labels[]; .name == $l)' "$RUNNER_TEMP/pr.json" > /dev/null; then
+            if [ "$EVENT_NAME" = "pull_request" ] && [ "$EVENT_ACTION" = "synchronize" ] && [ "$RUN_ATTEMPT" = "1" ]; then
+              gh api -X DELETE "repos/$GITHUB_REPOSITORY/issues/$PR_NUMBER/labels/$(jq -rn --arg l "$label" '$l | @uri')" > /dev/null
+              echo "::notice::New commits arrived, so the $label label was removed. A reviewer adds it again after reading them, then re-runs this job."
+            else
+              gh api --paginate "repos/$GITHUB_REPOSITORY/issues/$PR_NUMBER/events?per_page=100" > "$RUNNER_TEMP/events.json"
+              by=$(jq -rs --arg l "$label" 'add | map(select(.event == "labeled" and .label.name == $l)) | last
+                | "\(.actor.type // "")/\(.actor.login // "")"' "$RUNNER_TEMP/events.json")
+              author=$(jq -r .author.login "$RUNNER_TEMP/pr.json")
+              if [ "${by%%/*}" = "User" ] && [ "${by#*/}" != "$author" ]; then
+                scan_accepted=true
+              fi
+            fi
+          fi
           {
-            echo "reviewer_labels=$reviewer_labels"
+            echo "scan_accepted=$scan_accepted"
+            echo "scan_label=$label"
             echo "base_sha=$(jq -r .baseRefOid "$RUNNER_TEMP/pr.json")"
             echo "head_sha=$head_sha"
             echo "head_ref=$(jq -r .headRefName "$RUNNER_TEMP/pr.json")"
@@ -138,16 +155,20 @@ jobs:
 
       # Before anything is generated or staged: a skill with a critical finding must never reach the workspace.
       - name: 1b. Scan changed skills (no Databricks needed)
+        id: scan
         if: ${{ steps.changed.outputs.non_deleted != '' }}
         env:
           SKILLS: ${{ steps.changed.outputs.non_deleted }}
-          REVIEWER_LABELS: ${{ steps.pr.outputs.reviewer_labels }}
-        run: >-
-          uv run skillhub scan --skills "$SKILLS" --reviewer-labels "$REVIEWER_LABELS"
-          --json "$RUNNER_TEMP/scan.json" --summary "$GITHUB_STEP_SUMMARY"
+          SCAN_ACCEPTED: ${{ steps.pr.outputs.scan_accepted }}
+          SKILLHUB_SCAN_OVERRIDE_LABEL: ${{ steps.pr.outputs.scan_label }}
+        run: |
+          accept=()
+          if [ "$SCAN_ACCEPTED" = "true" ]; then accept=(--allow-high); fi
+          uv run skillhub scan --skills "$SKILLS" "${accept[@]}" --json "$RUNNER_TEMP/scan.json" --summary "$GITHUB_STEP_SUMMARY"
 
       # The LLM reviewer (hub.yaml scan.llm). Its findings are at most high; when it cannot be reached it warns.
       - name: 1c. LLM review of changed skills
+        id: scan-llm
         if: ${{ steps.pr.outputs.is_fork == 'false' && steps.changed.outputs.non_deleted != '' }}
         env:
           DATABRICKS_HOST: ${{ secrets.DATABRICKS_HOST }}
@@ -155,10 +176,12 @@ jobs:
           DATABRICKS_CLIENT_SECRET: ${{ secrets.DATABRICKS_CLIENT_SECRET }}
           SQL_WAREHOUSE_ID: ${{ secrets.SQL_WAREHOUSE_ID }}
           SKILLS: ${{ steps.changed.outputs.non_deleted }}
-          REVIEWER_LABELS: ${{ steps.pr.outputs.reviewer_labels }}
-        run: >-
-          uv run skillhub scan --llm --skills "$SKILLS" --reviewer-labels "$REVIEWER_LABELS"
-          --json "$RUNNER_TEMP/scan-llm.json" --summary "$GITHUB_STEP_SUMMARY"
+          SCAN_ACCEPTED: ${{ steps.pr.outputs.scan_accepted }}
+          SKILLHUB_SCAN_OVERRIDE_LABEL: ${{ steps.pr.outputs.scan_label }}
+        run: |
+          accept=()
+          if [ "$SCAN_ACCEPTED" = "true" ]; then accept=(--allow-high); fi
+          uv run skillhub scan --llm-only --skills "$SKILLS" "${accept[@]}" --json "$RUNNER_TEMP/scan-llm.json" --summary "$GITHUB_STEP_SUMMARY"
 
       - name: 2. Generate missing evals and rubrics
         id: generate-cases
@@ -329,11 +352,18 @@ jobs:
           GENERATED: ${{ steps.generate.outputs.generated }}
           EVENT_NAME: ${{ github.event_name }}
           CHANGED_OUTCOME: ${{ steps.changed.outcome }}
+          SCAN_OUTCOME: ${{ steps.scan.outcome }}
+          SCAN_LLM_OUTCOME: ${{ steps.scan-llm.outcome }}
+          SCAN_LABEL: ${{ steps.pr.outputs.scan_label }}
           EVAL_OUTCOME: ${{ steps.eval.outcome }}
           VERDICT_OUTCOME: ${{ steps.check-verdict.outcome }}
         run: |
           if [ "$CHANGED_OUTCOME" = "failure" ]; then
             echo "::error::Finding the changed skills failed or found a move out of a quarantined department. See that step."
+            exit 1
+          fi
+          if [ "$SCAN_OUTCOME" = "failure" ] || [ "$SCAN_LLM_OUTCOME" = "failure" ]; then
+            echo "::error::The security scan blocked this pull request: see its findings in the job summary. Fix critical findings; a reviewer other than the author can accept high ones with the $SCAN_LABEL label, then re-run this job."
             exit 1
           fi
           if [ "$IS_FORK" = "true" ]; then
