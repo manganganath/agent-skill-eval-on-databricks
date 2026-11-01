@@ -25,13 +25,15 @@ for a in "$@"; do case "$a" in file://*) cat "${a#file://}" > "$CALLS.secret" ;;
 case "$*" in
   *"describe-secret"*"--query ARN"*) echo "$STUB_SECRET_ARN" ;;
   *"describe-secret"*) exit "$STUB_SECRET_EXISTS_EXIT" ;;
+  *"get-bucket-tagging"*) echo '{"TagSet": [{"Key": "Keep", "Value": "theirs"}, {"Key": "Owner", "Value": "old"}]}' ;;
 esac
 """
 AGENTCORE = """#!/bin/sh
 printf 'agentcore %s\\n' "$*" >> "$CALLS"
 if [ "$1" = configure ]; then
-  printf 'agents:\\n  skillhub_skill_agent:\\n    aws: {execution_role: "%s"}\\n' "$STUB_ROLE_ARN" > .bedrock_agentcore.yaml
+  printf 'agents:\\n  skillhub_skill_agent:\\n' > .bedrock_agentcore.yaml
   printf '    bedrock_agentcore: {agent_arn: "%s"}\\n' "$STUB_RUNTIME_ARN" >> .bedrock_agentcore.yaml
+  printf '    aws: {execution_role: "%s", s3_path: "s3://agentcore-code-bucket"}\\n' "$STUB_ROLE_ARN" >> .bedrock_agentcore.yaml
 fi
 """
 
@@ -113,3 +115,41 @@ def test_a_missing_setting_or_a_wrong_name_stops_before_any_call(tmp_path, bash,
     result, calls, _, _ = _deploy(tmp_path, bash, **env)
     assert result.returncode != 0 and says in result.stderr
     assert calls == []
+
+
+@pytest.mark.parametrize("bash", _bashes())
+def test_aws_tags_tag_the_secret_runtime_role_and_bucket_keeping_the_buckets_own(tmp_path, bash):
+    import json
+
+    result, calls, stored, _ = _deploy(tmp_path, bash, AWS_TAGS="Owner=me@example.com, cost-center=42")
+    assert result.returncode == 0, result.stderr
+    create = next(c for c in calls if "create-secret" in c)
+    want = [{"Key": "project", "Value": "skillhub"}, {"Key": "Owner", "Value": "me@example.com"},
+            {"Key": "cost-center", "Value": "42"}]  # fmt: skip
+    assert json.dumps(want) in create
+    tagged = [c.split()[1:3] for c in calls if "tag-" in c or "tagging" in c]
+    assert tagged == [["bedrock-agentcore-control", "tag-resource"], ["iam", "tag-role"],
+                      ["s3api", "get-bucket-tagging"], ["s3api", "put-bucket-tagging"]]  # fmt: skip
+    runtime = next(c for c in calls if "bedrock-agentcore-control tag-resource" in c)
+    assert f"--resource-arn {RUNTIME_ARN}" in runtime and '"Owner": "me@example.com"' in runtime
+    bucket = next(c for c in calls if "put-bucket-tagging" in c)
+    assert "--bucket agentcore-code-bucket" in bucket
+    assert '{"Key": "Keep", "Value": "theirs"}, {"Key": "Owner", "Value": "me@example.com"}' in bucket
+
+
+@pytest.mark.parametrize("bash", _bashes())
+def test_an_existing_secret_gets_the_tags_too_and_without_aws_tags_nothing_else_is_tagged(tmp_path, bash):
+    result, calls, _, _ = _deploy(tmp_path, bash, secret_exists=True)
+    assert result.returncode == 0, result.stderr
+    assert [c.split()[2] for c in calls if "secretsmanager" in c][:3] == [
+        "describe-secret",
+        "put-secret-value",
+        "tag-resource",
+    ]
+    assert not [c for c in calls if "tag-role" in c or "bucket-tagging" in c or "agentcore-control" in c]
+
+
+@pytest.mark.parametrize("bash", _bashes())
+def test_malformed_aws_tags_stop_before_any_call(tmp_path, bash):
+    result, calls, _, _ = _deploy(tmp_path, bash, AWS_TAGS="Owner")
+    assert result.returncode == 2 and "AWS_TAGS: 'Owner' is not key=value" in result.stderr and calls == []
