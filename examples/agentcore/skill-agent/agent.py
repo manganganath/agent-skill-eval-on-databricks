@@ -33,6 +33,7 @@ from contract import (
     M2MToken,
     check_skills_urls,
     group_by_table,
+    mcp_refusal,
     plain_names,
     safe_tool_name,
 )
@@ -43,6 +44,7 @@ from strands.models import BedrockModel
 from strands.telemetry import StrandsTelemetry
 from strands.tools.mcp import MCPClient
 from strands.tools.mcp.mcp_agent_tool import MCPAgentTool
+from strands.types.exceptions import MCPClientInitializationError
 
 log = logging.getLogger("skill-agent")
 HOST = os.environ["DATABRICKS_HOST"].rstrip("/")
@@ -116,6 +118,19 @@ def skill_tools(clients: list[MCPClient], plain: bool) -> list:
     return out
 
 
+def why(exc: Exception, case: Case) -> str:
+    """The case's error for the Skill Hub. When a skills MCP would not start, the server is asked once why: its own
+    answer, such as a missing entitlement, says more than the client's error."""
+    if isinstance(exc, MCPClientInitializationError):
+        try:
+            for url in case.skills_mcp:
+                if reason := mcp_refusal(url, TOKEN()):
+                    return f"the skills MCP refused the agent ({reason})"
+        except Exception:  # the client's own error stands
+            log.exception("could not ask the skills MCP why it refused")
+    return f"{type(exc).__name__}: {exc}"
+
+
 @app.entrypoint
 def invoke(payload: dict) -> dict:
     try:
@@ -148,7 +163,7 @@ def invoke(payload: dict) -> dict:
             return {"answer": str(result)}
     except Exception as exc:  # the case is an error for the Skill Hub, not a fail
         log.exception("case failed")
-        return {"error": f"{type(exc).__name__}: {exc}"[:500]}
+        return {"error": why(exc, case)[:500]}
     finally:
         telemetry.tracer_provider.force_flush()  # before the session can be frozen
 

@@ -20,6 +20,7 @@ import json
 import re
 import threading
 import time
+import urllib.error
 import urllib.parse
 import urllib.request
 from collections.abc import Callable, Iterable
@@ -159,6 +160,33 @@ def check_skills_urls(urls: Iterable[str], host: str) -> None:
     bad = [u for u in urls if not u.startswith(prefix)]
     if bad:
         raise ValueError(f"skills_mcp: only the skills MCP of {host} is used, not {', '.join(bad)}")
+
+
+def mcp_refusal(url: str, token: str, *, opener: Callable[..., Any] = urllib.request.urlopen) -> str | None:
+    """Why a skills MCP refused the agent, in the server's own words: its HTTP status and message, such as a missing
+    entitlement. The MCP client reports only that it could not start. None when the server answers, or when it
+    cannot be reached at all, which the client's own error already says."""
+    hello = {"jsonrpc": "2.0", "id": 0, "method": "initialize",
+             "params": {"protocolVersion": "2025-06-18", "capabilities": {},
+                        "clientInfo": {"name": "skillhub-skill-agent", "version": "1"}}}  # fmt: skip
+    request = urllib.request.Request(
+        url, data=json.dumps(hello).encode(), method="POST",
+        headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json",
+                 "Accept": "application/json, text/event-stream"},
+    )  # fmt: skip
+    try:
+        with opener(request, timeout=15):
+            return None
+    except urllib.error.HTTPError as exc:
+        text = exc.read(4000).decode(errors="replace")
+        code = exc.code
+    except (urllib.error.URLError, OSError):
+        return None
+    try:
+        message = json.loads(text).get("message") or text
+    except (ValueError, AttributeError):
+        message = text
+    return f"HTTP {code}: {' '.join(str(message).replace(token, '***').split())[:300]}"
 
 
 class M2MToken:

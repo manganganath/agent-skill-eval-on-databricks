@@ -6,6 +6,7 @@ import importlib.util
 import io
 import json
 import sys
+import urllib.error
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -155,6 +156,46 @@ def test_a_failed_token_fetch_names_no_secret():
     with pytest.raises(RuntimeError) as err:
         token()
     assert str(err.value) == "the agent's Databricks token could not be fetched (OSError)"
+
+
+MCP_URL = "https://example.invalid/ai-gateway/skills/?schema=a.b"
+
+
+def _refusing(code, body):
+    def opener(request, timeout):
+        raise urllib.error.HTTPError(request.full_url, code, "refused", {}, io.BytesIO(body.encode()))
+
+    return opener
+
+
+def test_a_refusing_skills_mcp_is_explained_in_its_own_words():
+    seen = []
+    message = "This API is disabled for users without the workspace-access entitlement. [ReqId: 1]"
+
+    def opener(request, timeout):
+        seen.append(
+            (request.full_url, request.get_header("Authorization"), json.loads(request.data)["method"])
+        )
+        return _refusing(403, json.dumps({"error_code": 403, "message": message}))(request, timeout)
+
+    assert sample.mcp_refusal(MCP_URL, "tok-1", opener=opener) == f"HTTP 403: {message}"
+    assert seen == [(MCP_URL, "Bearer tok-1", "initialize")]
+
+
+def test_a_refusal_that_is_not_json_is_quoted_on_one_line_briefly_and_without_the_token():
+    page = "<html>\n  <body>Blocked for tok-1</body>\n</html>" + "x" * 1000
+    reason = sample.mcp_refusal(MCP_URL, "tok-1", opener=_refusing(401, page))
+    assert reason.startswith("HTTP 401: <html> <body>Blocked for ***</body> </html>") and len(reason) <= 320
+    assert "tok-1" not in reason
+
+
+def _unreachable(request, timeout):
+    raise urllib.error.URLError("connection refused")
+
+
+@pytest.mark.parametrize("opener", [lambda request, timeout: _Response(b"{}"), _unreachable])
+def test_a_skills_mcp_that_answers_or_cannot_be_reached_has_no_refusal(opener):
+    assert sample.mcp_refusal(MCP_URL, "tok-1", opener=opener) is None
 
 
 def test_spans_are_sorted_by_the_trace_table_their_case_named():

@@ -72,6 +72,8 @@ export DATABRICKS_HOST=https://<workspace host> DATABRICKS_CLIENT_ID=<applicatio
 
 The script stores the OAuth secret in AWS Secrets Manager (`skillhub/agents/<name>`, read from the terminal without showing it, and passed to the AWS CLI through a private temporary file that is removed when the script ends), deploys the runtime `skillhub_skill_agent` with the starter toolkit, lets its execution role read that secret, and prints the runtime ARN. The runtime, the secret and the execution role's inline policy are named `skillhub*`, and the secret is tagged `project=skillhub`. The starter toolkit names the execution role and the code bucket itself. Run it again to deploy a change.
 
+The starter toolkit installs the agent's dependencies with `uv`, for Linux ARM64. Behind a package proxy, set `UV_INDEX_URL` to the proxy's index before you run the script; otherwise the build fails to fetch from `pypi.org`.
+
 ## Register and test
 
 On the Skill Hub's **Models** page, a reviewer adds an external agent: harness **Amazon Bedrock AgentCore**, the runtime ARN, the Bedrock model ID, for example `us.anthropic.claude-sonnet-5-5`, and a class. The region is the runtime's. Register one row per model. **Test** runs one case, which loads `common`'s skills, and waits up to two minutes for its trace in `common`'s trace table; then enable the row. Run eval lists it under **External agents**, for live skills.
@@ -79,4 +81,5 @@ On the Skill Hub's **Models** page, a reviewer adds an external agent: harness *
 If the test fails:
 - `AccessDeniedException` on the invoke: the eval key's IAM policy (step 2).
 - `the agent reported: ...`: the agent's own error, also in its CloudWatch logs.
+- `the agent reported: the skills MCP refused the agent (HTTP <code>: ...)`: the workspace's own reason. For example, the agent's principal has no workspace entitlement, or may not read the skills' schema.
 - `its trace did not reach ...`: the principal is not in `skillhub-agents`, bootstrap has not run since, or the runtime cannot reach the workspace.
