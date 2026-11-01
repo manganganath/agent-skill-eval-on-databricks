@@ -143,6 +143,7 @@ def test_the_probe_job_tests_one_row_and_never_retries():
         "endpoint",
         "model_id",
         "region",
+        "agent",
         "requested_by",
     ]
     assert all(p["default"] == "" for p in job["parameters"])
@@ -150,7 +151,9 @@ def test_the_probe_job_tests_one_row_and_never_retries():
     assert task["max_retries"] == 0
     params = task["python_wheel_task"]["parameters"]
     assert params[0] == "probe"
-    for flag, name in (("--name", "name"), ("--model-id", "model_id"), ("--requested-by", "requested_by")):
+    for flag, name in (
+        ("--name", "name"), ("--model-id", "model_id"), ("--agent", "agent"), ("--requested-by", "requested_by"),
+    ):  # fmt: skip
         assert params[params.index(flag) + 1] == "{{job.parameters." + name + "}}", flag
 
 

@@ -45,19 +45,23 @@ TestStatus = Literal["passed", "failed"]
 
 @dataclass(frozen=True)
 class Target:
-    """What a row points at. A connection test proves one target; changing it makes the test stale."""
+    """What a row points at. A connection test proves one target; changing it makes the test stale. For an external
+    agent, its settings (the `agent` column) are part of the target."""
 
     route: str = ""
     endpoint: str = ""
     model_id: str = ""
     region: str = ""
+    agent: str = ""
 
     def params(self) -> dict[str, str]:
         return asdict(self)
 
     @classmethod
     def from_params(cls, params: Mapping[str, str | None]) -> Target:
-        return cls(**{k: str(params.get(k) or "") for k in ("route", "endpoint", "model_id", "region")})
+        return cls(
+            **{k: str(params.get(k) or "") for k in ("route", "endpoint", "model_id", "region", "agent")}
+        )
 
 
 @dataclass(frozen=True)
@@ -154,7 +158,9 @@ class CatalogEntry(BaseModel):
         return ConnectionTest.from_json(self.test_result)
 
     def target(self) -> Target:
-        return Target(self.route or "", self.endpoint or "", self.model_id or "", self.region or "")
+        return Target(
+            self.route or "", self.endpoint or "", self.model_id or "", self.region or "", self.agent or ""
+        )
 
     def to_profile(self, version: int | None) -> ModelProfile:
         """The eval runner's profile for this row. `version` is the Delta version of the table it was read from."""

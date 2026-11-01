@@ -241,7 +241,7 @@ def test_a_test_starts_the_probe_job_with_the_rows_target(make_client):
     assert r.status_code == 200 and r.json() == {"job_run_id": 4242}
     assert jobs_.started == [{"job_id": PROBE_JOB, "params": {
         "name": "nova-lite", "route": "bedrock", "endpoint": "", "model_id": "amazon.nova-lite-v1:0",
-        "region": "us-east-1", "requested_by": "rita@example.com",
+        "region": "us-east-1", "agent": "", "requested_by": "rita@example.com",
     }}]  # fmt: skip
 
 
