@@ -312,10 +312,9 @@ def _read_listed(entry: dict) -> Any:
     return t
 
 
-def agent_traces(run, evals: str | None) -> list:
-    """An external agent's traces, from the child run's `agent_traces.json`, with the case's tags set on each as the
-    runner's own traces carry them. Only traces in the department's own trace location (`evals`) and of the run's
-    mode are read. A run without the list (a child that failed before its cases ran) has no traces."""
+def _listed_entries(run, evals: str | None) -> list:
+    """The entries of the child run's `agent_traces.json` that are in the department's own trace location
+    (`evals`) and of the run's mode. A run without the list (a child that failed before its cases ran) has none."""
     if evals is None:
         return []
     try:
@@ -331,6 +330,13 @@ def agent_traces(run, evals: str | None) -> list:
             run.info.run_id,
             len(listed) - len(entries),
         )
+    return entries
+
+
+def agent_traces(run, evals: str | None) -> list:
+    """An external agent's traces, from the child run's `agent_traces.json`, with the case's tags set on each as the
+    runner's own traces carry them."""
+    entries = _listed_entries(run, evals)
     with ThreadPoolExecutor(max_workers=AGENT_READ_WORKERS, thread_name_prefix="agent-trace") as pool:
         got = list(pool.map(_read_listed, entries))
     return [t for t in got if t is not None]
@@ -408,6 +414,9 @@ def wait_for_traces(
     returns the tagged traces that are available.
     """
     expected = _expected_cells(run)
+    if (_tag(run, "harness") or DEFAULT_HARNESS) != DEFAULT_HARNESS:
+        # An errored case has no trace, so the list the run wrote (before its verdict) is the final count.
+        expected = min(expected, len(_listed_entries(run, evals)))
     start = time.monotonic()
     progress, changed_at = None, start
     while True:

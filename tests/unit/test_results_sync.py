@@ -981,6 +981,19 @@ def test_an_agent_run_reads_only_its_own_departments_traces_of_its_mode(monkeypa
     assert "skipped 1 listed agent traces" in caplog.text
 
 
+def test_an_agent_run_with_an_errored_case_does_not_wait_for_its_missing_trace(monkeypatch, caplog):
+    """An errored case has no listed trace, so it never becomes ready: the list is final, so sync expects only it."""
+    traces = {EVALS_PREFIX + "aa": agent_trace("aa", [A])}
+    _agent_listing(monkeypatch, [entry("aa", 1)], traces)
+    with caplog.at_level("WARNING", logger="skillhub.results.sync"):
+        got, waited = sync_mod.wait_for_traces(
+            agent_run(n_cases=2), timeout_s=300, allow_partial=True, evals="skill_hub.common_evals"
+        )
+    assert [t.info.trace_id for t in got] == [EVALS_PREFIX + "aa"]
+    assert waited < sync_mod.STALL_S
+    assert "late cases" not in caplog.text and "re-run sync" not in caplog.text
+
+
 def test_an_agent_child_that_failed_before_its_cases_ran_syncs_with_no_cases(monkeypatch):
     def missing(uri):
         raise OSError("no such artifact")
