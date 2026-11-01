@@ -28,6 +28,11 @@ class GenerationError(SkillHubError):
     pass
 
 
+class ContentFiltered(GenerationError):
+    """The endpoint's content filter stopped the answer. The same input would be filtered again, so it is not retried,
+    and the empty answer is never sent back to the endpoint."""
+
+
 class GeneratedCase(BaseModel):
     prompt: str = Field(min_length=1)
     should_trigger: bool
@@ -99,6 +104,8 @@ def ask_json(
     last_error = ""
     for _ in range(MAX_TRIES):
         res = model.chat(messages, [], max_tokens=4096)
+        if res.finish_reason == "content_filter":
+            raise ContentFiltered("the model endpoint's content filter stopped the answer")
         try:
             parsed = schema.model_validate(parse_json_strict(res.text))
             if validate:

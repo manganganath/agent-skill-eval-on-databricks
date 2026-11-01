@@ -379,6 +379,43 @@ def test_check_verdict_still_fails_on_a_failing_verdict_with_the_right_hash(cli_
     assert res.exit_code == 1
 
 
+def test_pr_comment_adds_the_scan_reports_that_exist_after_the_matrix(cli_env, monkeypatch, tmp_path):
+    import json
+
+    import skillhub.ci.pr_comment as pc
+
+    cfg_path, _ = cli_env
+    posted = {}
+    monkeypatch.setenv("GITHUB_REPOSITORY", "o/r")
+    monkeypatch.setenv("GITHUB_TOKEN", "t")
+    monkeypatch.setattr(pc, "upsert_pr_comment", lambda **kw: posted.update(kw) or "created")
+    finding = {"skill": "common/x", "path": "SKILL.md", "line": 3, "rule": "prompt-injection", "severity": "high",
+               "message": "an instruction-override phrase", "source": "rules"}  # fmt: skip
+    report = {"reviewer": "rules", "counts": {"critical": 0, "high": 1, "medium": 2, "low": 0}, "allow_high": True,
+              "warnings": [], "findings": [finding]}  # fmt: skip
+    (tmp_path / "scan.json").write_text(json.dumps(report))
+    args = [
+        "--scan-file",
+        str(tmp_path / "scan.json"),
+        "--scan-file",
+        str(tmp_path / "llm.json"),
+    ]  # llm.json: none
+    res = _invoke(cfg_path, "pr-comment", "--run-key", "pr12-ab12cd3-a1", "--pr", "7", *args)
+    assert res.exit_code == 0, res.output
+    body = posted["body"]
+    assert body.index("### Skill evaluation") < body.index("### Security scan")
+    assert "- **Rules:** 0 critical, 1 high, 2 medium, 0 low (high findings accepted by a reviewer)" in body
+    assert "| high | common/x | SKILL.md:3 | prompt-injection | an instruction-override phrase |" in body
+
+
+def test_the_matrix_leaves_room_for_a_section_after_it():
+    modes = ("trigger", "without_skill", "with_skill")
+    rows = [row(skill=f"skill-{i:02d}-with-a-long-name", model_profile=m, mode=mode)
+            for i in range(63) for m in "abcdefgh" for mode in modes]  # fmt: skip
+    full = render_matrix_markdown(rows, run_key="k")
+    assert len(render_matrix_markdown(rows, run_key="k", reserve=6000)) <= COMMENT_MAX - 6000 < len(full)
+
+
 @pytest.mark.parametrize("links", ["", "false", "TRUE", "yes", "true"])
 def test_pr_comment_body_carries_no_host_or_ids_by_default(cli_env, monkeypatch, links):
     import skillhub.ci.pr_comment as pc

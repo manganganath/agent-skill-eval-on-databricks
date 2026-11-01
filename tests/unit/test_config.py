@@ -272,3 +272,35 @@ def test_an_external_agent_profile_survives_the_eval_worker_round_trip(cfg):
     assert again.models["cc-sonnet"] == agent
     assert all(p.harness == "reference" and p.agent is None for p in cfg.models.values())
     assert cfg.roles.agents == "skillhub-agents"
+
+
+def test_the_scan_settings_load_with_and_without_the_environment(cfg, monkeypatch):
+    from skillhub.config import load_lint_settings
+
+    assert cfg.scan.llm.model == "claude-opus" and cfg.scan.llm.enabled
+    assert "sec.gov" in cfg.scan.allowed_domains
+    for k in ("DATABRICKS_HOST", "SQL_WAREHOUSE_ID", "SKILLHUB_CATALOG"):
+        monkeypatch.delenv(k, raising=False)
+    assert load_lint_settings(EXAMPLE).scan == cfg.scan
+
+
+@pytest.mark.parametrize(
+    ("old", "new", "says"),
+    [
+        ("model: claude-opus}", "model: nope}", "scan.llm.model names unknown model profile 'nope'"),
+        (
+            "{enabled: true, model: claude-opus}",
+            "{enabled: true}",
+            "scan.llm.model must name a model profile",
+        ),
+        ("allowed_domains: [sec.gov,", "allowed_domains: [https://sec.gov,", "is not a host name"),
+    ],
+)
+def test_a_bad_scan_setting_is_refused_by_both_loaders(tmp_path, old, new, says):
+    from skillhub.config import load_lint_settings
+
+    path = _variant(tmp_path, old, new)
+    with pytest.raises(ConfigError, match=says):
+        load_config(path)
+    with pytest.raises(ConfigError, match=says):
+        load_lint_settings(path)

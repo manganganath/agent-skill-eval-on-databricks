@@ -42,6 +42,11 @@ defaults:
   min_reviewed_cases: 5             # per mode, needed for a gating verdict
   gating_modes: [trigger]           # verdicts that block the gates; effectiveness runs and is reported, add it once its cases are tuned
 
+# The security scan of skill bundles (`skillhub scan`, docs/operations.md "Security scanning").
+scan:
+  allowed_domains: [sec.gov, apache.org, w3.org, openxmlformats.org]   # hosts a skill may name in a URL; subdomains match
+  llm: {enabled: true, model: claude-opus}  # the LLM reviewer in the PR gate; its findings are at most high
+
 # External model providers. Reviewers register the models themselves on the Skill Hub's Models page.
 external:
   bedrock:

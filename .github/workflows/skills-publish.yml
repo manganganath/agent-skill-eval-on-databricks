@@ -104,6 +104,16 @@ jobs:
             echo "run_key=$key"
           } >> "$GITHUB_OUTPUT"
 
+      # For the production approver: the security scan of what this release publishes, in the run's summary. It
+      # does not block here: publish refuses critical findings itself, and a reviewer accepted any high ones in the
+      # pull request.
+      - name: Security scan of the release (for the approver)
+        if: ${{ steps.plan.outputs.reeval != '' }}
+        continue-on-error: true
+        env:
+          SKILLS: ${{ steps.plan.outputs.reeval }}
+        run: uv run skillhub scan --skills "$SKILLS" --allow-high --summary "$GITHUB_STEP_SUMMARY"
+
   # The verdict gate lives here, before the production job, so a failing verdict never asks for approval.
   eval-merge:
     name: re-evaluate merged content

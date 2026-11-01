@@ -3,7 +3,7 @@ from __future__ import annotations
 import os
 import re
 from collections.abc import Iterable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal
 
@@ -133,6 +133,37 @@ class ExternalSettings(BaseModel):
     bedrock: BedrockSettings = BedrockSettings()
 
 
+_DOMAIN = re.compile(
+    r"(?=.{1,253}$)[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+"
+)
+
+
+class ScanLlmSettings(BaseModel):
+    """The LLM reviewer of the security scan: a hub.yaml model profile. Off unless enabled."""
+
+    enabled: bool = False
+    model: str | None = None
+
+
+class ScanSettings(BaseModel):
+    """The security scan of skill bundles (`skillhub scan`)."""
+
+    # Hosts a skill may name in a URL; a subdomain of one matches. Any other host is a medium finding. The label with
+    # which a reviewer accepts high findings is the repository variable SKILLHUB_SCAN_OVERRIDE_LABEL, not a setting
+    # here: a pull request could change this file.
+    allowed_domains: list[str] = []
+    llm: ScanLlmSettings = ScanLlmSettings()
+
+    @field_validator("allowed_domains")
+    @classmethod
+    def _domains_are_hosts(cls, v: list[str]) -> list[str]:
+        out = [d.strip().lower().removeprefix("*.") for d in v]
+        bad = [d for d in out if not _DOMAIN.fullmatch(d)]
+        if bad:
+            raise ValueError(f"scan.allowed_domains: {', '.join(bad)} is not a host name such as sec.gov")
+        return out
+
+
 class Defaults(BaseModel):
     models: list[str]
     repeats: int = Field(default=3, ge=1)
@@ -185,6 +216,7 @@ class HubConfig(BaseModel):
     defaults: Defaults
     import_: ImportSpec = Field(alias="import")
     external: ExternalSettings = ExternalSettings()
+    scan: ScanSettings = ScanSettings()
 
     @field_validator("catalog")
     @classmethod
@@ -237,6 +269,7 @@ def _check_references(cfg: HubConfig) -> None:
                 raise ConfigError(f"{label} names unknown model profile '{name}'")
     if cfg.defaults.warn_rate < cfg.defaults.fail_rate:
         raise ConfigError("defaults.warn_rate must not be below defaults.fail_rate")
+    _check_scan_model(cfg.scan, cfg.models)
     for name, p in cfg.models.items():
         # hub.yaml holds the release-gate profiles, served by Databricks. The model catalog holds the rest.
         if (
@@ -252,6 +285,13 @@ def _check_references(cfg: HubConfig) -> None:
                 f"models.{name}: hub.yaml profiles are served by Databricks on the reference harness; register "
                 "external models and agents in the Skill Hub model catalog"
             )
+
+
+def _check_scan_model(scan: ScanSettings, models: Iterable[str]) -> None:
+    if scan.llm.enabled and not scan.llm.model:
+        raise ConfigError("scan.llm.model must name a model profile when scan.llm.enabled is true")
+    if scan.llm.model and scan.llm.model not in models:
+        raise ConfigError(f"scan.llm.model names unknown model profile '{scan.llm.model}'")
 
 
 def _sdk_host() -> str:
@@ -292,6 +332,7 @@ class LintSettings:
     defaults: Defaults
     quarantined: frozenset[str] = frozenset()  # departments with quarantine: true
     models: frozenset[str] = frozenset()  # the hub.yaml model profile names
+    scan: ScanSettings = field(default_factory=ScanSettings)
 
 
 def load_lint_settings(path: str | Path | None = None) -> LintSettings:
@@ -313,4 +354,9 @@ def load_lint_settings(path: str | Path | None = None) -> LintSettings:
     models = raw.get("models") or {}
     if not isinstance(models, dict):
         raise ConfigError(f"{path}: models must be a mapping of profile names")
-    return LintSettings(frozenset(depts), defaults, quarantined, frozenset(models))
+    try:
+        scan = ScanSettings.model_validate(raw.get("scan") or {})
+    except ValidationError as e:
+        raise ConfigError(f"{path}: {e}") from e
+    _check_scan_model(scan, models)
+    return LintSettings(frozenset(depts), defaults, quarantined, frozenset(models), scan)
