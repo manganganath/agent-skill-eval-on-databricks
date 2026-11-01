@@ -613,3 +613,42 @@ def test_a_run_on_release_gate_models_never_reads_the_catalog(make_client, monke
     app = FakeWorkspace(jobs=FakeJobs())
     c = make_client(user_w=user(), app_w=app, cfg=make_cfg(), sql=FakeUserSql([]), app_sql=NoSql())
     assert c.post("/api/eval-runs", json=BODY).status_code == 200
+
+
+CC_ROW = {"name": "cc-sonnet", "kind": "external_agent", "harness": "claude-code", "route": "ug-anthropic",
+          "endpoint": "databricks-claude-sonnet-5-5", "model_class": "frontier", "agent": {"cli_version": "2.1.314"},
+          "enabled": True}  # fmt: skip
+
+
+def test_an_enabled_external_agent_runs_on_live_skills(make_client, monkeypatch):
+    readable(monkeypatch)
+    cfg, sql = _catalog(CC_ROW)
+    app = FakeWorkspace(jobs=FakeJobs())
+    c = make_client(user_w=user(), app_w=app, cfg=cfg, sql=FakeUserSql([]), app_sql=sql)
+    r = c.post("/api/eval-runs", json={**BODY, "models": ["claude-sonnet", "cc-sonnet"]})
+    assert r.status_code == 200, r.json()
+    assert app.jobs.started[0]["params"]["models"] == "claude-sonnet,cc-sonnet"
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        {**BODY, "models": ["cc-sonnet"], "versions": {FQN: 1}},
+        {
+            "candidate": {"run_key": "pr5_c7ecd3e_a1", "skills": ["common/audit-xls"]},
+            "models": ["cc-sonnet"],
+            "modes": ["trigger"],
+        },
+    ],
+    ids=["pinned", "candidate"],
+)
+def test_an_external_agent_on_a_candidate_or_a_pinned_version_is_refused_before_any_job(
+    make_client, monkeypatch, body
+):
+    readable(monkeypatch)
+    cfg, sql = _catalog(CC_ROW)
+    app = FakeWorkspace(jobs=FakeJobs())
+    c = make_client(user_w=user(), app_w=app, cfg=cfg, sql=FakeUserSql([]), app_sql=sql)
+    r = c.post("/api/eval-runs", json=body)
+    assert r.status_code == 422 and r.json() == {"detail": {"reason": "agents_live_only"}}
+    assert app.jobs.started == []

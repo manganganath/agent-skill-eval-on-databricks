@@ -67,6 +67,7 @@ class Reason(StrEnum):
     MODEL_EXISTS = "model_exists"
     MODEL_INVALID = "model_invalid"
     KIND_NOT_SUPPORTED = "kind_not_supported"
+    AGENTS_LIVE_ONLY = "agents_live_only"
     RELEASE_GATE_MODEL = "release_gate_model"
     TEST_NOT_PASSED = "test_not_passed"
     CATALOG_UNAVAILABLE = "catalog_unavailable"

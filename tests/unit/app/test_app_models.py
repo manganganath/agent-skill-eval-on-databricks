@@ -26,6 +26,23 @@ LLAMA = {
     "model_class": "fast",
 }
 PROBE_JOB = 13
+ARN = "arn:aws:bedrock-agentcore:us-west-2:123456789012:runtime/skillhub_skill_agent-AbCd123456"
+CLAUDE_CODE = {
+    "name": "cc-sonnet",
+    "kind": "external_agent",
+    "harness": "claude-code",
+    "endpoint": "databricks-claude-sonnet-5-5",
+    "model_class": "frontier",
+    "agent": {"cli_version": "2.1.314"},
+}
+AGENTCORE = {
+    "name": "skill-agent-sonnet",
+    "kind": "external_agent",
+    "harness": "agentcore",
+    "model_id": "us.anthropic.claude-sonnet-5-5",
+    "model_class": "frontier",
+    "agent": {"runtime_arn": ARN},
+}
 
 
 @pytest.fixture(autouse=True)
@@ -155,7 +172,10 @@ def test_a_reviewer_adds_a_model_on_unity_gateway(make_client):
 @pytest.mark.parametrize(
     ("body", "status", "reason"),
     [
-        ({**NOVA, "kind": "external_agent"}, 422, "kind_not_supported"),
+        ({**NOVA, "kind": "external_agent"}, 422, "model_invalid"),
+        ({**CLAUDE_CODE, "harness": "codex"}, 422, "model_invalid"),
+        ({**CLAUDE_CODE, "agent": {"cli_version": "latest"}}, 422, "model_invalid"),
+        ({**NOVA, "agent": {"cli_version": "2.1.314"}}, 422, "model_invalid"),
         ({**NOVA, "name": "claude-sonnet"}, 409, "model_exists"),
         ({**NOVA, "model_id": None}, 422, "model_invalid"),
         ({**NOVA, "name": "default"}, 422, "model_invalid"),
@@ -341,9 +361,69 @@ def test_a_patch_cannot_null_a_required_field(make_client, field):
     assert len(writes(sql)) == before
 
 
-def test_an_external_agent_is_refused_whatever_else_the_body_holds(make_client):
+def test_a_reviewer_adds_claude_code_on_its_route_with_its_pinned_version(make_client):
     cfg, sql = catalog()
-    body = {"name": "my-agent", "kind": "external_agent", "agent": "x", "harness": "codex"}
-    r = client(make_client, cfg, sql).post("/api/models", json=body)
-    assert r.status_code == 422 and r.json()["detail"]["reason"] == "kind_not_supported"
-    assert writes(sql) == []
+    r = client(make_client, cfg, sql).post("/api/models", json=CLAUDE_CODE)
+    assert r.status_code == 201, r.json()
+    out = r.json()
+    assert (out["kind"], out["harness"], out["route"], out["endpoint"], out["enabled"]) == (
+        "external_agent", "claude-code", "ug-anthropic", "databricks-claude-sonnet-5-5", False,
+    )  # fmt: skip
+    assert out["agent"] == {"cli_version": "2.1.314"} and out["region"] is None
+    [row], _ = store.read_entries(sql, cfg)
+    assert row.agent == '{"cli_version":"2.1.314"}' and row.runnable
+
+
+def test_an_agentcore_agent_runs_in_the_region_of_its_runtime(make_client):
+    cfg, sql = catalog()
+    r = client(make_client, cfg, sql).post("/api/models", json=AGENTCORE)
+    assert r.status_code == 201, r.json()
+    assert (r.json()["route"], r.json()["region"], r.json()["agent"]) == (
+        "bedrock",
+        "us-west-2",
+        {"runtime_arn": ARN},
+    )
+
+
+def test_codex_is_refused_in_plain_words_and_nothing_is_written(make_client):
+    cfg, sql = catalog()
+    r = client(make_client, cfg, sql).post("/api/models", json={**CLAUDE_CODE, "harness": "codex"})
+    assert r.status_code == 422 and writes(sql) == []
+    assert r.json()["detail"]["errors"] == [
+        "harness: use claude-code or agentcore; codex is not supported yet"
+    ]
+
+
+def test_new_agent_settings_disable_the_agent_and_clear_its_test(make_client):
+    cfg, sql = catalog({**CLAUDE_CODE, "route": "ug-anthropic", "enabled": True})
+    passed_test(sql, cfg, {**CLAUDE_CODE, "route": "ug-anthropic"})
+    c = client(make_client, cfg, sql)
+    r = c.patch("/api/models/cc-sonnet", json={"agent": {"cli_version": "2.1.400"}})
+    assert r.status_code == 200, r.json()
+    assert (r.json()["agent"], r.json()["enabled"], r.json()["test"]) == (
+        {"cli_version": "2.1.400"},
+        False,
+        None,
+    )
+    assert store.read_entries(sql, cfg)[0][0].agent == '{"cli_version":"2.1.400"}'
+
+
+def test_testing_an_agent_sends_its_settings_to_the_probe_job(make_client):
+    cfg, sql = catalog({**CLAUDE_CODE, "route": "ug-anthropic"})
+    jobs_ = ProbeJobs(run_id=77)
+    r = client(make_client, cfg, sql, jobs_=jobs_).post("/api/models/cc-sonnet/test")
+    assert r.status_code == 200
+    assert jobs_.started[0]["params"] == {
+        "name": "cc-sonnet", "route": "ug-anthropic", "endpoint": "databricks-claude-sonnet-5-5", "model_id": "",
+        "region": "", "agent": '{"cli_version":"2.1.314"}', "requested_by": "rita@example.com",
+    }  # fmt: skip
+
+
+def test_a_stored_row_that_cannot_run_is_not_tested_or_changed(make_client):
+    cfg, sql = catalog({**CLAUDE_CODE, "route": "ug-anthropic", "harness": "codex"})
+    c = client(make_client, cfg, sql)
+    assert c.post("/api/models/cc-sonnet/test").json()["detail"]["reason"] == "kind_not_supported"
+    assert (
+        c.patch("/api/models/cc-sonnet", json={"enabled": True}).json()["detail"]["reason"]
+        == "kind_not_supported"
+    )

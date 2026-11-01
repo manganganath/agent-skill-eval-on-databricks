@@ -36,7 +36,8 @@ const MESSAGES: Record<string, string> = {
   model_not_found: "That model is not in the model list, or it is disabled. Reload the page and pick another.",
   model_exists: "A model with that name already exists. Pick another name.",
   model_invalid: "The model was not saved. Fix the problems listed and try again.",
-  kind_not_supported: "External agents cannot be added or tested in this release.",
+  kind_not_supported: "This row cannot run in this release. Check its harness and settings on the Models page.",
+  agents_live_only: "External agents evaluate live skills only. Leave them out to evaluate a candidate, a draft or a pinned version.",
   release_gate_model:
     "This is a release gate model. Change it in config/hub.yaml through a pull request, not on the Models page.",
   test_not_passed: "Test the model first. A model can be enabled only after its last test passed.",

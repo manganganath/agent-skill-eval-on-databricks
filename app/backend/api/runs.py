@@ -150,7 +150,9 @@ def start_eval(
     models = list(dict.fromkeys(body.models))
     modes = list(dict.fromkeys(body.modes))
     # hub.yaml models, else enabled model catalog rows: 404 model_not_found before any Job starts.
-    model_catalog.require_runnable(app_sql, cfg, models)
+    agents = model_catalog.require_runnable(app_sql, cfg, models)
+    if agents and (body.candidate is not None or body.versions):  # agents load the live skills by their names
+        raise problem(422, Reason.AGENTS_LIVE_ONLY)
     if body.candidate is not None:
         if body.skills or body.versions:  # one skills folder per run: live skills and pins run on their own
             raise problem(422, Reason.MIXED_SOURCES)

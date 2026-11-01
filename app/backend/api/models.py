@@ -2,7 +2,8 @@
 
 Everyone signed in reads the list. Adding, editing, testing, enabling and disabling are for reviewers only (403
 not_reviewer); the app then writes as its principal. A row is disabled, never deleted. A row can be enabled only
-after its last test passed, and changing what it points at disables it and clears that test.
+after its last test passed, and changing what it points at (for an external agent, also its settings) disables it and
+clears that test.
 """
 
 from __future__ import annotations
@@ -24,7 +25,18 @@ from backend.deps import get_app_client, get_app_sql, get_cfg, get_user_client, 
 from backend.schemas import ModelOut, ModelsOut, ProbeStarted, ProbeStatus, ServingEndpointOut
 from skillhub.config import HubConfig
 from skillhub.model_catalog import store
-from skillhub.model_catalog.entry import CatalogEntry, ConnectionTest, Target, clashes, problems
+from skillhub.model_catalog.entry import (
+    AGENT_ROUTE,
+    KINDS,
+    REFERENCE,
+    CatalogEntry,
+    ConnectionTest,
+    Target,
+    agent_json,
+    arn_region,
+    clashes,
+    problems,
+)
 from skillhub.sql import SqlExecutor
 
 log = logging.getLogger("skillhub.app.models")
@@ -37,7 +49,9 @@ class ModelIn(BaseModel):
     model_config = ConfigDict(extra="forbid")
     name: str = Field(max_length=64)
     kind: str
-    route: str | None = None  # default: serving for ug_model, bedrock for external_model
+    route: str | None = None  # default: serving, bedrock, or the route of the agent's harness
+    harness: str | None = Field(default=None, max_length=32)  # external agents: claude-code or agentcore
+    agent: dict[str, str] | None = None  # external agents: {"cli_version": ...} or {"runtime_arn": ...}
     endpoint: str | None = Field(default=None, max_length=200)
     model_id: str | None = Field(default=None, max_length=256)
     region: str | None = Field(
@@ -51,6 +65,7 @@ class ModelIn(BaseModel):
 class ModelPatch(BaseModel):
     model_config = ConfigDict(extra="forbid")  # name, kind, route and harness are fixed
     endpoint: str | None = Field(default=None, max_length=200)
+    agent: dict[str, str] | None = None
     model_id: str | None = Field(default=None, max_length=256)
     region: str | None = Field(default=None, max_length=32)
     model_class: Literal["frontier", "fast"] | None = None
@@ -104,14 +119,21 @@ def add_model(
     sql: Annotated[SqlExecutor, Depends(get_app_sql)],
 ) -> ModelOut:
     actor = authz.require_reviewer(user_w, cfg)
-    if body.get("kind") == "external_agent":  # refused whatever else the body holds
-        raise problem(422, Reason.KIND_NOT_SUPPORTED)
     req = _parse(ModelIn, body)
-    if req.kind not in ROUTE_OF_KIND:
-        raise _invalid(["kind: use ug_model or external_model"])
-    region = req.region or (cfg.external.bedrock.default_region if req.kind == "external_model" else None)
-    fields = req.model_dump(exclude={"route", "region"})
-    entry = CatalogEntry(**fields, route=req.route or ROUTE_OF_KIND[req.kind], region=region, enabled=False)
+    if req.kind not in KINDS:
+        raise _invalid([f"kind: use {', '.join(KINDS)}"])
+    default_region = cfg.external.bedrock.default_region
+    if req.kind == "external_agent":
+        harness = req.harness or ""
+        route = req.route or AGENT_ROUTE.get(harness)
+        # An AgentCore agent runs in the region of its runtime.
+        runtime_region = arn_region((req.agent or {}).get("runtime_arn")) if harness == "agentcore" else None
+        region = req.region or runtime_region or (default_region if harness == "agentcore" else None)
+    else:
+        harness, route = req.harness or REFERENCE, req.route or ROUTE_OF_KIND[req.kind]
+        region = req.region or (default_region if req.kind == "external_model" else None)
+    fields = req.model_dump(exclude={"route", "region", "harness"})
+    entry = CatalogEntry(**fields, harness=harness, route=route, region=region, enabled=False)
     found = problems(entry)
     if found:
         raise _invalid(found)
@@ -140,7 +162,10 @@ def update_model(
     entry = _catalog_row(catalog.read_or_503(sql, cfg), cfg, name)
     if not entry.runnable:
         raise problem(422, Reason.KIND_NOT_SUPPORTED)
-    changed = entry.model_copy(update={k: getattr(patch, k) for k in patch.model_fields_set})
+    updates = {k: getattr(patch, k) for k in patch.model_fields_set}
+    if "agent" in updates:  # stored as canonical JSON, so that equal settings compare equal
+        updates["agent"] = agent_json(updates["agent"])
+    changed = entry.model_copy(update=updates)
     retarget = changed.target() != entry.target()
     if retarget:  # the last test proved another target: it no longer counts
         changed = changed.model_copy(update={"enabled": False, "tested_at": None, "test_result": None})

@@ -176,7 +176,7 @@ export interface Dashboard extends DashboardOut { deniedDepartments: string[] }
 export interface ModelTest { status: "passed" | "failed"; message: string; job_run_id: number | null }
 export interface CatalogModel {
   name: string; kind: ProfileKind; route: string | null; endpoint: string | null; model_id: string | null;
-  region: string | null; model_class: "frontier" | "fast"; harness: string; enabled: boolean; release_gate: boolean;
+  region: string | null; model_class: "frontier" | "fast"; harness: string; agent?: Record<string, string> | null; enabled: boolean; release_gate: boolean;
   price_in: number | null; price_out: number | null; tested_at: string | null; test: ModelTest | null;
   updated_by: string | null; updated_at: string | null;
 }
