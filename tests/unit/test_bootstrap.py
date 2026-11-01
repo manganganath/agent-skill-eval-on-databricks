@@ -526,7 +526,11 @@ def test_table_grants_are_applied_after_ensure_tables(cfg, tmp_path):
     assert all(
         i < tables_at
         for i, s in enumerate(order)
-        if s.startswith(("GRANT", "REVOKE")) and " ON TABLE " not in s and "CREATE TABLE" not in s
+        # the agents' grants go with the trace tables, which the hooks create
+        if s.startswith(("GRANT", "REVOKE"))
+        and " ON TABLE " not in s
+        and "CREATE TABLE" not in s
+        and "`skillhub-agents`" not in s
     )
 
 
@@ -1672,3 +1676,54 @@ def test_the_default_steps_create_the_model_catalog(monkeypatch):
 
     monkeypatch.setattr(bootstrap_mod, "_required", lambda module, attr: (module, attr))
     assert default_results_steps().ensure_model_catalog == ("skillhub.model_catalog.store", "ensure_table")
+
+
+def test_the_agents_group_may_write_spans_to_each_departments_spans_table_and_nothing_more(cfg, tmp_path):
+    sql = _TraceSql()
+    w = _w(existing_groups=required_groups(cfg), existing_sps=[cfg.roles.ci, cfg.roles.ci_eval])
+    log = bootstrap(cfg, w, sql, create_identities=False, skills_root=tmp_path, results=_steps())
+    granted = [c[0] for c in sql.calls if c[0].startswith("GRANT") and "`skillhub-agents`" in c[0]]
+    expected = [f"GRANT USE CATALOG ON CATALOG {cfg.catalog} TO `skillhub-agents`"]
+    for dept in cfg.departments:
+        ev = evals_schema(cfg, dept)
+        expected += [
+            f"GRANT USE SCHEMA ON SCHEMA {ev} TO `skillhub-agents`",
+            f"GRANT MODIFY, SELECT ON TABLE {ev}.traces_otel_spans TO `skillhub-agents`",
+        ]
+    assert granted == expected
+    assert (
+        f"granted skillhub-agents {len(expected)} statements to write agent spans to the trace tables" in log
+    )
+
+
+def test_bootstrap_skips_the_agents_grants_while_the_group_does_not_exist(cfg, tmp_path):
+    from skillhub.sql import SqlError
+
+    class NoAgentsGroup(_TraceSql):
+        def execute(self, statement, params=None):
+            if "`skillhub-agents`" in statement:
+                raise SqlError(
+                    "statement failed: [PRINCIPAL_DOES_NOT_EXIST] Could not find principal skillhub-agents"
+                )
+            return super().execute(statement, params)
+
+    w = _w(existing_groups=required_groups(cfg), existing_sps=[cfg.roles.ci, cfg.roles.ci_eval])
+    log = bootstrap(cfg, w, NoAgentsGroup(), create_identities=False, skills_root=tmp_path, results=_steps())
+    assert any(
+        line.startswith("skipped the skillhub-agents grants: the group does not exist") for line in log
+    )
+    assert "alerts ensured: a1, a2" in log  # bootstrap goes on
+
+
+def test_a_failed_agents_grant_for_another_reason_stops_bootstrap(cfg, tmp_path):
+    from skillhub.sql import SqlError
+
+    class Broken(_TraceSql):
+        def execute(self, statement, params=None):
+            if "`skillhub-agents`" in statement:
+                raise SqlError("statement failed: warehouse stopped")
+            return super().execute(statement, params)
+
+    w = _w(existing_groups=required_groups(cfg), existing_sps=[cfg.roles.ci, cfg.roles.ci_eval])
+    with pytest.raises(SqlError, match="warehouse stopped"):
+        bootstrap(cfg, w, Broken(), create_identities=False, skills_root=tmp_path, results=_steps())

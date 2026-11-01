@@ -220,6 +220,40 @@ def trace_table_grants(cfg: HubConfig, sql, ci_eval_principal: str) -> list[str]
     return stmts
 
 
+SPANS_TABLE = f"{TRACE_PREFIX}_otel_spans"  # where agents send their OpenTelemetry spans
+
+
+def agent_grant_plan(cfg: HubConfig, group: str, *, catalog_grants: bool) -> list[str]:
+    """What the external agents' own principals need, through their group (roles.agents): to write their spans to
+    each department's spans table, and nothing else there. They read skills through the department reader groups that
+    an admin adds them to. The catalog-level grant needs the catalog owner, as for the other groups."""
+    g = _q(group)
+    stmts = [f"GRANT USE CATALOG ON CATALOG {cfg.catalog} TO {g}"] if catalog_grants else []
+    for dept in cfg.departments:
+        ev = evals_schema(cfg, dept)
+        stmts += [
+            f"GRANT USE SCHEMA ON SCHEMA {ev} TO {g}",
+            f"GRANT MODIFY, SELECT ON TABLE {ev}.{SPANS_TABLE} TO {g}",
+        ]
+    return stmts
+
+
+def _grant_agents(cfg: HubConfig, sql, catalog_grants: bool) -> list[str]:
+    group = cfg.roles.agents
+    stmts = agent_grant_plan(cfg, group, catalog_grants=catalog_grants)
+    try:
+        for stmt in stmts:
+            sql.execute(stmt)
+    except SqlError as exc:
+        if "PRINCIPAL_DOES_NOT_EXIST" not in str(exc):
+            raise
+        return [
+            f"skipped the {group} grants: the group does not exist. Create it before you test an agent on Amazon "
+            "Bedrock AgentCore, then run bootstrap again"
+        ]
+    return [f"granted {group} {len(stmts)} statements to write agent spans to the trace tables"]
+
+
 def _deployer(w) -> str:
     return w.current_user.me().user_name
 
@@ -1038,6 +1072,7 @@ def bootstrap(
     for stmt in trace_stmts:
         sql.execute(stmt)
     log_lines.append(f"granted ci_eval access to {len(trace_stmts)} trace tables")
+    log_lines += _grant_agents(cfg, sql, catalog_grants)
     if not app_principal:
         log_lines.append(
             f"warning: {APP_PRINCIPAL_ENV} is not set: the app principal gets no Unity Catalog grants"
