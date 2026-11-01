@@ -228,6 +228,8 @@ def test_bedrock_settings_are_checked(tmp_path, old, new, says):
         "{route: bedrock, model_id: amazon.nova-lite-v1:0, region: us-east-1, class: fast}",
         "{kind: ug_model, route: serving, endpoint: databricks-x, class: fast}",
         "{route: serving, endpoint: databricks-x, catalog_version: 3, class: fast}",
+        "{route: serving, endpoint: databricks-x, harness: claude-code, class: fast}",
+        "{route: serving, endpoint: databricks-x, agent: {cli_version: 2.1.314}, class: fast}",
     ],
 )
 def test_hub_yaml_profiles_are_databricks_serving_endpoints(tmp_path, profile):
@@ -256,3 +258,17 @@ def test_catalog_profiles_survive_the_eval_worker_round_trip(cfg):
     again = HubConfig.model_validate(merged.model_dump(mode="json", by_alias=True))
     assert again.models["nova-lite"] == nova
     assert again.external == cfg.external
+
+
+def test_an_external_agent_profile_survives_the_eval_worker_round_trip(cfg):
+    from skillhub.config import HubConfig, ModelProfile
+
+    agent = ModelProfile(
+        route="ug-anthropic", endpoint="databricks-claude-sonnet-5-5", kind="external_agent", catalog_version=8,
+        harness="claude-code", agent={"cli_version": "2.1.314"}, **{"class": "frontier"},
+    )  # fmt: skip
+    merged = cfg.model_copy(update={"models": {**cfg.models, "cc-sonnet": agent}})
+    again = HubConfig.model_validate(merged.model_dump(mode="json", by_alias=True))
+    assert again.models["cc-sonnet"] == agent
+    assert all(p.harness == "reference" and p.agent is None for p in cfg.models.values())
+    assert cfg.roles.agents == "skillhub-agents"

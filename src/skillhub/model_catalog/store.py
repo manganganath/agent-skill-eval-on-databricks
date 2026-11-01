@@ -43,7 +43,7 @@ COLUMNS: list[tuple[str, str]] = [
 ]
 NAMES = [n for n, _ in COLUMNS]
 # What a reviewer may change on an existing row. name, kind, route and harness are fixed when the row is added.
-EDITABLE = ("endpoint", "model_id", "region", "model_class", "price_in", "price_out", "enabled")
+EDITABLE = ("endpoint", "model_id", "region", "model_class", "agent", "price_in", "price_out", "enabled")
 
 
 def table_name(cfg: HubConfig) -> str:

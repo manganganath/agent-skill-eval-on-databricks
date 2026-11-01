@@ -64,6 +64,9 @@ class Roles(BaseModel):
     reviewers: str
     ci: str  # service principal display name or application ID: publishes and switches
     ci_eval: str = "skillhub-ci-eval"  # service principal that only runs evals
+    # The group of the external agents' own principals (an agent on Amazon Bedrock AgentCore). Bootstrap lets it
+    # write spans to each department's trace table. Optional: bootstrap skips it while the group does not exist.
+    agents: str = "skillhub-agents"
 
 
 # An AWS region name, for example us-east-1 or us-gov-west-1.
@@ -71,7 +74,8 @@ AWS_REGION = re.compile(r"[a-z]{2}(?:-[a-z]+)+-\d{1,2}")
 # A Databricks secret scope name.
 _SECRET_SCOPE = re.compile(r"[A-Za-z0-9_.@-]{1,128}")
 
-ProfileKind = Literal["hub_yaml", "ug_model", "external_model"]
+ProfileKind = Literal["hub_yaml", "ug_model", "external_model", "external_agent"]
+REFERENCE_HARNESS = "reference"  # the built-in agent loop
 
 
 class ModelProfile(BaseModel):
@@ -87,6 +91,10 @@ class ModelProfile(BaseModel):
     model_id: str | None = None  # a Bedrock model ID or inference profile ID
     region: str | None = None  # the AWS region of a Bedrock profile
     catalog_version: int | None = None  # the Delta version of the model catalog the profile was read from
+    # The harness that runs the cases: the built-in agent loop, or an external agent (claude-code, agentcore), whose
+    # own settings are in `agent`, such as {"cli_version": "2.1.314"} or {"runtime_arn": "arn:aws:..."}.
+    harness: str = REFERENCE_HARNESS
+    agent: dict[str, str] | None = None
 
     @property
     def provider(self) -> Literal["claude", "gpt", "gemini", "other"]:
@@ -237,10 +245,12 @@ def _check_references(cfg: HubConfig) -> None:
             or p.model_id
             or p.region
             or p.catalog_version is not None
+            or p.harness != REFERENCE_HARNESS
+            or p.agent is not None
         ):
             raise ConfigError(
-                f"models.{name}: hub.yaml profiles are served by Databricks; register external models in the "
-                "Skill Hub model catalog"
+                f"models.{name}: hub.yaml profiles are served by Databricks on the reference harness; register "
+                "external models and agents in the Skill Hub model catalog"
             )
 
 

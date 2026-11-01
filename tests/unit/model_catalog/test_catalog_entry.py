@@ -44,13 +44,84 @@ def test_problems_name_the_field_in_plain_words(entry, says):
     assert any(says in p for p in problems(entry)), problems(entry)
 
 
-def test_an_external_agent_row_is_kept_but_never_runs_or_written_by_this_release():
-    agent = CatalogEntry(name="skill-agent", kind="external_agent", harness="agentcore", model_class="frontier",
-                         agent='{"runtime_arn": "arn:aws:bedrock-agentcore:us-east-1:1:runtime/x"}')  # fmt: skip
-    assert not agent.runnable
-    assert problems(agent) == ["kind: external_agent rows cannot be added in this release"]
-    with pytest.raises(ValueError, match="not a model profile"):
-        agent.to_profile(3)
+ARN = "arn:aws:bedrock-agentcore:us-east-1:123456789012:runtime/skillhub_skill_agent-AbCd123456"
+
+
+def claude_code(**over):
+    row = {"name": "cc-sonnet", "kind": "external_agent", "harness": "claude-code", "route": "ug-anthropic",
+           "endpoint": "databricks-claude-sonnet-5-5", "model_class": "frontier",
+           "agent": {"cli_version": "2.1.314"}}  # fmt: skip
+    return CatalogEntry(**{**row, **over})
+
+
+def agentcore(**over):
+    row = {"name": "skill-agent-sonnet", "kind": "external_agent", "harness": "agentcore", "route": "bedrock",
+           "model_id": "us.anthropic.claude-sonnet-5-5", "region": "us-east-1", "model_class": "frontier",
+           "agent": {"runtime_arn": ARN}}  # fmt: skip
+    return CatalogEntry(**{**row, **over})
+
+
+def test_claude_code_and_an_agentcore_agent_can_be_written_and_run():
+    for row in (claude_code(), agentcore()):
+        assert problems(row) == [] and row.runnable
+    assert (
+        claude_code().agent == '{"cli_version":"2.1.314"}'
+    )  # canonical JSON, so equal settings compare equal
+    assert claude_code(agent='{"cli_version":"2.1.314"}') == claude_code()
+
+
+@pytest.mark.parametrize(
+    ("entry", "says"),
+    [
+        (claude_code(harness="codex"), "harness: use claude-code or agentcore; codex is not supported yet"),
+        (claude_code(harness="reference"), "harness: use claude-code or agentcore"),
+        (claude_code(route="serving"), "route: claude-code reaches its model on the ug-anthropic route"),
+        (claude_code(endpoint=None), "endpoint: pick the serving endpoint"),
+        (claude_code(agent={"cli_version": "latest"}), "agent.cli_version: give the Claude Code version"),
+        (claude_code(agent=None), "agent.cli_version:"),
+        (
+            claude_code(agent={"cli_version": "2.1.314", "model": "x"}),
+            "agent: claude-code takes only cli_version",
+        ),
+        (claude_code(agent="[1, 2]"), "agent: give the agent's settings as a JSON object of text values"),
+        (claude_code(region="us-east-1"), "model_id and region are not used by claude-code"),
+        (agentcore(route="ug-anthropic"), "route: agentcore reaches its model on the bedrock route"),
+        (agentcore(agent={"runtime_arn": "skillhub_skill_agent"}), "agent.runtime_arn: give the ARN"),
+        (agentcore(region="us-west-2"), "agent.runtime_arn: the runtime is in us-east-1, not in us-west-2"),
+        (agentcore(model_id=None), "model_id: give the Bedrock model ID"),
+        (agentcore(endpoint="databricks-x"), "endpoint is not used by agentcore"),
+        (agentcore(name="Agent"), "name:"),
+    ],
+)
+def test_agent_problems_name_the_field_in_plain_words(entry, says):
+    assert any(says in p for p in problems(entry)), problems(entry)
+    assert not entry.runnable
+
+
+def test_an_agent_row_becomes_a_profile_with_its_harness_and_settings():
+    profile = agentcore().to_profile(7)
+    assert (profile.kind, profile.harness, profile.route, profile.model_id, profile.region) == (
+        "external_agent", "agentcore", "bedrock", "us.anthropic.claude-sonnet-5-5", "us-east-1",
+    )  # fmt: skip
+    assert profile.agent == {"runtime_arn": ARN} and profile.catalog_version == 7
+    assert claude_code().to_profile(None).agent == {"cli_version": "2.1.314"}
+    with pytest.raises(ValueError, match="not a profile the runner can run"):
+        claude_code(harness="codex").to_profile(3)
+
+
+def test_a_model_row_still_runs_only_on_the_reference_harness_without_agent_settings():
+    assert "harness: a model runs on the reference harness" in problems(nova(harness="agentcore"))
+    assert "agent: settings are for external agents only" in problems(nova(agent={"cli_version": "2.1.314"}))
+
+
+def test_the_region_of_a_runtime_arn():
+    from skillhub.model_catalog.entry import arn_region
+
+    assert arn_region(ARN) == "us-east-1"
+    assert (
+        arn_region("arn:aws:bedrock:us-east-1:123456789012:foundation-model/x") is None
+        and arn_region(None) is None
+    )
 
 
 def test_a_row_becomes_a_profile_that_records_its_kind_and_catalog_version():

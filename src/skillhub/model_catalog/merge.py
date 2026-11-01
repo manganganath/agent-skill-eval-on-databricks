@@ -1,8 +1,9 @@
 """The eval runner's model profiles: the hub.yaml `models` plus the model catalog rows a request names.
 
-hub.yaml wins on a name clash, though registration already refuses one. Only enabled rows of a kind the runner runs
-(models on Unity Gateway and external models) are merged. The catalog is read only when a request names a profile
-that hub.yaml does not have, so a run on hub.yaml models, which every gate reads, never depends on the catalog.
+hub.yaml wins on a name clash, though registration already refuses one. Only enabled rows that the runner can run
+(models on Unity Gateway, external models, and external agents whose settings are valid) are merged. The catalog is
+read only when a request names a profile that hub.yaml does not have, so a run on hub.yaml models, which every gate
+reads, never depends on the catalog.
 """
 
 from __future__ import annotations
