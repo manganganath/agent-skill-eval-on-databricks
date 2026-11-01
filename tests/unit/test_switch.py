@@ -187,6 +187,11 @@ def _cli(reg, monkeypatch, *args):
     )
 
 
+def _flat(output: str) -> str:
+    """The CLI's output as one line: Rich wraps an error panel at the terminal width, so a message can span lines."""
+    return " ".join(output.replace("│", " ").split())
+
+
 def test_job_switch_accepts_empty_strings_for_unset_params(reg, make_bundle, monkeypatch, tmp_path):
     monkeypatch.setenv("SKILLHUB_SKILLS", str(tmp_path / "skills"))
     evaluated(reg, make_bundle(DEPT, SKILL, body="one"))
@@ -409,7 +414,7 @@ def test_job_switch_latest_refuses_unpublished_content(reg, make_bundle, monkeyp
     make_bundle(DEPT, SKILL, body="three")  # never published
     r = _cli(reg, monkeypatch, "--action", "switch", "--version", "latest")
     assert r.exit_code == 2
-    assert "is not published" in r.output
+    assert "is not published" in _flat(r.output)
     assert reg.journal.live_state(DEPT, SKILL) is None
 
 
@@ -561,7 +566,7 @@ def test_job_switch_skills_root_feeds_publish_and_latest(reg, make_bundle, monke
     assert reg.journal.live_state(DEPT, SKILL).to_version == 1
     # without the override, 'latest' hashes the env tree's content, which is not published
     r = _cli(reg, monkeypatch, "--action", "switch", "--version", "latest")
-    assert r.exit_code == 2 and "is not published" in r.output
+    assert r.exit_code == 2 and "is not published" in _flat(r.output)
     assert os.environ["SKILLHUB_SKILLS"] == str(tmp_path / "skills")  # restored
 
 
