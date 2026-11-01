@@ -20,8 +20,7 @@ esac
 read -rs -p "OAuth secret of ${DATABRICKS_CLIENT_ID}: " CLIENT_SECRET
 echo
 # The secret goes to the AWS CLI through a private file, not the command line, where other users could read it.
-umask 077
-SECRET_FILE=$(mktemp)
+SECRET_FILE=$(umask 077; mktemp)
 trap 'rm -f "$SECRET_FILE"' EXIT
 printf '%s' "$CLIENT_SECRET" > "$SECRET_FILE"
 unset CLIENT_SECRET

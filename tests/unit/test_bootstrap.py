@@ -1709,9 +1709,9 @@ def test_bootstrap_skips_the_agents_grants_while_the_group_does_not_exist(cfg, t
 
     w = _w(existing_groups=required_groups(cfg), existing_sps=[cfg.roles.ci, cfg.roles.ci_eval])
     log = bootstrap(cfg, w, NoAgentsGroup(), create_identities=False, skills_root=tmp_path, results=_steps())
-    assert any(
-        line.startswith("skipped the skillhub-agents grants: the group does not exist") for line in log
-    )
+    [skipped] = [line for line in log if line.startswith("skipped the skillhub-agents grants")]
+    assert "the group does not exist" in skipped
+    assert "account group assigned to the workspace" in skipped
     assert "alerts ensured: a1, a2" in log  # bootstrap goes on
 
 

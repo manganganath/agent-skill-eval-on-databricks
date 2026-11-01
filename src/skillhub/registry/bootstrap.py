@@ -248,8 +248,9 @@ def _grant_agents(cfg: HubConfig, sql, catalog_grants: bool) -> list[str]:
         if "PRINCIPAL_DOES_NOT_EXIST" not in str(exc):
             raise
         return [
-            f"skipped the {group} grants: the group does not exist. Create it before you test an agent on Amazon "
-            "Bedrock AgentCore, then run bootstrap again"
+            f"skipped the {group} grants: the group does not exist. It must be an account group assigned to the "
+            "workspace; Unity Catalog cannot grant to a workspace-local group. Create it before you test an agent "
+            "on Amazon Bedrock AgentCore, then run bootstrap again"
         ]
     return [f"granted {group} {len(stmts)} statements to write agent spans to the trace tables"]
 

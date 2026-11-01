@@ -33,11 +33,12 @@ The agent:
 
    ```bash
    databricks service-principals create --display-name skillhub-skill-agent --json '{"active": true}'
-   databricks groups create --display-name skillhub-agents   # once; or create it as an account group
    # add the principal to skillhub-agents and to the department reader groups (Settings > Identity and access)
    ```
 
-   Then run the `skillhub-bootstrap` Job once more, as the catalog owner for the catalog-level grant, so the group gets its grants.
+   Create `skillhub-agents` once as an **account** group and assign it to the workspace (account console, or the account-level groups API). Do not use `databricks groups create`: it makes a workspace-local group, and Unity Catalog cannot grant to those, so the grants would fail with `PRINCIPAL_DOES_NOT_EXIST`.
+
+   Then give the group its grants. The `skillhub-bootstrap` Job runs as `skillhub-ci` and grants the group its schema and table access. The group's `USE CATALOG` needs a person's `skillhub bootstrap` run by the catalog owner.
 2. **The eval key may invoke the runtime.** The IAM user whose key is in the `skillhub-aws` secret scope needs `bedrock-agentcore:InvokeAgentRuntime` on `arn:aws:bedrock-agentcore:<region>:<account-id>:runtime/skillhub*`. The runtime name must therefore start with `skillhub`.
 3. **Network.** The serverless eval Job must reach `bedrock-agentcore.<region>.amazonaws.com`, and the runtime must reach the workspace.
 
@@ -69,7 +70,7 @@ export DATABRICKS_HOST=https://<workspace host> DATABRICKS_CLIENT_ID=<applicatio
 ./deploy.sh
 ```
 
-The script stores the OAuth secret in AWS Secrets Manager (`skillhub/agents/<name>`, read from the terminal without showing it, and passed to the AWS CLI through a private temporary file that is removed when the script ends), deploys the runtime `skillhub_skill_agent` with the starter toolkit, lets its execution role read that secret, and prints the runtime ARN. Everything it creates is named `skillhub*` and the secret is tagged `project=skillhub`. Run it again to deploy a change.
+The script stores the OAuth secret in AWS Secrets Manager (`skillhub/agents/<name>`, read from the terminal without showing it, and passed to the AWS CLI through a private temporary file that is removed when the script ends), deploys the runtime `skillhub_skill_agent` with the starter toolkit, lets its execution role read that secret, and prints the runtime ARN. The runtime, the secret and the execution role's inline policy are named `skillhub*`, and the secret is tagged `project=skillhub`. The starter toolkit names the execution role and the code bucket itself. Run it again to deploy a change.
 
 ## Register and test
 
