@@ -16,6 +16,10 @@ The run schemas are dropped in `finally`. `sync` copies the verdict tag, so it c
   `RunSummary.errors`. A child run that fails after it started is closed with verdict `inconclusive` and an
   `error` tag, so sync completes and the gate blocks (fail closed).
 - The model sees production names only: the `ToolNameMap` rewrite covers every staged FQN of the scope.
+- An external agent (a model catalog `external_agent` profile) runs its cases itself and loads the live skills
+  through the skills MCP, so it runs only for a `live` source and skills without a pinned version
+  (`agents.contract.LIVE_ONLY`). Its child runs carry its harness, and its traces are scored by
+  `agents.cases.run_agent_cases` instead of `mlflow.genai.evaluate`.
 - Up to `defaults.skill_workers` skills run at once, each in its own worker process (`skillhub.eval.worker`).
   In a process, child runs run one at a time, each with one `evaluate` over all its repeats. Results keep plan
   order.
@@ -57,6 +61,8 @@ from mlflow.pyfunc.context import get_prediction_context
 from skillhub import SkillHubError, evalspec
 from skillhub.agent.fixtures import FixtureStore
 from skillhub.agent.loop import MultiSkillsBridge, run_agent
+from skillhub.agents import agent_for
+from skillhub.agents.contract import LIVE_ONLY
 from skillhub.auth import auth_headers, workspace_client
 from skillhub.bundle import SkillBundle, SkillRefError, discover_bundles, find_bundle, select_bundles
 from skillhub.config import ConfigError
@@ -180,7 +186,7 @@ class ChildRunSummary:
     mode: Mode
     verdict: Verdict
     metrics: dict[str, float]
-    harness: str = "reference"  # The built-in agent loop; coding-agent harnesses are not supported yet
+    harness: str = "reference"  # the built-in agent loop, or an external agent's harness
 
 
 @dataclass
@@ -428,11 +434,14 @@ def _plan(
 
     An explicit request list wins; otherwise the skill's own `models`, else defaults.models. An
     unknown profile in evals.json is a request error. A skill whose evals.json cannot be read, or a profile
-    whose route no model client serves yet (for example `ug-anthropic`, which is not supported yet), is recorded for that skill."""
+    whose route no model client serves yet (for example `ug-anthropic`, which is not supported yet), is recorded for that skill.
+    An external agent gets an agent instead of a model client, and is recorded for a skill that it cannot evaluate:
+    any skill of a run whose source is not `live`, and a skill with a pinned version (LIVE_ONLY)."""
     plans: list[_SkillPlan] = []
     clients: dict[tuple[str, str, str], Any] = {}  # (dept, skill, profile): one client per skill, for its tag
     unservable: dict[str, str] = {}
     errors: list[RunError] = []
+    pinned = set(req.versions or {})  # `dept/name` or a bare `name`, as the request gives them
     for b in selected:
         try:
             ef, data = _load_evals(b)
@@ -445,8 +454,13 @@ def _plan(
             raise EvalRunError(
                 f"{b.dept}/{b.name}: evals.json names unknown model profile(s): {', '.join(unknown)}"
             )
+        live_only = req.source != "live" or bool({b.name, f"{b.dept}/{b.name}"} & pinned)
         for m in models:
             if m in unservable:
+                continue
+            agent = cfg.models[m].kind == "external_agent"
+            if agent and live_only:
+                errors.append(RunError(b.dept, b.name, LIVE_ONLY, model_profile=m))
                 continue
             try:
                 tag = {
@@ -454,7 +468,9 @@ def _plan(
                     "skillhub_skill": f"{b.dept}/{b.name}",
                     "skillhub_trigger_source": req.trigger_source,
                 }
-                clients[(b.dept, b.name, m)] = model_client(cfg, m, auth_headers, usage_context=tag)
+                clients[(b.dept, b.name, m)] = (
+                    agent_for(cfg, m) if agent else model_client(cfg, m, auth_headers, usage_context=tag)
+                )
             except (NotImplementedError, ConfigError) as e:
                 unservable[m] = f"model profile {m!r} cannot be served: {e}"
         errors += [
@@ -1305,6 +1321,7 @@ def _run_child(ctx: _SkillCtx, client, profile: str, mode: str, without_scores: 
     """One child run. Returns (summary or None, case scores or None, errors)."""
     cfg, req = ctx.cfg, ctx.req
     prof = cfg.models[profile]
+    agent = prof.kind == "external_agent"  # `client` is then an external agent, which loads the skills itself
     endpoint = prof.endpoint or prof.model or prof.model_id or profile
     repeats = cfg.defaults.repeats
     md = ctx.data[CASE_KIND[mode]]
@@ -1316,7 +1333,7 @@ def _run_child(ctx: _SkillCtx, client, profile: str, mode: str, without_scores: 
         return RunError(ctx.scope.dept, ctx.skill.name, text, model_profile=profile, mode=mode, run_id=run_id)
 
     skills = None
-    if mode != "without_skill":
+    if mode != "without_skill" and not agent:
         try:
             skills = _open_skills(ctx)  # after set_experiment (in _run_skill), so it cannot leak the bridge
         except Exception as e:  # before the child run exists: nothing is left for sync to read
@@ -1362,23 +1379,28 @@ def _run_child(ctx: _SkillCtx, client, profile: str, mode: str, without_scores: 
             {
                 "run_key": req.run_key,
                 "parent_run_id": ctx.parent_id,
-                "harness": "reference",
+                "harness": prof.harness,
             }  # sync reads these
         )
         if mode != "trigger" and ctx.rubric is not None and ctx.rubric.source_hash != ctx.skill.content_hash:
             mlflow.set_tag("rubric_stale", "true")  # The rubric was generated from other skill content
-        sem = _endpoint_semaphore(endpoint, cfg.defaults.concurrency_per_endpoint)
-        mlflow.genai.evaluate(  # one evaluate over every repeat; never two at once in a process
-            data=_repeated(md, repeats),
-            predict_fn=_predict_fn(ctx, client, mode, sem, skills),
-            scorers=scorers,
-        )
-        traces = read_child_traces(
-            ctx.exp_id,
-            run_id,
-            md.n_records * repeats,
-            complete=lambda ts: _complete(ctx, ts, mode, md.case_ids, repeats, planted_on),
-        )
+        if agent:
+            from skillhub.agents.cases import run_agent_cases
+
+            traces = run_agent_cases(ctx, client, profile, mode, md.case_ids, repeats, scorers, run_id)
+        else:
+            sem = _endpoint_semaphore(endpoint, cfg.defaults.concurrency_per_endpoint)
+            mlflow.genai.evaluate(  # one evaluate over every repeat; never two at once in a process
+                data=_repeated(md, repeats),
+                predict_fn=_predict_fn(ctx, client, mode, sem, skills),
+                scorers=scorers,
+            )
+            traces = read_child_traces(
+                ctx.exp_id,
+                run_id,
+                md.n_records * repeats,
+                complete=lambda ts: _complete(ctx, ts, mode, md.case_ids, repeats, planted_on),
+            )
         scored = _score(ctx, traces, mode, md.case_ids, repeats, planted_on, md.missing_ids)
         t = ctx.thresholds
         result = compute_verdict(
@@ -1438,6 +1460,7 @@ def _run_child(ctx: _SkillCtx, client, profile: str, mode: str, without_scores: 
         mode=mode,  # type: ignore[arg-type]
         verdict=result.verdict,
         metrics={**result.metrics, **extra},
+        harness=prof.harness,
     )
     return child, scores, errors
 
@@ -1554,6 +1577,10 @@ def _planted_recall(ctx: _SkillCtx, trace) -> float | None:
 
     None when the trace holds no spans to read, or the case is misconfigured (an unknown bug_scope id)."""
     if getattr(trace, "data", None) is None:
+        return None
+    if not any(
+        span.name == "agent_run" for span in trace.data.spans
+    ):  # an external agent's: no answer to read
         return None
     fb = planted_bugs_check(trace, ctx.cases, _planted_bugs(str(ctx.fixtures.root)))
     return None if fb is None or fb.value is None else float(fb.value)

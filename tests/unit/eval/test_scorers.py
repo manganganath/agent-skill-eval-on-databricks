@@ -202,3 +202,38 @@ def test_planted_bugs_read_final_text_stored_as_a_json_string():
     t = SimpleNamespace(data=SimpleNamespace(spans=[span]))
     fb = planted_bugs_feedback(t, BUGS)
     assert fb.metadata["found"] == ["bs_imbalance", "hardcode"]
+
+
+def test_the_agent_trigger_scorer_reads_the_agents_own_tool_spans(tmp_path):
+    from skillhub.agents.traces import tool_names
+    from skillhub.eval.scorers import make_agent_trigger_scorer
+
+    with mlflow.start_span(name="claude_code.interaction") as root:
+        mlflow.update_current_trace(tags={"case_id": "1"})
+        with mlflow.start_span(name="claude_code.tool") as t:
+            t.set_attributes({"gen_ai.tool.name": "skill_cat_dept_x_earnings-preview"})
+        trace_id = root.trace_id
+    mlflow.flush_trace_async_logging()
+    trace = mlflow.get_trace(trace_id)
+    cases = {1: EvalCase(id=1, prompt="p", should_trigger=True)}
+    scorer = make_agent_trigger_scorer(cases, "earnings-preview", tool_names(["cat.dept_x.earnings-preview"]))
+    fb = scorer.run(trace=trace)
+    assert (fb.value, fb.metadata["invoked_skill"]) == ("correct", "earnings-preview")
+    assert invoked_skill_names(trace) == []  # the agent loop's reading finds nothing in an agent's trace
+
+
+def test_the_planted_bug_scorer_reads_an_agents_answer_from_the_outputs(tmp_path):
+    (tmp_path / "northwind").mkdir()
+    (tmp_path / "northwind" / "model_bugs.json").write_text(
+        json.dumps({"bugs": [{"id": "ref", "match": ["#REF!"]}, {"id": "bs", "match": ["imbalance"]}]})
+    )
+    with mlflow.start_span(name="claude_code.interaction") as root:
+        mlflow.update_current_trace(tags={"case_id": "101"})
+        trace_id = root.trace_id
+    mlflow.flush_trace_async_logging()
+    case = EvalCase(
+        id=101, kind="effectiveness", prompt="p", should_trigger=True, fixtures=["northwind/model.xlsx"]
+    )
+    scorer = make_planted_bugs_scorer({101: case}, tmp_path)
+    fb = scorer.run(trace=mlflow.get_trace(trace_id), outputs="IS!D15 has a #REF! link")
+    assert fb.value == 0.5

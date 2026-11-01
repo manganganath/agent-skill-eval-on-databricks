@@ -26,10 +26,11 @@ def invoked_skill_names(trace) -> list[str]:
     return names
 
 
-def skill_trigger_feedback(trace, expected: str | None) -> Feedback:
+def skill_trigger_feedback(trace, expected: str | None, invoked: list[str] | None = None) -> Feedback:
     """`expected` is the skill NAME the evals.json case expects, or None. It never comes from the dataset row,
-    which can carry a stale label."""
-    invoked = invoked_skill_names(trace)
+    which can carry a stale label. `invoked` is the skills called, in order: by default the agent loop's TOOL spans;
+    an external agent's come from its own tool spans (skillhub.agents.traces.skill_calls)."""
+    invoked = invoked_skill_names(trace) if invoked is None else invoked
     first = invoked[0] if invoked else None
     outcome = case_outcome(expected, first)
     return Feedback(
@@ -38,6 +39,10 @@ def skill_trigger_feedback(trace, expected: str | None) -> Feedback:
         rationale=f"expected={expected} invoked={first}",
         metadata={"invoked_skill": first, "expected_skill": expected},
     )
+
+
+def _has_agent_run(trace) -> bool:
+    return any(span.name == "agent_run" for span in trace.data.spans)
 
 
 def _final_text(trace) -> str:
@@ -57,8 +62,11 @@ def _final_text(trace) -> str:
     return text
 
 
-def planted_bugs_feedback(trace, bugs: list[dict], bug_scope: list[str] | None = None) -> Feedback:
-    """Recall of the planted-bug manifest in the final answer. Code only."""
+def planted_bugs_feedback(
+    trace, bugs: list[dict], bug_scope: list[str] | None = None, answer: str | None = None
+) -> Feedback:
+    """Recall of the planted-bug manifest in the final answer. Code only. `answer` is an external agent's answer:
+    its trace has no `agent_run` span to read it from."""
     if bug_scope is not None:
         scoped = [b for b in bugs if b["id"] in bug_scope]
         if not scoped:
@@ -70,7 +78,7 @@ def planted_bugs_feedback(trace, bugs: list[dict], bug_scope: list[str] | None =
                 rationale="bug_scope matches no planted bug; check the case's bug_scope ids",
             )
         bugs = scoped
-    lowered = _final_text(trace).lower()
+    lowered = (_final_text(trace) if answer is None else answer).lower()
     found = [b["id"] for b in bugs if any(m.lower() in lowered for m in b["match"])]
     value = len(found) / len(bugs) if bugs else 0.0
     return Feedback(name="planted_bugs_found", value=value, metadata={"found": found, "total": len(bugs)})
@@ -87,12 +95,14 @@ def _trace_case(trace, cases: dict[int, EvalCase], inputs: dict | None = None) -
         return None
 
 
-def planted_bugs_check(trace, cases: dict[int, EvalCase], bugs: list[dict]) -> Feedback | None:
+def planted_bugs_check(
+    trace, cases: dict[int, EvalCase], bugs: list[dict], answer: str | None = None
+) -> Feedback | None:
     """Scope rule: only cases whose fixtures include northwind/model.xlsx get a score."""
     case = _trace_case(trace, cases)
     if case is None or PLANTED_FIXTURE not in case.fixtures:
         return None
-    return planted_bugs_feedback(trace, bugs, case.bug_scope)
+    return planted_bugs_feedback(trace, bugs, case.bug_scope, answer)
 
 
 def load_planted_bugs(fixtures_root: Path) -> list[dict]:
@@ -104,8 +114,10 @@ def make_planted_bugs_scorer(cases: dict[int, EvalCase], fixtures_root: Path):
     bugs = load_planted_bugs(fixtures_root)
 
     @scorer(name="planted_bugs_found")
-    def planted_bugs_found(trace, expectations=None):
-        return planted_bugs_check(trace, cases, bugs)
+    def planted_bugs_found(trace, expectations=None, outputs=None):
+        # An external agent's trace has no agent_run span: its answer is the evaluation's outputs.
+        answer = None if _has_agent_run(trace) else str(outputs or "")
+        return planted_bugs_check(trace, cases, bugs, answer)
 
     return planted_bugs_found
 
@@ -123,5 +135,24 @@ def make_skill_trigger_scorer(cases: dict[int, EvalCase], skill_name: str):
                 name="skill_trigger", error="the trace's case_id is not a case of this evals.json"
             )
         return skill_trigger_feedback(trace, case.resolved_expected(skill_name))
+
+    return skill_trigger
+
+
+def make_agent_trigger_scorer(cases: dict[int, EvalCase], skill_name: str, tool_skills: dict[str, str]):
+    """The trigger scorer for an external agent's trace. As make_skill_trigger_scorer, but the invoked skill is the
+    first of the agent's tool spans whose tool is one of `tool_skills` (skillhub.agents.traces.tool_names)."""
+    from skillhub.agents.traces import skill_calls
+
+    @scorer(name="skill_trigger")
+    def skill_trigger(trace, inputs=None):
+        case = _trace_case(trace, cases, inputs)
+        if case is None:
+            return Feedback(
+                name="skill_trigger", error="the trace's case_id is not a case of this evals.json"
+            )
+        return skill_trigger_feedback(
+            trace, case.resolved_expected(skill_name), skill_calls(trace, tool_skills)
+        )
 
     return skill_trigger
