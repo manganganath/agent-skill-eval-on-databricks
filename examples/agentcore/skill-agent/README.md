@@ -70,7 +70,9 @@ export DATABRICKS_HOST=https://<workspace host> DATABRICKS_CLIENT_ID=<applicatio
 ./deploy.sh
 ```
 
-The script stores the OAuth secret in AWS Secrets Manager (`skillhub/agents/<name>`, read from the terminal without showing it, and passed to the AWS CLI through a private temporary file that is removed when the script ends), deploys the runtime `skillhub_skill_agent` with the starter toolkit, lets its execution role read that secret, and prints the runtime ARN. The runtime, the secret and the execution role's inline policy are named `skillhub*`, and the secret is tagged `project=skillhub`. The starter toolkit names the execution role and the code bucket itself. Run it again to deploy a change.
+The script stores the OAuth secret in AWS Secrets Manager (`skillhub/agents/<name>`, read from the terminal without showing it, and passed to the AWS CLI through a private temporary file that is removed when the script ends), deploys the runtime `skillhub_skill_agent` with the starter toolkit, lets its execution role read that secret, and prints the runtime ARN. The runtime, the secret and the execution role's inline policy are named `skillhub*`, and the secret is tagged `project=skillhub`, with `AWS_TAGS` as well when set. The starter toolkit names the execution role and the code bucket itself. Run it again to deploy a change.
+
+If your account's policies require tags on resources, or delete untagged ones, set `AWS_TAGS`, for example `AWS_TAGS="Owner=me@example.com,cost-center=42"`. The script then tags the secret, the runtime, its execution role and the toolkit's code bucket. The bucket is shared by the account's agents, so its own tags are kept. Without `AWS_TAGS`, only the secret is tagged, `project=skillhub`.
 
 The starter toolkit installs the agent's dependencies with `uv`, for Linux ARM64. Behind a package proxy, set `UV_INDEX_URL` to the proxy's index before you run the script; otherwise the build fails to fetch from `pypi.org`.
 
