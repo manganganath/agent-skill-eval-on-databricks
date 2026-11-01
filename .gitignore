@@ -21,3 +21,6 @@ app/backend/static/
 app/skillhub/
 app/config/
 app/frontend/node_modules/
+# written by the AgentCore starter toolkit when the sample agent is deployed
+.bedrock_agentcore.yaml
+.bedrock_agentcore/
