@@ -79,6 +79,27 @@ def ensure_tables(cfg: HubConfig, sql: SqlClient) -> None:
         for stmt in split_statements(TABLES_SQL):
             sql.execute(stmt.format(evals=ev))
         _add_run_columns(sql, ev)
+        if cfg.retention.history_days:
+            _keep_history(sql, ev, cfg.retention.history_days)
+
+
+def _keep_history(sql: SqlClient, ev: str, days: int) -> None:
+    """Set delta.logRetentionDuration on each results table, so DESCRIBE HISTORY lists every write for `days`. A
+    table that already has the value is left alone, so a bootstrap that changes nothing writes nothing."""
+    from skillhub.sql import SqlError
+
+    want = f"interval {days} days"
+    for table in table_columns():
+        rows = sql.execute(f"SHOW TBLPROPERTIES {ev}.{table} ('delta.logRetentionDuration')")
+        if any(str(r.get("value", "")).strip().lower() == want for r in rows):
+            continue
+        alter = f"ALTER TABLE {ev}.{table} SET TBLPROPERTIES ('delta.logRetentionDuration' = '{want}')"
+        try:
+            sql.execute(alter)
+        except SqlError as e:
+            raise SqlError(
+                f"cannot keep the write history of {ev}.{table} ({e}). Its owner can run: {alter}"
+            ) from e
 
 
 # Columns added to eval_runs after the tables were first created: harness, run_author, and the model catalog's.

@@ -304,3 +304,18 @@ def test_a_bad_scan_setting_is_refused_by_both_loaders(tmp_path, old, new, says)
         load_config(path)
     with pytest.raises(ConfigError, match=says):
         load_lint_settings(path)
+
+
+@pytest.mark.parametrize(
+    ("days", "ok"), [(None, True), (30, True), (2555, True), (29, False), (40000, False)]
+)
+def test_the_history_retention_is_unset_or_between_30_days_and_100_years(days, ok):
+    from pydantic import ValidationError
+
+    from skillhub.config import RetentionSettings
+
+    if ok:
+        assert RetentionSettings(history_days=days).history_days == days
+    else:
+        with pytest.raises(ValidationError):
+            RetentionSettings(history_days=days)

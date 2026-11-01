@@ -285,6 +285,7 @@ Example skills are imported from [anthropics/financial-services](https://github.
 - [docs/operations.md](docs/operations.md): bootstrap, identities, secrets, deploy, running evals, switch and rollback, alerts, nightly.
 - [docs/onboarding.md](docs/onboarding.md): roles, adding a skill, evaluating a new skill, drafts and Submit for review, importing a skill repository.
 - [docs/api.md](docs/api.md): the Skill Hub REST API and the Databricks API equivalents.
+- [docs/retention.md](docs/retention.md): what is kept where for an audit, what the product guarantees, and what to add for a multi-year retention period.
 
 ## License
 

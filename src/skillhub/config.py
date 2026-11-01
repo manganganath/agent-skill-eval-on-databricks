@@ -164,6 +164,13 @@ class ScanSettings(BaseModel):
         return out
 
 
+class RetentionSettings(BaseModel):
+    """How long the results tables keep their write history (`DESCRIBE HISTORY`: who wrote, when). Unset: Delta's
+    default, 30 days. The rows themselves are append-only and stay either way."""
+
+    history_days: int | None = Field(default=None, ge=30, le=36500)
+
+
 class Defaults(BaseModel):
     models: list[str]
     repeats: int = Field(default=3, ge=1)
@@ -217,6 +224,7 @@ class HubConfig(BaseModel):
     import_: ImportSpec = Field(alias="import")
     external: ExternalSettings = ExternalSettings()
     scan: ScanSettings = ScanSettings()
+    retention: RetentionSettings = RetentionSettings()
 
     @field_validator("catalog")
     @classmethod
