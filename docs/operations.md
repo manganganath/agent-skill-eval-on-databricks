@@ -406,6 +406,7 @@ databricks secrets put-acl skillhub-webhooks skillhub-ci READ
 
 ```python
 import hashlib, hmac
+
 expected = "sha256=" + hmac.new(key, body, hashlib.sha256).hexdigest()
 ok = hmac.compare_digest(expected, request.headers["X-SkillHub-Signature-256"])
 ```
