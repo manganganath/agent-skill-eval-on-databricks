@@ -975,7 +975,7 @@ def test_job_switch_sends_a_webhook_for_each_release_action_and_none_for_a_noop(
         sent.append(json.loads(kw["content"])["type"])
         return SimpleNamespace(status_code=204)
 
-    monkeypatch.setattr(wh.httpx, "post", post)
+    monkeypatch.setattr(wh, "http_post", post)
     monkeypatch.setattr(cli, "load_config", lambda path: reg.cfg)
     reg.cfg.notifications = Notifications(webhooks=[Webhook(url="https://hooks.example.com/a")])
     live(make_bundle(DEPT, SKILL, body="one"))

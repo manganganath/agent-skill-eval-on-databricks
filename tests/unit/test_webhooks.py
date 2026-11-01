@@ -5,6 +5,7 @@ import base64
 import hashlib
 import hmac
 import json
+from pathlib import Path
 from types import SimpleNamespace
 
 import httpx
@@ -180,3 +181,138 @@ def test_a_bad_webhook_setting_is_refused(hook, says):
 
     with pytest.raises(ValidationError, match=says):
         Webhook(**hook)
+
+
+# --- the review's findings ------------------------------------------------------------------------------------------
+
+
+def _history():
+    from datetime import UTC, datetime, timedelta
+
+    from skillhub.registry.journal import JournalRow
+
+    t = datetime(2026, 11, 2, tzinfo=UTC)
+
+    def row(action, minutes, **kw):
+        base = dict(dept="common", skill="audit-xls", action=action, version=None, from_version=None, to_version=None,
+                    versioned_fqn=None, content_hash=None, git_sha=None, eval_run_id=None, actor="ci", job_run_id=None)  # fmt: skip
+        return JournalRow(**{**base, **kw, "ts": t + timedelta(minutes=minutes)})
+
+    v4 = row("published", 1, version=4, versioned_fqn="skill_hub.common_versions.audit-xls-v4",
+             content_hash="sha256:" + "4" * 64, git_sha="g4", eval_run_id="run-4")  # fmt: skip
+    switched = row("switched", 2, from_version=3, to_version=4)
+    retired = row("retired", 3)
+    return [v4, switched, retired]
+
+
+def test_switch_and_retire_events_carry_the_version_its_hash_commit_and_eval_run():
+    history = _history()
+    switched = webhooks.event(make_cfg(), webhooks.complete(history[1], history))
+    assert (switched["version"], switched["from_version"], switched["to_version"]) == (4, 3, 4)
+    assert (switched["content_hash"], switched["git_sha"], switched["eval_run_id"]) == (
+        "sha256:" + "4" * 64,
+        "g4",
+        "run-4",
+    )
+    assert switched["text"] == "Skill common/audit-xls: live version switched from 3 to 4 by ci"
+    retired = webhooks.event(make_cfg(), webhooks.complete(history[2], history))
+    assert (retired["from_version"], retired["version"], retired["eval_run_id"]) == (4, 4, "run-4")
+    assert retired["text"] == "Skill common/audit-xls: retired by ci (it was version 4)"
+
+
+def test_a_published_event_has_a_summary_line_for_slack_and_teams():
+    assert (
+        webhooks.event(make_cfg(), published())["text"] == "Skill common/audit-xls: version 3 published by ci"
+    )
+
+
+def test_retry_after_is_honoured_within_the_deadline():
+    waits = []
+
+    class Limited(Poster):
+        def __call__(self, url, **kw):
+            super().__call__(url, **kw)
+            return SimpleNamespace(
+                status_code=429 if len(self.calls) == 1 else 200, headers={"retry-after": "4"}
+            )
+
+    assert webhooks.deliver(cfg_with({"url": "https://hooks.example.com/a"}), published(), post=Limited(),
+                            sleep=waits.append) == []  # fmt: skip
+    assert waits == [4.0]
+
+
+def test_a_receiver_that_never_answers_is_given_up_after_the_deadline(monkeypatch):
+    import threading
+    import time
+
+    monkeypatch.setattr(webhooks, "DEADLINE_S", 0.3)
+    stuck = threading.Event()
+
+    def hang(url, **kw):
+        stuck.wait(5)
+        return SimpleNamespace(status_code=200)
+
+    t0 = time.monotonic()
+    out = webhooks.deliver(cfg_with({"url": "https://hooks.example.com/a"}), published(), post=hang)
+    stuck.set()
+    assert time.monotonic() - t0 < 2 and out == ["webhook 1 not delivered within 0 s"]
+
+
+def test_an_unexpected_error_stays_with_its_own_webhook():
+    def post(url, **kw):
+        if "first" in url:
+            raise ValueError("bad https://first.example.com/x?token=t")
+        return SimpleNamespace(status_code=200)
+
+    cfg = cfg_with({"url": "https://first.example.com/x"}, {"url": "https://second.example.com/y"})
+    assert webhooks.deliver(cfg, published(), post=post) == [
+        "webhook 1 (first.example.com) not delivered: ValueError"
+    ]
+
+
+def test_a_secret_url_with_a_space_or_a_newline_is_not_sent():
+    cfg = cfg_with({"url_secret": {"scope": "skillhub-webhooks", "key": "slack"}})
+    out = webhooks.deliver(cfg, published(), get_secret=secrets({"skillhub-webhooks/slack": "https://a.example.com/x\ny"}),
+                           post=Poster())  # fmt: skip
+    assert out == ["webhook 1 not sent: its URL in the secret scope is not an https:// URL"]
+
+
+def test_http_post_reads_only_the_status_and_headers():
+    import respx
+
+    with respx.mock:
+        route = respx.post("https://hooks.example.com/a").respond(
+            202, headers={"Retry-After": "1"}, content=b"x" * 10
+        )
+        got = webhooks.http_post(
+            "https://hooks.example.com/a", content=b"{}", headers={}, timeout=5, follow_redirects=False
+        )
+    assert route.called and got.status_code == 202 and got.headers["retry-after"] == "1"
+
+
+def test_a_misspelt_webhook_key_is_refused():
+    from pydantic import ValidationError
+
+    with pytest.raises(ValidationError, match="Extra inputs are not permitted"):
+        Webhook(url="https://a.example.com/x", **{"signing-secret": {"scope": "s", "key": "k"}})
+
+
+def test_a_config_error_never_quotes_the_value_it_read(tmp_path):
+    from skillhub.config import ConfigError, load_config
+
+    token = "T0/B0/" + "S" * 24
+    text = (Path(__file__).resolve().parents[2] / "config" / "hub.yaml").read_text(encoding="utf-8")
+    text += f"\nnotifications:\n  webhooks:\n    - url: http://hooks.slack.example.com/services/{token}\n"
+    path = tmp_path / "hub.yaml"
+    path.write_text(text, encoding="utf-8")
+    import os
+    from unittest.mock import patch
+
+    env = {
+        "DATABRICKS_HOST": "https://example.invalid",
+        "SQL_WAREHOUSE_ID": "w",
+        "SKILLHUB_CATALOG": "skill_hub",
+    }
+    with patch.dict(os.environ, env), pytest.raises(ConfigError) as err:
+        load_config(path)
+    assert "must be an https:// URL" in str(err.value) and "S" * 10 not in str(err.value)

@@ -570,7 +570,7 @@ def _hooks(cli_reg, monkeypatch, status):
         sent.append(json.loads(kw["content"]))
         return SimpleNamespace(status_code=status)
 
-    monkeypatch.setattr(wh.httpx, "post", post)
+    monkeypatch.setattr(wh, "http_post", post)
     monkeypatch.setattr(wh.time, "sleep", lambda s: None)
     cli_reg.cfg.notifications = Notifications(webhooks=[Webhook(url="https://hooks.example.com/a")])
     return sent

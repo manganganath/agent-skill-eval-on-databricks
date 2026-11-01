@@ -372,7 +372,7 @@ The normal path goes through review and approval:
 
 ### Release webhooks
 
-After each publish of a new version, each switch that changes the live version and each retire, `skillhub` POSTs a JSON event to every webhook in `config/hub.yaml` that subscribes to the action. The `skill-switch` Job sends them, as `skillhub-ci`. The same release also writes its row to `skill_versions`, so a Databricks Job can use a table update trigger instead.
+After each publish of a new version, each switch and each retire, `skillhub` POSTs a JSON event to every webhook in `config/hub.yaml` that subscribes to the action. The `skill-switch` Job sends them, as `skillhub-ci`. The operator commands `skillhub publish`, `switch` and `retire` also send them, as the operator, who then needs `READ` on the scope too. A switch that finishes an interrupted one sends `skill.switched` again, with the same version on both sides. The same release also writes its row to `skill_versions`, so a Databricks Job can use a table update trigger instead.
 
 ```yaml
 notifications:
@@ -386,9 +386,10 @@ notifications:
 
 **The event** has these fields:
 - `type` (`skill.published`, `skill.switched` or `skill.retired`), `action` and `id`, a UUID that is also in the `X-SkillHub-Delivery` header;
+- `text`, a one-line summary such as "Skill common/audit-xls: live version switched from 3 to 4 by ...". Slack incoming webhooks show it as the message. A Teams workflow or other receiver can read it, or any other field;
 - `skill_fqn`, `dept` and `skill`;
 - `version`, `from_version`, `to_version` and `versioned_fqn`;
-- `content_hash`, `git_sha` and `eval_run_id`;
+- `content_hash`, `git_sha` and `eval_run_id`. For a switch they describe the version it went to; for a retire, the version it took down;
 - `actor`, `job_run_id` and `ts`.
 
 The header `X-SkillHub-Event` carries the type.
@@ -409,7 +410,9 @@ expected = "sha256=" + hmac.new(key, body, hashlib.sha256).hexdigest()
 ok = hmac.compare_digest(expected, request.headers["X-SkillHub-Signature-256"])
 ```
 
-**Delivery.** Each webhook is tried up to three times, 1 and then 2 seconds apart, when it answers with a server error, 408 or 429, or cannot be reached. Any other client error is not retried.
+**Delivery.** Each webhook is tried up to three times, 1 and then 2 seconds apart, when it answers with a server error, 408 or 429, or cannot be reached. A 429's `Retry-After` is honoured. Any other client error is not retried.
+- **Time limit:** a webhook has at most 30 seconds, including reading its secrets, and only its response's status line is read. A slow receiver can delay a release by at most that, per webhook.
+- **Duplicates:** an attempt that times out may still have arrived, so a receiver can get the same event twice. Drop duplicates by `X-SkillHub-Delivery`.
 - **A webhook that isn't delivered** is a warning in the Job's output. It never fails the release, which is already done and journaled.
 - **A URL or signing secret that can't be read** means the event is not sent, and a warning says why. It is never sent unsigned.
 - **Network:** serverless Jobs reach the webhook's host only if your workspace's egress settings allow it.

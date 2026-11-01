@@ -353,10 +353,11 @@ def _notify(cfg, w, journal, dept: str, skill: str, action: str) -> None:
     from skillhub.registry.webhooks import deliver, workspace_secrets
 
     try:
-        rows = [r for r in journal.history(dept, skill) if r.action == action]
+        history = journal.history(dept, skill)
+        rows = [r for r in history if r.action == action]
         if rows:
             secrets = workspace_secrets(w) if w is not None else None
-            for warning in deliver(cfg, rows[-1], get_secret=secrets):
+            for warning in deliver(cfg, rows[-1], history=history, get_secret=secrets):
                 typer.echo(f"warning: {warning}", err=True)
     except Exception as e:  # the message is not kept: it could quote a URL
         typer.echo(f"warning: the release webhooks were not sent ({type(e).__name__})", err=True)
@@ -575,10 +576,12 @@ def publish_cmd(
             actor=actor,
             job_run_id=job_run_id or None,  # Jobs pass "" for an unset parameter
         )
+        if (
+            res.created
+        ):  # before the experiment: a failure there must not lose the event, and a re-run is unchanged
+            _notify(cfg, w, journal, dept, skill, "published")
         _ensure_skill_experiment(cfg, dept, skill)
     typer.echo(json.dumps(asdict(res), indent=2))
-    if res.created:
-        _notify(cfg, w, journal, dept, skill, "published")
 
 
 @app.command("reconcile")
@@ -875,6 +878,8 @@ def _job_switch(
                 actor=actor,
                 job_run_id=run_id,
             )
+            if res.created:  # before the experiment, as in publish
+                _notify(cfg, w, journal, dept, skill, "published")
             _ensure_skill_experiment(cfg, dept, skill)
             out = {"status": "published" if res.created else "unchanged", **asdict(res)}
         elif action == "switch":
@@ -891,7 +896,8 @@ def _job_switch(
             status = retire(cfg, uc, journal, dept, skill, actor=actor, job_run_id=run_id)
             out = {"status": status, "dept": dept, "skill": skill}
     typer.echo(json.dumps(out, indent=2))
-    _notify(cfg, w, journal, dept, skill, str(out["status"]))
+    if action in ("switch", "retire"):  # a publish sent its event already
+        _notify(cfg, w, journal, dept, skill, str(out["status"]))
     if action == "switch" and out["status"] not in ("switched", "noop"):
         raise typer.Exit(1)
 
