@@ -2035,15 +2035,15 @@ def test_a_single_skill_runs_in_process_even_with_several_workers(workers, monke
 
 
 def test_worker_results_keep_the_plan_order_when_workers_finish_out_of_order(workers):
-    earnings_done = threading.Event()
-
     def answer(spec):
         if spec["skill"] == "audit-xls":  # first in plan order, finishes last
-            assert earnings_done.wait(timeout=10)
-        got = _answer(spec)
-        if spec["skill"] == "earnings-preview":
-            earnings_done.set()
-        return got
+            # Wait until the other worker is recorded as finished, not only answered: its record comes after its
+            # answer returns, so a signal sent from inside its answer let this one record itself first.
+            deadline = time.monotonic() + 10
+            while "equity_research/earnings-preview" not in workers["finished"]:
+                assert time.monotonic() < deadline
+                time.sleep(0.01)
+        return _answer(spec)
 
     workers["answer"] = answer
     summary = run_eval(_hub_cfg(2), request())
