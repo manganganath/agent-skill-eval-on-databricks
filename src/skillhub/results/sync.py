@@ -4,6 +4,7 @@ import json
 import logging
 import re
 import time
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
@@ -11,6 +12,7 @@ from typing import TYPE_CHECKING, Any
 import mlflow
 from mlflow import MlflowClient
 
+from skillhub.agents.contract import AGENT_TRACES
 from skillhub.config import HubConfig
 from skillhub.evalspec import Rubric, rubric_hash
 from skillhub.naming import SKILL_RE, evals_schema, experiment_parts
@@ -20,12 +22,13 @@ if TYPE_CHECKING:
     from skillhub.sql import SqlClient
 
 log = logging.getLogger(__name__)
-DEFAULT_HARNESS = "reference"  # the built-in agent loop; the only harness so far
+DEFAULT_HARNESS = "reference"  # the built-in agent loop; an external agent's runs carry its own harness
 DEFAULT_PROFILE_KIND = "hub_yaml"  # a run from before the model catalog used a hub.yaml profile
 PARENT_TAG = "parent_run_id"  # The runner sets it on each child run
 POLL_S = 5
 STALL_S = 60  # how long a scored run's trace count may stay unchanged before sync writes what it has
 CHUNK = 500
+AGENT_READ_WORKERS = 8  # an external agent's traces are read one by one, this many at once
 # A Delta write that conflicts with a concurrent one (another run, the nightly job or a Hub eval writing the same
 # table) is retried: insert_missing only adds the rows still missing, so a retry is safe.
 CONFLICT_RETRIES = 5
@@ -269,10 +272,68 @@ def child_runs(cfg: HubConfig, run_key: str, *, trusted: frozenset[str] | None =
     return found
 
 
-def _traces(run) -> list:
-    return mlflow.search_traces(
-        locations=[run.info.experiment_id], run_id=run.info.run_id, return_type="list"
+def _traces(run, evals: str | None = None) -> list:
+    """The child run's traces. The built-in agent loop's are found by the run. An external agent's were not created
+    inside the run, so they are read back by the IDs its run listed (agent_traces)."""
+    if (_tag(run, "harness") or DEFAULT_HARNESS) == DEFAULT_HARNESS:
+        return mlflow.search_traces(
+            locations=[run.info.experiment_id], run_id=run.info.run_id, return_type="list"
+        )
+    return agent_traces(run, evals)
+
+
+def _listed(entry: Any, prefix: str, mode: str | None) -> bool:
+    if not isinstance(entry, dict) or entry.get("mode") != mode:
+        return False
+    if not str(entry.get("trace_id") or "").startswith(prefix):
+        return False
+    return all(
+        isinstance(entry.get(k), int) and not isinstance(entry.get(k), bool) for k in ("case_id", "repeat")
     )
+
+
+def _read_listed(entry: dict) -> Any:
+    try:
+        t = mlflow.get_trace(entry["trace_id"])
+    except Exception as exc:  # the trace is not readable: its case has no rows
+        log.warning("agent trace %s could not be read: %s", entry["trace_id"], type(exc).__name__)
+        return None
+    if t is None:
+        return None
+    t.info.tags = {
+        **(t.info.tags or {}),
+        "case_id": str(entry["case_id"]),
+        "repeat": str(entry["repeat"]),
+        "mode": str(entry["mode"]),
+        "reviewed": "true" if entry.get("reviewed") is True else "false",
+    }
+    if entry.get("prompt"):
+        t.info.request_preview = str(entry["prompt"])
+    return t
+
+
+def agent_traces(run, evals: str | None) -> list:
+    """An external agent's traces, from the child run's `agent_traces.json`, with the case's tags set on each as the
+    runner's own traces carry them. Only traces in the department's own trace location (`evals`) and of the run's
+    mode are read. A run without the list (a child that failed before its cases ran) has no traces."""
+    if evals is None:
+        return []
+    try:
+        listed = mlflow.artifacts.load_dict(f"runs:/{run.info.run_id}/{AGENT_TRACES}").get("traces") or []
+    except Exception as exc:
+        log.info("run %s lists no agent traces: %s", run.info.run_id, type(exc).__name__)
+        return []
+    prefix, mode = f"trace:/{evals}.traces/", _param(run, "mode")
+    entries = [e for e in listed if _listed(e, prefix, mode)]
+    if len(entries) < len(listed):
+        log.warning(
+            "run %s: skipped %d listed agent traces that are not of its department or mode",
+            run.info.run_id,
+            len(listed) - len(entries),
+        )
+    with ThreadPoolExecutor(max_workers=AGENT_READ_WORKERS, thread_name_prefix="agent-trace") as pool:
+        got = list(pool.map(_read_listed, entries))
+    return [t for t in got if t is not None]
 
 
 def _expected_cells(run) -> int:
@@ -336,7 +397,9 @@ def run_author(run) -> str | None:
     return tags.get("mlflow.user") or None
 
 
-def wait_for_traces(run, timeout_s: int, *, allow_partial: bool = False) -> tuple[list, float]:
+def wait_for_traces(
+    run, timeout_s: int, *, allow_partial: bool = False, evals: str | None = None
+) -> tuple[list, float]:
     """Poll until every expected (case_id, repeat) cell has a ready trace.
 
     Rows land about 20 s after the run. Traces can arrive before their assessments, and a run row
@@ -348,7 +411,7 @@ def wait_for_traces(run, timeout_s: int, *, allow_partial: bool = False) -> tupl
     start = time.monotonic()
     progress, changed_at = None, start
     while True:
-        traces = _traces(run)
+        traces = _traces(run, evals)
         ready, seen = _ready_cells(traces)
         if len(ready) >= expected:
             return traces, time.monotonic() - start
@@ -407,8 +470,9 @@ def _value(a) -> str | None:
 
 
 def _prompt(trace) -> str | None:
+    """The case prompt: the agent loop's request holds it; an external agent's trace carries it as its preview."""
     try:
-        return json.loads(trace.data.request).get("prompt")
+        return json.loads(trace.data.request).get("prompt") or trace.info.request_preview
     except (TypeError, ValueError, AttributeError):
         return trace.info.request_preview
 
@@ -598,12 +662,12 @@ def sync_run(
         if not rebuild and _count_runs(sql, ev, run.info.run_id) > 0:
             # Run row stays as it is. Traces that arrived after a partial write still get case rows;
             # the case key dedupes the rest.
-            traces, _ = _usable(_traces(run))
+            traces, _ = _usable(_traces(run, ev))
             cases_inserted += insert_missing(
                 sql, ev, "eval_cases", CASE_FIELDS, case_rows(run.info.run_id, traces), CASE_KEYS
             )
             continue
-        traces, secs = wait_for_traces(run, timeout_s, allow_partial=True)
+        traces, secs = wait_for_traces(run, timeout_s, allow_partial=True, evals=ev)
         waited += secs
         cases_inserted += insert_missing(
             sql, ev, "eval_cases", CASE_FIELDS, case_rows(run.info.run_id, traces), CASE_KEYS
