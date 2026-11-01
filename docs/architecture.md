@@ -174,7 +174,7 @@ Naming rules:
 - **Limitation.** File uploads take effect as they happen. For a few seconds during a switch, an agent can see a mix of old and new files.
 - **Reconcile.** `skillhub reconcile` runs nightly and at the start of every switch. It alerts on hash drift, an unfinished switch, files changed after the last finalise, and a published skill with no live copy. A `switch_failed` row also fires the `switch-failed` SQL alert. It never repairs anything by itself.
 - **Pinning.** A pin is `dept/name=N`, so the same skill name can be pinned in two departments. A team that needs a fixed version gets `READ VOLUME` on `<d>_versions.<skill>-v<N>` and loads it by name.
-- **Events.** Each publish, switch and retire writes a row to `skill_versions`, so a Databricks Job can subscribe with a table update trigger. Webhooks are planned.
+- **Events.** Each publish, switch and retire writes a row to `skill_versions`, so a Databricks Job can subscribe with a table update trigger. Each also POSTs a JSON event to the webhooks in `config/hub.yaml` `notifications.webhooks`. See [Release webhooks](operations.md#release-webhooks).
 
 ## Evaluation method
 
@@ -258,4 +258,4 @@ MLflow is the source of truth. Delta is synced from it.
 - **Reviewed cases.** Generated cases are advisory until a member of the reviewers group marks them reviewed.
 - **External models.** Amazon Bedrock is the only external provider in this release. Its AWS key is stored in a Databricks secret scope; a Unity Catalog service credential is planned.
 - **External agents.** Claude Code and agents on Amazon Bedrock AgentCore, on live skills only: an agent sees the skills' production names, and candidates, drafts and pinned versions are staged under other names. Codex is not supported yet.
-- **Planned for later releases (not in this release):** editing skills in the Skill Hub, security scanning before release, approve-and-publish in the app, external agents on candidates and drafts, Codex, gating on model catalog models, GitHub OIDC federation, judge alignment, webhooks, and model routing through the Unity Gateway for Claude.
+- **Planned for later releases (not in this release):** editing skills in the Skill Hub, approve-and-publish in the app, external agents on candidates and drafts, Codex, gating on model catalog models, GitHub OIDC federation, judge alignment, and model routing through the Unity Gateway for Claude.

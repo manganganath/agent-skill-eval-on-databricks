@@ -958,3 +958,30 @@ def test_job_switch_refuses_any_other_trigger_source(reg, make_bundle, monkeypat
     r = _cli(reg, monkeypatch, *_publish_args("--trigger-source", source))
     assert r.exit_code == 2 and "--trigger-source" in r.output
     assert reg.journal.history(DEPT, SKILL) == []
+
+
+def test_job_switch_sends_a_webhook_for_each_release_action_and_none_for_a_noop(
+    reg, live, make_bundle, monkeypatch, tmp_path
+):
+    import json
+    from types import SimpleNamespace
+
+    import skillhub.registry.webhooks as wh
+    from skillhub.config import Notifications, Webhook
+
+    sent = []
+
+    def post(url, **kw):
+        sent.append(json.loads(kw["content"])["type"])
+        return SimpleNamespace(status_code=204)
+
+    monkeypatch.setattr(wh.httpx, "post", post)
+    monkeypatch.setattr(cli, "load_config", lambda path: reg.cfg)
+    reg.cfg.notifications = Notifications(webhooks=[Webhook(url="https://hooks.example.com/a")])
+    live(make_bundle(DEPT, SKILL, body="one"))
+    _publish(reg, make_bundle(DEPT, SKILL, body="two"))
+    monkeypatch.setenv("SKILLHUB_SKILLS", str(tmp_path / "skills"))
+    assert _cli(reg, monkeypatch, "--action", "switch", "--version", "2").exit_code == 0
+    assert _cli(reg, monkeypatch, "--action", "switch", "--version", "2").exit_code == 0  # noop: no event
+    assert _cli(reg, monkeypatch, "--action", "retire").exit_code == 0
+    assert sent == ["skill.switched", "skill.retired"]

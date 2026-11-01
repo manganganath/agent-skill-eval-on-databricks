@@ -343,6 +343,25 @@ def _gate_run_key(run_key: str | None, eval_run_id: str) -> str:
     return key
 
 
+def _notify(cfg, w, journal, dept: str, skill: str, action: str) -> None:
+    """Send the release webhooks (hub.yaml notifications.webhooks) for the skill's newest journal row of `action`.
+    Never fails the command: the release is done and journaled, and a webhook not delivered is a warning line."""
+    from skillhub.config import RELEASE_EVENTS
+
+    if action not in RELEASE_EVENTS or not cfg.notifications.webhooks:
+        return
+    from skillhub.registry.webhooks import deliver, workspace_secrets
+
+    try:
+        rows = [r for r in journal.history(dept, skill) if r.action == action]
+        if rows:
+            secrets = workspace_secrets(w) if w is not None else None
+            for warning in deliver(cfg, rows[-1], get_secret=secrets):
+                typer.echo(f"warning: {warning}", err=True)
+    except Exception as e:  # the message is not kept: it could quote a URL
+        typer.echo(f"warning: the release webhooks were not sent ({type(e).__name__})", err=True)
+
+
 def _refuse_publish(journal, bundle, actual: str, message: str, *, git_sha, eval_run_id, actor, job_run_id):
     """Journal a `publish_refused` row, print one error line and exit 2."""
     from skillhub.registry.journal import new_row
@@ -558,6 +577,8 @@ def publish_cmd(
         )
         _ensure_skill_experiment(cfg, dept, skill)
     typer.echo(json.dumps(asdict(res), indent=2))
+    if res.created:
+        _notify(cfg, w, journal, dept, skill, "published")
 
 
 @app.command("reconcile")
@@ -603,9 +624,10 @@ def switch_cmd(
     cfg = _cfg(ctx)
     _check_skill_ref(cfg, dept, skill)
     with _guard():
-        _, uc, _, journal = _services(cfg)
+        w, uc, _, journal = _services(cfg)
         res = switch(cfg, uc, journal, dept, skill, to, actor=actor, job_run_id=_opt(job_run_id))
     typer.echo(json.dumps(asdict(res), indent=2))
+    _notify(cfg, w, journal, dept, skill, res.status)
     if res.status not in ("switched", "noop"):
         raise typer.Exit(1)
 
@@ -627,8 +649,9 @@ def retire_cmd(
     cfg = _cfg(ctx)
     _check_skill_ref(cfg, dept, skill)
     with _guard():
-        _, uc, _, journal = _services(cfg)
+        w, uc, _, journal = _services(cfg)
         status = retire(cfg, uc, journal, dept, skill, actor=actor, job_run_id=_opt(job_run_id))
+    _notify(cfg, w, journal, dept, skill, status)
     typer.echo(f"retired {dept}/{skill}" if status == "retired" else "nothing to retire")
 
 
@@ -868,6 +891,7 @@ def _job_switch(
             status = retire(cfg, uc, journal, dept, skill, actor=actor, job_run_id=run_id)
             out = {"status": status, "dept": dept, "skill": skill}
     typer.echo(json.dumps(out, indent=2))
+    _notify(cfg, w, journal, dept, skill, str(out["status"]))
     if action == "switch" and out["status"] not in ("switched", "noop"):
         raise typer.Exit(1)
 
