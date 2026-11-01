@@ -124,20 +124,20 @@ def probe_agent(
 
     try:
         agent = (agent_for or _agent)(cfg, name)
+        run_key, trace_key = f"probe_{secrets.token_hex(6)}", secrets.token_hex(16)
+        table = trace_table(cfg, AGENT_DEPT)
+        case = AgentCase(
+            prompt=PROMPT,
+            mode="trigger",
+            skills_mcp=skills_urls(cfg, AGENT_DEPT),
+            attributes=attributes(
+                run_key=run_key, trace_key=trace_key, case_id=0, repeat=0, mode="trigger", profile=name
+            ),
+            trace_table=table,
+            max_turns=1,
+        )
     except Exception as exc:
         return failed(name, describe(exc))
-    run_key, trace_key = f"probe_{secrets.token_hex(6)}", secrets.token_hex(16)
-    table = trace_table(cfg, AGENT_DEPT)
-    case = AgentCase(
-        prompt=PROMPT,
-        mode="trigger",
-        skills_mcp=skills_urls(cfg, AGENT_DEPT),
-        attributes=attributes(
-            run_key=run_key, trace_key=trace_key, case_id=0, repeat=0, mode="trigger", profile=name
-        ),
-        trace_table=table,
-        max_turns=1,
-    )
     since_ns = time.time_ns() - 60 * 10**9
     start = clock()
     try:
@@ -147,15 +147,20 @@ def probe_agent(
     if answer.error is not None:
         return failed(name, f"the agent did not answer: {answer.error}")
     ms = int((clock() - start) * 1000)
-    found = (wait or _wait)(
-        sql,
-        table,
-        {(0, 0)},
-        run_key=run_key,
-        trace_key=trace_key,
-        since_ns=since_ns,
-        timeout_s=AGENT_TRACE_WAIT_S,
-    )
+    try:
+        found = (wait or _wait)(
+            sql,
+            table,
+            {(0, 0)},
+            run_key=run_key,
+            trace_key=trace_key,
+            since_ns=since_ns,
+            timeout_s=AGENT_TRACE_WAIT_S,
+        )
+    except Exception as exc:
+        return failed(
+            name, f"the agent answered in {ms} ms, but its trace could not be read: {describe(exc)}"
+        )
     if (0, 0) not in found:
         return failed(
             name,

@@ -286,3 +286,22 @@ def test_the_probe_command_passes_the_agent_settings_it_was_asked_to_test(monkey
     result = CliRunner().invoke(cli.app, args)
     assert result.exit_code == 0, result.output
     assert seen == {"expect": CC.target(), "sql": sql}
+
+
+def test_a_trace_that_cannot_be_read_or_a_case_that_cannot_be_built_fails_the_test(monkeypatch):
+    def boom(*a, **k):
+        raise ValueError("no warehouse")
+
+    unread = run_probe(
+        make_cfg(), [CC], 6, "cc-sonnet", CC.target(), sql="SQL", agent_for=lambda c, n: Agent(), wait=boom,
+        clock=ticks(1.0, 3.5),
+    )  # fmt: skip
+    assert unread.status == "failed" and "its trace could not be read" in unread.message
+    assert unread.message.startswith("the agent answered in 2500 ms")
+
+    agent = Agent()
+    monkeypatch.setattr("skillhub.agents.contract.trace_table", boom)
+    unbuilt = run_probe(
+        make_cfg(), [CC], 6, "cc-sonnet", CC.target(), sql="SQL", agent_for=lambda c, n: agent
+    )
+    assert unbuilt.status == "failed" and agent.cases == []
