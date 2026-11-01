@@ -33,8 +33,8 @@ def test_each_agents_name_for_a_skill_tool_maps_to_the_skill():
 
 def test_the_first_skill_call_of_a_recorded_claude_code_trace_is_its_invoked_skill():
     trace = load(recorded("claude_code_trigger_spans.json"))
-    assert skill_calls(trace, tool_names(FQNS)) == ["audit-xls", "xlsx-author"]  # list_skills is not a skill
-    assert token_usage(trace) == (4210 + 6120, 38 + 412)
+    assert skill_calls(trace, tool_names(FQNS)) == ["initiating-coverage"]
+    assert token_usage(trace) == (2 + 2, 63 + 460)  # Claude Code's token counts are strings
 
 
 def test_a_strands_trace_counts_only_its_model_call_spans_for_tokens():

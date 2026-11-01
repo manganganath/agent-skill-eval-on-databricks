@@ -1,0 +1,3 @@
+{"type":"system","subtype":"init","cwd":"/tmp/skillhub-claude-y","session_id":"9a2d","tools":[],"mcp_servers":[{"name":"s0","status":"failed"},{"name":"s1","status":"connected"}],"model":"databricks-claude-sonnet-5-5"}
+{"type":"assistant","message":{"content":[{"type":"text","text":"I could not find a skill for this."}]},"session_id":"9a2d"}
+{"type":"result","subtype":"success","is_error":false,"num_turns":1,"result":"I could not find a skill for this.","session_id":"9a2d"}

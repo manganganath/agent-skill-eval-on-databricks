@@ -1,21 +1,44 @@
 {
   "name": "claude_code.interaction",
-  "attributes": {"skillhub.case_id": "1", "skillhub.repeat": "0", "skillhub.mode": "trigger"},
+  "attributes": {
+    "skillhub.case_id": "1",
+    "skillhub.repeat": "0",
+    "skillhub.mode": "trigger",
+    "gen_ai.operation.name": "invoke_agent"
+  },
   "children": [
-    {"name": "claude_code.llm_request",
-     "attributes": {"gen_ai.request.model": "databricks-claude-sonnet-5-5", "input_tokens": 4210, "output_tokens": 38,
-                    "stop_reason": "tool_use"}},
-    {"name": "claude_code.tool",
-     "attributes": {"gen_ai.tool.name": "list_skills", "gen_ai.operation.name": "execute_tool",
-                    "anthropic.mcp.server.name": "s1"}},
-    {"name": "claude_code.tool",
-     "attributes": {"gen_ai.tool.name": "skill_skill_hub_common_audit-xls", "gen_ai.operation.name": "execute_tool",
-                    "anthropic.mcp.server.name": "s1"}},
-    {"name": "claude_code.llm_request",
-     "attributes": {"gen_ai.request.model": "databricks-claude-sonnet-5-5", "input_tokens": 6120, "output_tokens": 412,
-                    "stop_reason": "end_turn"}},
-    {"name": "claude_code.tool",
-     "attributes": {"gen_ai.tool.name": "skill_skill_hub_common_xlsx-author", "gen_ai.operation.name": "execute_tool",
-                    "anthropic.mcp.server.name": "s1"}}
+    {
+      "name": "claude_code.llm_request",
+      "attributes": {
+        "gen_ai.request.model": "databricks-claude-sonnet-5-5",
+        "input_tokens": "2",
+        "output_tokens": "63",
+        "stop_reason": "tool_use"
+      }
+    },
+    {
+      "name": "claude_code.tool",
+      "attributes": {
+        "gen_ai.tool.name": "skill_skill_hub_dept_equity_research_initiating-coverage",
+        "gen_ai.operation.name": "execute_tool",
+        "anthropic.mcp.server.name": "s0",
+        "tool_name": "mcp__s0__skill_skill_hub_dept_equity_research_initiating-coverage"
+      }
+    },
+    {
+      "name": "claude_code.tool.execution",
+      "attributes": {
+        "success": "true"
+      }
+    },
+    {
+      "name": "claude_code.llm_request",
+      "attributes": {
+        "gen_ai.request.model": "databricks-claude-sonnet-5-5",
+        "input_tokens": "2",
+        "output_tokens": "460",
+        "stop_reason": "end_turn"
+      }
+    }
   ]
 }

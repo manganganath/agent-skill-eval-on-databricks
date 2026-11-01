@@ -13,7 +13,9 @@ import importlib
 from skillhub.config import ConfigError, HubConfig
 
 # harness -> "module:Class". Each class builds itself with `from_profile(cfg, name, profile)`.
-HARNESSES: dict[str, str] = {}
+HARNESSES: dict[str, str] = {
+    "claude-code": "skillhub.agents.claude_code:ClaudeCodeAgent",
+}
 
 
 def agent_for(cfg: HubConfig, profile_name: str):
