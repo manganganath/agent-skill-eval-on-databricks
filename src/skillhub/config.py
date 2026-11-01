@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Literal
 
 import yaml
-from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
 from skillhub import SkillHubError
 
@@ -171,6 +171,67 @@ class RetentionSettings(BaseModel):
     history_days: int | None = Field(default=None, ge=30, le=36500)
 
 
+_SECRET_KEY = re.compile(r"[A-Za-z0-9_.-]{1,128}")
+RELEASE_EVENTS = ("published", "switched", "retired")
+WEBHOOK_URL = re.compile(
+    r"https://[^\s/?#@]+(?:[/?#][^\s]*)?"
+)  # no spaces or control characters, no user info
+
+
+class SecretRef(BaseModel):
+    """A key in a Databricks secret scope, read by the identity that runs the step (skillhub-ci for releases)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    scope: str
+    key: str
+
+    @field_validator("scope")
+    @classmethod
+    def _scope_is_a_name(cls, v: str) -> str:
+        if not _SECRET_SCOPE.fullmatch(v):
+            raise ValueError(f"{v!r} is not a secret scope name")
+        return v
+
+    @field_validator("key")
+    @classmethod
+    def _key_is_a_name(cls, v: str) -> str:
+        if not _SECRET_KEY.fullmatch(v):
+            raise ValueError(f"{v!r} is not a secret key name")
+        return v
+
+
+class Webhook(BaseModel):
+    """A URL that gets a JSON event after each release action it subscribes to.
+
+    `url` is for a URL without a token. A URL that carries one, such as a Slack or Teams incoming webhook, goes in a
+    secret scope (`url_secret`): hub.yaml is in the repository. With `signing_secret`, each event is signed. Unknown
+    keys are refused, so a misspelt `signing_secret` cannot send events unsigned."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    url: str | None = None
+    url_secret: SecretRef | None = None
+    signing_secret: SecretRef | None = None
+    events: list[Literal["published", "switched", "retired"]] = Field(
+        default_factory=lambda: list(RELEASE_EVENTS), min_length=1
+    )
+
+    @model_validator(mode="after")
+    def _one_url(self) -> Webhook:
+        if (self.url is None) == (self.url_secret is None):
+            raise ValueError("a webhook needs exactly one of url and url_secret")
+        if self.url is not None and not WEBHOOK_URL.fullmatch(self.url):
+            raise ValueError("a webhook url must be an https:// URL")
+        return self
+
+
+class Notifications(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    webhooks: list[Webhook] = []
+
+
 class Defaults(BaseModel):
     models: list[str]
     repeats: int = Field(default=3, ge=1)
@@ -225,6 +286,7 @@ class HubConfig(BaseModel):
     external: ExternalSettings = ExternalSettings()
     scan: ScanSettings = ScanSettings()
     retention: RetentionSettings = RetentionSettings()
+    notifications: Notifications = Notifications()
 
     @field_validator("catalog")
     @classmethod
@@ -321,6 +383,14 @@ def _resolve_host(host: str) -> str:
     return host.rstrip("/")
 
 
+def validation_message(e: ValidationError) -> str:
+    """A validation error without the values it read: a webhook URL can carry a token, and pydantic quotes inputs."""
+    return "; ".join(
+        f"{'.'.join(str(x) for x in err['loc'])}: {err['msg']}"
+        for err in e.errors(include_input=False, include_url=False)
+    )
+
+
 def load_config(path: str | Path | None = None) -> HubConfig:
     """Load and validate hub.yaml. The default is $SKILLHUB_CONFIG, else config/hub.yaml."""
     path = path or os.environ.get("SKILLHUB_CONFIG", "config/hub.yaml")
@@ -328,7 +398,7 @@ def load_config(path: str | Path | None = None) -> HubConfig:
     try:
         cfg = HubConfig.model_validate(_expand(raw))
     except ValidationError as e:
-        raise ConfigError(str(e)) from e
+        raise ConfigError(validation_message(e)) from e
     cfg.workspace.host = _resolve_host(cfg.workspace.host)
     _check_references(cfg)
     return cfg

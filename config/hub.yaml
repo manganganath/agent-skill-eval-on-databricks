@@ -51,6 +51,13 @@ scan:
 retention:
   history_days: 2555                # 7 years; bootstrap sets delta.logRetentionDuration on each results table
 
+# Release webhooks (docs/operations.md "Release webhooks"): after each publish, switch and retire, a JSON event to
+# each URL. A URL that carries a token goes in a secret scope that skillhub-ci may read, never here.
+# notifications:
+#   webhooks:
+#     - url_secret: {scope: skillhub-webhooks, key: slack}
+#       events: [published, switched, retired]
+
 # External model providers. Reviewers register the models themselves on the Skill Hub's Models page.
 external:
   bedrock:

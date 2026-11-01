@@ -556,3 +556,42 @@ def test_gate_reports_but_does_not_block_on_a_mode_outside_gating_modes(reg, mak
     )
     with pytest.raises(PublishRefused, match="gpt/trigger=fail"):
         _gate(reg, blocked)
+
+
+def _hooks(cli_reg, monkeypatch, status):
+    from types import SimpleNamespace
+
+    import skillhub.registry.webhooks as wh
+    from skillhub.config import Notifications, Webhook
+
+    sent = []
+
+    def post(url, **kw):
+        sent.append(json.loads(kw["content"]))
+        return SimpleNamespace(status_code=status)
+
+    monkeypatch.setattr(wh, "http_post", post)
+    monkeypatch.setattr(wh.time, "sleep", lambda s: None)
+    cli_reg.cfg.notifications = Notifications(webhooks=[Webhook(url="https://hooks.example.com/a")])
+    return sent
+
+
+def test_cli_publish_sends_the_release_webhook_once_per_new_version(cli_reg, monkeypatch):
+    sent = _hooks(cli_reg, monkeypatch, 200)
+    assert _invoke("--job-run-id", "job-7").exit_code == 0
+    assert _invoke().exit_code == 0  # identical content: no new version, no event
+    assert [(e["type"], e["version"], e["skill_fqn"], e["job_run_id"]) for e in sent] == [
+        ("skill.published", 1, "skill_hub.common.audit-xls", "job-7")
+    ]
+
+
+def test_cli_publish_still_succeeds_when_its_webhook_cannot_be_delivered(cli_reg, monkeypatch):
+    sent = _hooks(cli_reg, monkeypatch, 500)
+    r = _invoke()
+    assert r.exit_code == 0, r.output
+    assert (
+        len(sent) == 3
+        and "warning: webhook 1 (hooks.example.com) not delivered: HTTP 500 after 3 attempt(s)" in r.output
+    )
+    (row,) = cli_reg.journal.history("common", "audit-xls")
+    assert row.action == "published"

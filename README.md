@@ -31,7 +31,7 @@ It answers five questions for every skill before it reaches users:
   - **Trigger:** does the agent pick the skill when it should, and leave it alone for near-misses and unrelated requests? Accuracy, precision and recall per skill and model.
   - **Effectiveness:** is the answer better with the skill than without it? A panel of MLflow judges scores both answers against a rubric and the cases' assertions. The difference is the *uplift*.
   - Every result is tied to the exact content hash, rubric and test cases. Every score links to the MLflow trace that earned it.
-- **CI/CD gates in GitHub Actions.** A pull request that changes a skill is evaluated automatically, and a failed trigger eval blocks the merge. A named reviewer approves each release in a GitHub environment before CI publishes it.
+- **CI/CD gates in GitHub Actions.** A pull request that changes a skill is evaluated automatically, and a failed trigger eval blocks the merge. A named reviewer approves each release in a GitHub environment before CI publishes it. Each publish, switch and retire can POST a signed JSON event to your webhooks.
 - **A security scan of every skill.** Before a pull request's skills reach the workspace, rules check them for credentials, hidden Unicode, prompt injection, data exfiltration, encoded payloads and risky scripts, and an LLM reviewer reads them for unsafe instructions. Critical findings block the pull request and the publish. A reviewer other than the author can accept high ones, until the next push. See [docs/operations.md](docs/operations.md#security-scanning).
 - **The Skill Hub**, a Databricks App, governed by each user's own Unity Catalog permissions. In it you can:
   - browse the catalog;
