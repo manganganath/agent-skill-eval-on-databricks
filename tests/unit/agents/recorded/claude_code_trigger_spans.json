@@ -12,6 +12,8 @@
       "attributes": {
         "gen_ai.request.model": "databricks-claude-sonnet-5-5",
         "input_tokens": "2",
+        "cache_read_tokens": "0",
+        "cache_creation_tokens": "9012",
         "output_tokens": "63",
         "stop_reason": "tool_use"
       }
@@ -36,6 +38,8 @@
       "attributes": {
         "gen_ai.request.model": "databricks-claude-sonnet-5-5",
         "input_tokens": "2",
+        "cache_read_tokens": "9012",
+        "cache_creation_tokens": "35",
         "output_tokens": "460",
         "stop_reason": "end_turn"
       }

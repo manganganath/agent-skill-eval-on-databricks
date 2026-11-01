@@ -37,7 +37,12 @@ _TABLE = re.compile(r"[a-z0-9_]+\.[a-z0-9_]+\." + SPANS_TABLE)
 _MODEL_SPANS = frozenset({"claude_code.llm_request"})
 _MODEL_TYPES = frozenset({SpanType.CHAT_MODEL, SpanType.LLM})
 _MODEL_OPERATIONS = frozenset({"chat", "text_completion", "generate_content"})  # gen_ai.operation.name
-_INPUT_TOKENS = ("gen_ai.usage.input_tokens", "input_tokens")
+_GENAI_INPUT = "gen_ai.usage.input_tokens"  # the GenAI convention's input already includes cached input
+_CLAUDE_INPUT = (
+    "input_tokens",
+    "cache_read_tokens",
+    "cache_creation_tokens",
+)  # Claude Code counts them apart
 _OUTPUT_TOKENS = ("gen_ai.usage.output_tokens", "output_tokens")
 
 Cell = tuple[int, int]  # (case_id, repeat)
@@ -89,7 +94,8 @@ def _int(value: Any) -> int:
 
 
 def token_usage(trace: Any) -> tuple[int, int]:
-    """(input tokens, output tokens) over the trace's model-call spans."""
+    """(input tokens, output tokens) over the trace's model-call spans. Input counts cached input too: a Claude Code
+    span carries new, cache-read and cache-created input apart, and all three are summed."""
     tokens_in = tokens_out = 0
     for span in trace.data.spans or []:
         model_call = (
@@ -99,7 +105,10 @@ def token_usage(trace: Any) -> tuple[int, int]:
         )
         if not model_call:
             continue
-        tokens_in += next((_int(_attr(span, k)) for k in _INPUT_TOKENS if _attr(span, k) is not None), 0)
+        if _attr(span, _GENAI_INPUT) is not None:
+            tokens_in += _int(_attr(span, _GENAI_INPUT))
+        else:
+            tokens_in += sum(_int(_attr(span, k)) for k in _CLAUDE_INPUT)
         tokens_out += next((_int(_attr(span, k)) for k in _OUTPUT_TOKENS if _attr(span, k) is not None), 0)
     return tokens_in, tokens_out
 
@@ -163,7 +172,10 @@ def wait_for_traces(
     start = clock()
     found: dict[Cell, str] = {}
     while True:
-        found = find_traces(sql, table, run_key=run_key, trace_key=trace_key, since_ns=since_ns)
+        try:
+            found = find_traces(sql, table, run_key=run_key, trace_key=trace_key, since_ns=since_ns)
+        except Exception as exc:  # the cases have run: one failed poll must not lose them
+            log.warning("polling %s for agent traces failed (%s); trying again", table, type(exc).__name__)
         missing = expected - set(found)
         if not missing:
             return found

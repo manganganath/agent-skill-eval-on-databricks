@@ -34,7 +34,8 @@ def test_each_agents_name_for_a_skill_tool_maps_to_the_skill():
 def test_the_first_skill_call_of_a_recorded_claude_code_trace_is_its_invoked_skill():
     trace = load(recorded("claude_code_trigger_spans.json"))
     assert skill_calls(trace, tool_names(FQNS)) == ["initiating-coverage"]
-    assert token_usage(trace) == (2 + 2, 63 + 460)  # Claude Code's token counts are strings
+    # Claude Code's token counts are strings, and its input is the new, the cache-read and the cache-created tokens
+    assert token_usage(trace) == ((2 + 0 + 9012) + (2 + 9012 + 35), 63 + 460)
 
 
 def test_a_strands_trace_counts_only_its_model_call_spans_for_tokens():
@@ -130,6 +131,32 @@ def test_waiting_stops_when_every_case_has_its_trace_and_gives_up_after_the_time
     found = wait_for_traces(late, TABLE, {(1, 0), (2, 0)}, run_key="r", trace_key="k", since_ns=0, timeout_s=300,
                             clock=lambda: next(now), sleep=lambda s: None)  # fmt: skip
     assert set(found) == {(1, 0)} and "1 of 2 agent traces did not reach" in caplog.text
+
+
+def test_a_failed_poll_is_nothing_new_and_the_wait_goes_on(caplog):
+    class Flaky(Rows):
+        def execute(self, statement, params=None):
+            if not self.calls:
+                self.calls.append((statement, params))
+                raise RuntimeError("warehouse is starting: test-token-0001")
+            return super().execute(statement, params)
+
+    sql = Flaky([row("aa", "1", "0")])
+    now = iter(range(0, 1000, 10))
+    found = wait_for_traces(sql, TABLE, {(1, 0)}, run_key="r", trace_key="k", since_ns=0,
+                            clock=lambda: next(now), sleep=lambda s: None)  # fmt: skip
+    assert set(found) == {(1, 0)}
+    assert "RuntimeError" in caplog.text and "test-token-0001" not in caplog.text
+
+
+def test_polls_that_keep_failing_return_what_was_found_at_the_deadline():
+    class Down:
+        def execute(self, statement, params=None):
+            raise OSError("down")
+
+    now = iter(range(0, 1000, 100))
+    assert wait_for_traces(Down(), TABLE, {(1, 0)}, run_key="r", trace_key="k", since_ns=0, timeout_s=300,
+                           clock=lambda: next(now), sleep=lambda s: None) == {}  # fmt: skip
 
 
 def test_the_contract_fields_for_a_case():
