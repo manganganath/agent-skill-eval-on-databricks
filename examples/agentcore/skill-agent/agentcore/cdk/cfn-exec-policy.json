@@ -35,6 +35,25 @@
       "Condition": {"StringEquals": {"iam:PassedToService": "bedrock-agentcore.amazonaws.com"}}
     },
     {
+      "Sid": "CreateAgentCoreServiceLinkedRoles",
+      "Effect": "Allow",
+      "Action": "iam:CreateServiceLinkedRole",
+      "Resource": [
+        "arn:aws:iam::ACCOUNT_ID:role/aws-service-role/network.bedrock-agentcore.amazonaws.com/AWSServiceRoleForBedrockAgentCoreNetwork",
+        "arn:aws:iam::ACCOUNT_ID:role/aws-service-role/runtime-identity.bedrock-agentcore.amazonaws.com/AWSServiceRoleForBedrockAgentCoreRuntimeIdentity",
+        "arn:aws:iam::ACCOUNT_ID:role/aws-service-role/runtime-instances.bedrock-agentcore.amazonaws.com/AWSServiceRoleForBedrockAgentCoreRuntimeInstances"
+      ],
+      "Condition": {
+        "StringEquals": {
+          "iam:AWSServiceName": [
+            "network.bedrock-agentcore.amazonaws.com",
+            "runtime-identity.bedrock-agentcore.amazonaws.com",
+            "runtime-instances.bedrock-agentcore.amazonaws.com"
+          ]
+        }
+      }
+    },
+    {
       "Sid": "ManageAgentRuntime",
       "Effect": "Allow",
       "Action": [
@@ -57,6 +76,13 @@
       "Resource": "*"
     },
     {
+      "Sid": "TagSkillhubResourcesOnCreate",
+      "Effect": "Allow",
+      "Action": "bedrock-agentcore:TagResource",
+      "Resource": "*",
+      "Condition": {"StringEquals": {"aws:RequestTag/project": "skillhub"}}
+    },
+    {
       "Sid": "ManageAgentWorkloadIdentity",
       "Effect": "Allow",
       "Action": [
@@ -75,6 +101,12 @@
       "Effect": "Allow",
       "Action": ["s3:GetObject", "s3:GetObjectVersion"],
       "Resource": "arn:aws:s3:::cdk-hnb659fds-assets-ACCOUNT_ID-REGION/*"
+    },
+    {
+      "Sid": "ListAgentCode",
+      "Effect": "Allow",
+      "Action": "s3:ListBucket",
+      "Resource": "arn:aws:s3:::cdk-hnb659fds-assets-ACCOUNT_ID-REGION"
     },
     {
       "Sid": "CheckAgentNetwork",
