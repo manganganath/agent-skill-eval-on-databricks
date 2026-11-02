@@ -13,11 +13,14 @@
 - **For the judges.** `mlflow.get_trace` gives the spans of a trace table only their type: MLflow fills a span's inputs
   and outputs from the OpenTelemetry conventions when it stores spans itself, and the workspace's OTLP endpoint does
   not. `for_judges` translates each span as MLflow would have stored it, so the judges that read the trace see the
-  request, and each tool call's name, arguments and result where the agent sent them.
+  request, and each tool call's name, arguments and result where the agent sent them. The tool-call judges also read
+  the tools that the agent had, which MLflow takes only from model-call spans, in its own shape: `for_judges` puts
+  the agent's tool definitions there, or the tools that it called when it records none (Claude Code).
 """
 
 from __future__ import annotations
 
+import json
 import logging
 import re
 import time
@@ -25,7 +28,9 @@ from collections.abc import Callable, Iterable, Mapping
 from typing import Any
 
 from mlflow.entities import Span, SpanType, Trace, TraceData
+from mlflow.tracing.constant import SpanAttributeKey
 from mlflow.tracing.otel.translation import translate_span_when_storing
+from mlflow.types.chat import ChatTool
 
 from skillhub.agents.contract import CASE_ID, REPEAT, RUN_KEY, SPANS_TABLE, TRACE_KEY
 from skillhub.gateway.bedrock import tool_name as bedrock_tool_name
@@ -37,6 +42,10 @@ TRACE_WAIT_S = 300  # how long a child run waits for its agents' traces after th
 TRACE_POLL_S = 10
 SKILL_TOOL = "skill_"
 TOOL_NAME = "gen_ai.tool.name"
+TOOL_DEFINITIONS = "gen_ai.tool.definitions"
+TOOL_ARGUMENTS = "gen_ai.tool.call.arguments"
+TOOL_RESULT = "gen_ai.tool.call.result"
+CALLED_ONLY = "Called by the agent in this trace. The agent does not record its tool definitions."
 _MCP_PREFIX = re.compile(r"mcp__[A-Za-z0-9-]+__")  # a Claude Code tool name keeps its server's name in front
 _TABLE = re.compile(r"[a-z0-9_]+\.[a-z0-9_]+\." + SPANS_TABLE)
 _MODEL_SPANS = frozenset({"claude_code.llm_request"})
@@ -91,25 +100,126 @@ def skill_calls(trace: Any, names: Mapping[str, str]) -> list[str]:
     return out
 
 
-def _judged_span(span: Any) -> Any:
-    """The span as MLflow would have stored it, named after its tool when it is a tool call. Unchanged when it cannot
-    be translated: the judges then see what they saw before."""
+def _is_tool_call(span: Any) -> bool:
+    tool = _attr(span, TOOL_NAME)
+    return isinstance(tool, str) and bool(tool) and _attr(span, "gen_ai.operation.name") == "execute_tool"
+
+
+def _decoded(value: Any) -> Any:
+    if isinstance(value, str):
+        try:
+            return json.loads(value)
+        except ValueError:
+            return value
+    return value
+
+
+def _judged(span: Any) -> tuple[Any, dict | None]:
+    """The span as MLflow would have stored it, with the dict it was built from. A tool call is named after its tool,
+    and has the call's arguments and result as its inputs and outputs. Unchanged, with no dict, when it cannot be
+    translated: the judges then see what they saw before."""
     try:
         data = translate_span_when_storing(span)
-        tool = _attr(span, TOOL_NAME)
-        if isinstance(tool, str) and tool and _attr(span, "gen_ai.operation.name") == "execute_tool":
+        if _is_tool_call(span):
             # Claude Code names every tool span claude_code.tool, and the judges read the tool's name from the span's.
-            data["name"] = tool
-        return Span.from_dict(data)
+            data["name"] = _attr(span, TOOL_NAME)
+            # A Strands tool span also holds the call as chat messages, which MLflow prefers, and the tool-call judges
+            # fail on a call whose inputs are a list.
+            for key, mlflow_key in (
+                (TOOL_ARGUMENTS, SpanAttributeKey.INPUTS),
+                (TOOL_RESULT, SpanAttributeKey.OUTPUTS),
+            ):
+                value = _attr(span, key)
+                if value is not None:
+                    data["attributes"][mlflow_key] = json.dumps(_decoded(value))
+        return Span.from_dict(data), data
     except Exception:
         log.debug("span %s not translated for the judges", getattr(span, "name", "?"), exc_info=True)
-        return span
+        return span, None
+
+
+def _valid(tool: dict) -> bool:
+    try:
+        ChatTool(**tool)
+        return True
+    except Exception:
+        return False
+
+
+def _chat_tool(definition: Any) -> dict | None:
+    """A tool definition as MLflow's ChatTool, from the shapes that agents record: MLflow's and OpenAI's
+    {"type": "function", "function": {...}}, the GenAI conventions' {"type": "function", "name", "parameters"}, and
+    Bedrock's {"name", "inputSchema": {"json": ...}}, as Strands sends it, also inside {"toolSpec": ...}. A schema that
+    ChatTool rejects is left out, so that the judges still know the tool by its name."""
+    if not isinstance(definition, dict):
+        return None
+    if isinstance(definition.get("function"), dict):
+        fn = dict(definition["function"])
+    else:
+        d = definition.get("toolSpec", definition)
+        if not isinstance(d, dict):
+            return None
+        schema = d.get("parameters") or (d.get("inputSchema") or {}).get("json")
+        fn = {k: v for k, v in {"name": d.get("name"), "description": d.get("description"),
+                                "parameters": schema}.items() if v is not None}  # fmt: skip
+    if not isinstance(fn.get("name"), str) or not fn["name"]:
+        return None
+    tool = {"type": "function", "function": fn}
+    if _valid(tool):
+        return tool
+    bare = {"type": "function", "function": {k: v for k, v in fn.items() if k in ("name", "description")}}
+    return bare if _valid(bare) else None
+
+
+def _defined_tools(span: Any) -> list[dict]:
+    """The tools that a span defines, as ChatTool dicts: in MLflow's chat tools, or the GenAI conventions'
+    gen_ai.tool.definitions."""
+    for key in (SpanAttributeKey.CHAT_TOOLS, TOOL_DEFINITIONS):
+        value = _decoded(_attr(span, key))
+        tools = [t for t in map(_chat_tool, value) if t] if isinstance(value, list) else []
+        if tools:
+            return tools
+    return []
+
+
+def _has_chat_tools(span: Any) -> bool:
+    """Whether MLflow finds tools on a model-call span: in its chat tools attribute, in its own shape, or in its
+    inputs."""
+    value = _attr(span, SpanAttributeKey.CHAT_TOOLS)
+    if isinstance(value, list) and any(isinstance(t, dict) and _valid(t) for t in value):
+        return True
+    return isinstance(span.inputs, dict) and bool(span.inputs.get("tools"))
+
+
+def _available_tools(spans: list[Any]) -> list[dict]:
+    """The tools that the agent of a trace had, as ChatTool dicts: those that its spans define, by name, in order.
+    An agent that records no tool definitions, such as Claude Code, had at least the tools that it called."""
+    defined: dict[str, dict] = {}
+    for span in spans:
+        for tool in _defined_tools(span):
+            defined.setdefault(tool["function"]["name"], tool)
+    if defined:
+        return list(defined.values())
+    called = dict.fromkeys(_attr(s, TOOL_NAME) for s in spans if _is_tool_call(s))
+    return [{"type": "function", "function": {"name": n, "description": CALLED_ONLY}} for n in called]
 
 
 def for_judges(trace: Any) -> Any:
     """The trace with its spans translated for the judges that read it (see the module docstring). Its info, and so
     its ID, tags and assessments, are the same object."""
-    return Trace(info=trace.info, data=TraceData(spans=[_judged_span(s) for s in trace.data.spans or []]))
+    pairs = [_judged(s) for s in trace.data.spans or []]
+    judged, data = [s for s, _ in pairs], [d for _, d in pairs]
+    models = sorted(
+        (i for i, s in enumerate(judged) if s.span_type in _MODEL_TYPES and data[i] is not None),
+        key=lambda i: judged[i].start_time_ns or 0,
+    )
+    if models and not any(_has_chat_tools(judged[i]) for i in models):
+        tools = _available_tools(judged)
+        if tools:  # on the first model call: MLflow reads the tools of all of them together
+            first = models[0]
+            data[first]["attributes"][SpanAttributeKey.CHAT_TOOLS] = json.dumps(tools)
+            judged[first] = Span.from_dict(data[first])
+    return Trace(info=trace.info, data=TraceData(spans=judged))
 
 
 def _int(value: Any) -> int:
