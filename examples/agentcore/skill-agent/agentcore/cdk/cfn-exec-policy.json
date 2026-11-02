@@ -38,7 +38,6 @@
       "Sid": "ManageAgentRuntime",
       "Effect": "Allow",
       "Action": [
-        "bedrock-agentcore:CreateAgentRuntime",
         "bedrock-agentcore:UpdateAgentRuntime",
         "bedrock-agentcore:DeleteAgentRuntime",
         "bedrock-agentcore:GetAgentRuntime",
@@ -52,9 +51,9 @@
       "Resource": "arn:aws:bedrock-agentcore:REGION:ACCOUNT_ID:runtime/skillhub_*"
     },
     {
-      "Sid": "ListAgentRuntimes",
+      "Sid": "CreateAndListAgentRuntimes",
       "Effect": "Allow",
-      "Action": "bedrock-agentcore:ListAgentRuntimes",
+      "Action": ["bedrock-agentcore:CreateAgentRuntime", "bedrock-agentcore:ListAgentRuntimes"],
       "Resource": "*"
     },
     {
