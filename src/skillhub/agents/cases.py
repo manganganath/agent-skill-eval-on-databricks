@@ -5,8 +5,10 @@
 2. The traces are found in the department's spans table by the run key and a random trace key that only this child
    run knows (`traces.wait_for_traces`), then read with `mlflow.get_trace`. A case whose trace has not arrived
    within `traces.TRACE_WAIT_S` is an error.
-3. The scorers run on each trace with the case's inputs, the agent's answer and the evals.json expectations. Each
-   result is logged with `mlflow.log_assessment` on the agent's own trace. In trigger mode the scorer reads the
+3. The scorers run on each trace with the case's inputs, the agent's answer and the evals.json expectations, on the
+   trace as `traces.for_judges` translates it: the trace table holds the agent's OpenTelemetry attributes, which
+   `mlflow.get_trace` does not turn into span inputs and outputs. Each result is logged with `mlflow.log_assessment`
+   on the agent's own trace. In trigger mode the scorer reads the
    skill calls from the agent's tool spans (`scorers.make_agent_trigger_scorer`).
 4. The child run records which trace is which case in its `agent_traces.json` artifact, which sync reads: the traces
    were not created inside the run, so a search by run would not find them. The traces are also linked to the run
@@ -39,7 +41,7 @@ from skillhub.agents.contract import (
     trace_table,
     turns,
 )
-from skillhub.agents.traces import Cell, token_usage, tool_names, wait_for_traces
+from skillhub.agents.traces import Cell, for_judges, token_usage, tool_names, wait_for_traces
 from skillhub.eval.scorers import make_agent_trigger_scorer
 from skillhub.results.datasets import case_record
 from skillhub.retry import is_transient, retrying
@@ -172,6 +174,7 @@ def run_agent_cases(
         case = ctx.cases[cid]
         trace.info.tags.update(_case_tags(case, rep, mode))  # in memory, as the runner's traces carry them
         record = case_record(case, ctx.skill.name)
+        judged = for_judges(trace)
         got: list[Feedback] = []
         with ThreadPoolExecutor(max_workers=SCORER_WORKERS, thread_name_prefix="agent-judge") as judges:
             for fbs in judges.map(
@@ -180,7 +183,7 @@ def run_agent_cases(
                     inputs=record["inputs"],
                     outputs=answers[cell].text,
                     expectations=record["expectations"],
-                    trace=trace,
+                    trace=judged,
                 ),
                 scorers,
             ):
