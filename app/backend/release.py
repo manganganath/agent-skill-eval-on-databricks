@@ -1,7 +1,10 @@
 """The Skill Hub's pull request flow as rules over the GitHub client (backend.github). A draft becomes a pull request
 against main. A pull request's gate and release are read from GitHub, and a reviewer may merge it from the Hub when
 the rules below hold. The app never approves the production release: that stays with the reviewers of the production
-environment in GitHub.
+environment in GitHub. It lists the releases that wait for that approval, with what a reviewer needs to decide, and
+links to the run where GitHub's own "Review deployments" button is. No code here or in backend.github calls a deployment
+review endpoint: the app's token belongs to the app, so an approval through it would be recorded as the token's
+account, not as the reviewer.
 """
 
 from __future__ import annotations
@@ -16,6 +19,7 @@ from backend import candidates, github
 from backend.github import GitHubClient, Pull, Run
 from skillhub.bundle import is_ignored
 from skillhub.config import HubConfig
+from skillhub.scan import counts, scan_file
 
 BASE = "main"
 SKILLS = "skills"
@@ -30,6 +34,7 @@ BLOB_WORKERS = 8
 UNSETTLED = (None, "unknown")
 MERGEABLE_READS = 3  # more reads of the pull request while its mergeable state is unknown
 MERGEABLE_WAIT_S = 1.0  # the pause before each of them
+MAX_WAITING = 25  # releases listed as waiting for approval; the production environment has few at a time
 
 
 class AlreadySubmitted(Exception):
@@ -245,3 +250,25 @@ def unmet_merge_rules(
     elif pull.mergeable_state != "clean":
         unmet.append("clean")
     return unmet
+
+
+# --- the releases that wait for approval ------------------------------------------------------------------------------
+
+
+def eval_key(keys: Collection[candidates.CandidateKey], head_sha: str) -> candidates.CandidateKey | None:
+    """The upload of the pull request's PR eval that the release reuses: the newest attempt for the head commit that was
+    merged. None when no folder of that commit is left (candidate folders are removed after a week)."""
+    same = [k for k in keys if k.sha7 is not None and head_sha.startswith(k.sha7)]
+    return max(same, key=lambda k: (k.attempt or 0, k.run_key), default=None)
+
+
+def scan_counts(cfg: HubConfig, dept: str, skill: str, files: dict[str, bytes]) -> dict[str, int]:
+    """The security scan's findings by severity for what the skill would publish: its files without evals/. The rules
+    only, as `skillhub scan` runs them without the LLM reviewer, which needs a model the app never calls."""
+    found = [
+        f
+        for path in sorted(files)
+        if not path.startswith("evals/")
+        for f in scan_file(f"{dept}/{skill}", path, files[path], allowed_domains=cfg.scan.allowed_domains)
+    ]
+    return counts(found)

@@ -220,3 +220,45 @@ def test_publish_run_reports_a_job_waiting_for_approval():
 def test_publish_run_is_none_when_the_merge_has_no_run():
     client = github.GitHubClient(REPO, TOKEN, opener=recording_opener({"workflow_runs": []}))
     assert client.publish_run("M5", "skills-publish.yml") is None
+
+
+def test_waiting_runs_lists_only_the_runs_that_wait_and_reads_them():
+    answer = {
+        "workflow_runs": [
+            {
+                "html_url": "https://run/9",
+                "run_number": 9,
+                "head_sha": "M5",
+                "created_at": "2026-10-29T12:01:00Z",
+                "updated_at": "2026-10-29T13:30:00Z",
+            }
+        ]
+    }
+    opener = recording_opener(answer)
+    runs = github.GitHubClient(REPO, TOKEN, opener=opener).waiting_runs("skills-publish.yml", 25)
+    assert [(r.url, r.number, r.sha) for r in runs] == [("https://run/9", 9, "M5")]
+    assert runs[0].updated_at.isoformat() == "2026-10-29T13:30:00+00:00"
+    (req,) = opener.seen
+    assert req.get_method() == "GET"
+    assert req.full_url.endswith("/actions/workflows/skills-publish.yml/runs?status=waiting&per_page=25")
+
+
+def test_merged_pull_number_is_the_pull_request_whose_merge_commit_it_is():
+    pulls = [{"number": 3, "merge_commit_sha": "other"}, {"number": 5, "merge_commit_sha": "M5"}]
+    client = github.GitHubClient(REPO, TOKEN, opener=recording_opener(pulls))
+    assert client.merged_pull_number("M5") == 5
+    # A direct push: no pull request has it as its merge commit.
+    assert client.merged_pull_number("M9") is None
+
+
+def test_a_pull_request_reads_its_title_author_and_merger():
+    raw = {
+        "number": 5,
+        "title": "Add new-skill",
+        "user": {"login": "ana"},
+        "merged_by": {"login": "rita"},
+        "head": {},
+    }
+    client = github.GitHubClient(REPO, TOKEN, opener=recording_opener(raw))
+    pull = client.pull(5)
+    assert (pull.title, pull.author, pull.merged_by) == ("Add new-skill", "ana", "rita")

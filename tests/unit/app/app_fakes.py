@@ -237,7 +237,7 @@ class FakeGitHub:
 
     A tree is a snapshot `S<n>` of every file (path -> bytes); a folder's tree sha is `S<n>:<folder>`. A commit names
     its snapshot, a branch names its commit. `pulls` holds the pull requests, `checks` the check states of a commit,
-    `runs` the publish run of a commit. `paths` overrides the files a pull request changes, which otherwise come from
+    `runs` the publish run of a commit, `waiting` the publish runs that wait for approval. `paths` overrides the files a pull request changes, which otherwise come from
     the diff of its branch. `mergeable_reads` holds the mergeable state of a pull request's next reads, one per read,
     as GitHub works it out; once they are used up a read returns the pull request as it is. `fail` maps a method name
     to the exception it raises. `calls` records each method called."""
@@ -255,6 +255,7 @@ class FakeGitHub:
         self.mergeable_reads: dict[int, list[str | None]] = {}
         self.checks: dict[str, dict[str, str]] = {}
         self.runs: dict[str, github.Run] = {}
+        self.waiting: list[github.WaitingRun] = []
         self.merges: list[tuple[int, str]] = []
         self.merge_refuse = False
         self.fail: dict[str, Exception] = {}
@@ -374,6 +375,15 @@ class FakeGitHub:
     def publish_run(self, sha, workflow):
         self._touch("publish_run")
         return self.runs.get(sha)
+
+    def waiting_runs(self, workflow, limit):
+        self._touch("waiting_runs")
+        assert workflow == release.PUBLISH_WORKFLOW
+        return self.waiting[:limit]
+
+    def merged_pull_number(self, sha):
+        self._touch("merged_pull_number")
+        return next((n for n, p in self.pulls.items() if p.merge_sha == sha), None)
 
     def merge(self, number, head_sha):
         self._touch("merge")

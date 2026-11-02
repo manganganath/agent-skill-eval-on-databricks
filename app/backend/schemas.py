@@ -292,6 +292,54 @@ class ReleaseStatusOut(BaseModel):
     live: ReleaseLive
 
 
+class PendingPull(BaseModel):
+    """The merged pull request of a release that waits for approval."""
+
+    number: int
+    title: str
+    author: str
+    merged_by: str | None
+    url: str
+
+
+class PendingScan(BaseModel):
+    """The security scan's rules over what the skill would publish, by severity. `unavailable` when the pull request's
+    upload is gone, so there is nothing to scan; `findings` when any severity has one."""
+
+    state: Literal["clean", "findings", "unavailable"]
+    counts: dict[str, int]
+
+
+class PendingSkill(BaseModel):
+    """A skill the release changes. `verdicts` is {model profile: worst verdict across the gating modes} from the pull
+    request's own eval, as for a candidate; empty when it has no result. `in_hub` is whether the Hub still has the
+    upload, so the skill has a candidate page."""
+
+    dept: str
+    skill: str
+    verdicts: dict[str, str]
+    eval_access: EvalAccess
+    scan: PendingScan
+    in_hub: bool
+
+
+class PendingRelease(BaseModel):
+    """A skills-publish run that waits for the production approval. `pull` is None for a merge commit that has no pull
+    request (a direct push), and when `details` is `unavailable`: GitHub failed for this run, so only the run is known.
+    `run_key` names the pull request's eval upload (`pr<N>-<sha7>-a<attempt>`), None when none is left. The approval
+    itself is made in GitHub, at `run_url`."""
+
+    run_url: str
+    run_number: int
+    sha: str
+    started_at: datetime | None
+    waiting_since: datetime | None
+    pull: PendingPull | None
+    details: Literal["ok", "unavailable"]
+    run_key: str | None
+    skills: list[PendingSkill]
+
+
 class MergeOut(BaseModel):
     pr_number: int
     merged: bool
