@@ -108,11 +108,21 @@ jobs:
       # does not block here: publish refuses critical findings itself, and a reviewer accepted any high ones in the
       # pull request.
       - name: Security scan of the release (for the approver)
+        id: release_scan
         if: ${{ steps.plan.outputs.reeval != '' }}
         continue-on-error: true
         env:
           SKILLS: ${{ steps.plan.outputs.reeval }}
         run: uv run skillhub scan --skills "$SKILLS" --allow-high --summary "$GITHUB_STEP_SUMMARY"
+
+      # The scan never fails the job (continue-on-error), so GitHub reports its step as passed either way. This step
+      # records the real outcome as an annotation, for the Skill Hub's Releases page. It runs after a failed scan, since
+      # the job has not failed, and not when the scan was skipped.
+      - name: Record the release scan's result
+        if: ${{ steps.release_scan.outcome != '' && steps.release_scan.outcome != 'skipped' }}
+        env:
+          OUTCOME: ${{ steps.release_scan.outcome }}
+        run: echo "::notice title=skillhub-release-scan::$OUTCOME"
 
   # The verdict gate lives here, before the production job, so a failing verdict never asks for approval.
   eval-merge:

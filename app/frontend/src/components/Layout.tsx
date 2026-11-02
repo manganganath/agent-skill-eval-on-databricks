@@ -31,6 +31,12 @@ function SignedInUser() {
   );
 }
 
+// The Releases tab is for reviewers. The lookup is the one the header makes, so it costs no second request.
+function ReleasesTab() {
+  const me = useAsync<Me>(() => api.me(), []);
+  return me.data?.is_reviewer ? <NavLink to="/releases">Releases</NavLink> : null;
+}
+
 export function Layout() {
   const { pathname } = useLocation();
   // A skill page (live, candidate or draft) and the draft upload belong to the catalog, so the tab stays marked.
@@ -49,6 +55,7 @@ export function Layout() {
             <NavLink to="/matrix">Eval matrix</NavLink>
             <NavLink to="/run">Run eval</NavLink>
             <NavLink to="/models">Models</NavLink>
+            <ReleasesTab />
             <NavLink to="/access">Access</NavLink>
           </nav>
           <SignedInUser />

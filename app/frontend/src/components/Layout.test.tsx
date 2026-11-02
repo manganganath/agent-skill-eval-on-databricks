@@ -51,6 +51,20 @@ describe("Layout", () => {
     expect(screen.getByText("Reviewer")).toBeTruthy();
   });
 
+  it("shows the Releases tab to a reviewer only", async () => {
+    renderAt("/");
+    await screen.findByText("ana@example.com");
+    expect(screen.queryByRole("link", { name: "Releases" })).toBeNull();
+  });
+
+  it("links a reviewer to the Releases page", async () => {
+    vi.mocked(api.me).mockResolvedValue({ user: "rita@example.com", groups: ["reviewers"], is_reviewer: true, is_author: false });
+    renderAt("/releases");
+    const tab = await screen.findByRole("link", { name: "Releases" });
+    expect(tab.getAttribute("href")).toBe("/releases");
+    expect(tab.classList.contains("active")).toBe(true);
+  });
+
   it("shows an Author badge that links to the Access page", async () => {
     vi.mocked(api.me).mockResolvedValue({ user: "ana@example.com", groups: [], is_reviewer: false, is_author: true });
     renderAt("/");

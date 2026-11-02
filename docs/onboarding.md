@@ -26,6 +26,7 @@ The Skill Hub shows the same table on its Access page, with your own roles marke
 | Try a skill under review | No | Own departments | All departments |
 | Run an eval on a candidate or draft | No | Yes | Yes |
 | Merge a pull request from the Hub | No | No | Yes, when its gate passed |
+| See the releases waiting for approval | No | No | Yes |
 | Switch the live version | No | No | Yes |
 | Manage models: add, test, enable and disable | See the list | See the list | Yes |
 | Add or edit a skill | No | Through a pull request | Through a pull request |
@@ -111,6 +112,8 @@ A draft is never released. To release the skill, submit the draft for review fro
 5. **Live.** When the switch has run, the step shows the live version and links to the skill.
 
 If the draft has no `evals/rubric.json` and its cases need one, CI generates it in the eval gate, and the pull request says so. The release path refreshes by itself while a step is pending. If GitHub is not set up for the Skill Hub yet, the page says so, and an administrator sets it up as described in [GitHub token](operations.md#github-token-for-the-skill-hub).
+
+**Releases waiting for approval.** Reviewers have a **Releases** page. It lists every release that waits for the production approval: the merged pull request (number, title, who opened and merged it), the skills it changes with their eval gate verdicts (and which eval they come from), the result of the run's own security scan, how long it has waited, and the run. Select **Review in GitHub** to open the run, then use GitHub's **Review deployments** button. The approval is always made in GitHub, by the required reviewers of the `production` environment, and recorded under their name: the Skill Hub never approves or rejects a release. The page refreshes by itself.
 
 ## Retire a skill
 

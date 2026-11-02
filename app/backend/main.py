@@ -23,6 +23,7 @@ def _include_routers(app: FastAPI) -> None:
     from backend.api import me as me_api
     from backend.api import models as models_api
     from backend.api import pulls as pulls_api
+    from backend.api import releases as releases_api
     from backend.api import results as results_api
     from backend.api import runs as runs_api
     from backend.api import skills as skills_api
@@ -35,6 +36,7 @@ def _include_routers(app: FastAPI) -> None:
     app.include_router(candidates_api.router, prefix="/api")
     app.include_router(drafts_api.router, prefix="/api")
     app.include_router(pulls_api.router, prefix="/api")
+    app.include_router(releases_api.router, prefix="/api")
     app.include_router(results_api.router, prefix="/api")
     app.include_router(runs_api.router, prefix="/api")
     app.include_router(try_api.router, prefix="/api")

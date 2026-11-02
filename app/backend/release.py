@@ -1,19 +1,24 @@
 """The Skill Hub's pull request flow as rules over the GitHub client (backend.github). A draft becomes a pull request
 against main. A pull request's gate and release are read from GitHub, and a reviewer may merge it from the Hub when
 the rules below hold. The app never approves the production release: that stays with the reviewers of the production
-environment in GitHub.
+environment in GitHub. It lists the releases that wait for that approval, with what a reviewer needs to decide, and
+links to the run where GitHub's own "Review deployments" button is. No code here or in backend.github calls a deployment
+review endpoint: the app's token belongs to the app, so an approval through it would be recorded as the token's
+account, not as the reviewer.
 """
 
 from __future__ import annotations
 
 import hashlib
+import re
 import time
 from collections.abc import Callable, Collection
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
+from datetime import datetime
 
 from backend import candidates, github
-from backend.github import GitHubClient, Pull, Run
+from backend.github import Annotation, GitHubClient, Job, Pull, Run, Step
 from skillhub.bundle import is_ignored
 from skillhub.config import HubConfig
 
@@ -23,6 +28,17 @@ BRANCH_PREFIX = "skillhub/"
 GATE_CHECK = "skills-pr"  # the check run of skills-pr.yml, named by its job
 REQUIRED_CHECKS = (GATE_CHECK, "platform")
 PUBLISH_WORKFLOW = "skills-publish.yml"
+# Names in skills-publish.yml that the waiting-release list matches on; a test keeps them in step with the workflow.
+PLAN_JOB = "plan"
+SCAN_STEP = "Security scan of the release (for the approver)"
+SCAN_STEP_ID = "release_scan"
+RECORD_STEP = "Record the release scan's result"
+# The scan step never fails its job (continue-on-error), so GitHub reports it as passed either way. The record step
+# annotates the job with the scan's real outcome, `success` or `failure`, under this title.
+SCAN_TITLE = "skillhub-release-scan"
+RELEASE_JOB = (
+    "publish and switch (production)"  # the job of the production environment, which waits for approval
+)
 HUB_MARKER = "This pull request was opened from the Skill Hub."
 FILE_MODE = "100644"
 BLOB_WORKERS = 8
@@ -30,6 +46,7 @@ BLOB_WORKERS = 8
 UNSETTLED = (None, "unknown")
 MERGEABLE_READS = 3  # more reads of the pull request while its mergeable state is unknown
 MERGEABLE_WAIT_S = 1.0  # the pause before each of them
+MAX_WAITING = 25  # releases listed as waiting for approval; the production environment has few at a time
 
 
 class AlreadySubmitted(Exception):
@@ -245,3 +262,60 @@ def unmet_merge_rules(
     elif pull.mergeable_state != "clean":
         unmet.append("clean")
     return unmet
+
+
+# --- the releases that wait for approval ------------------------------------------------------------------------------
+
+
+def eval_key(keys: Collection[candidates.CandidateKey], head_sha: str) -> candidates.CandidateKey | None:
+    """The upload of the pull request's PR eval that the release reuses: the newest attempt for the head commit that was
+    merged. None when no folder of that commit is left (candidate folders are removed after a week)."""
+    same = [k for k in keys if k.sha7 is not None and head_sha.startswith(k.sha7)]
+    return max(same, key=lambda k: (k.attempt or 0, k.run_key), default=None)
+
+
+def merge_prefix(sha: str) -> str:
+    """The start of the run keys of the merge evals of a commit: `merge_<sha7>_[r<N>_]a<attempt>`, as the plan job
+    makes them. eval_runs matches on it, so no listing of uploads is needed."""
+    return f"merge_{sha[:7].lower()}_"
+
+
+def merge_eval_key(run_keys: Collection[str], sha: str) -> str | None:
+    """The newest attempt of the commit's merge eval among the run keys, or None. A Hub run of a key (`_h<hex>`) is not
+    the merge eval."""
+    pattern = re.compile(re.escape(merge_prefix(sha)) + r"(?:r[0-9]+_)?a([0-9]+)")
+    found = [(int(m[1]), k) for k in run_keys if (m := pattern.fullmatch(k))]
+    return max(found)[1] if found else None
+
+
+def scan_step(jobs: Collection[Job]) -> tuple[Job, Step] | None:
+    """The plan job and its security scan step, or None when the run has no such step."""
+    return next(
+        ((job, st) for job in jobs if job.name == PLAN_JOB for st in job.steps if st.name == SCAN_STEP), None
+    )
+
+
+def scan_ran(found: tuple[Job, Step] | None) -> bool:
+    """Whether the scan step finished and was not skipped, so the job has an annotation with its outcome."""
+    return found is not None and found[1].status == "completed" and found[1].conclusion != "skipped"
+
+
+def scan_state(found: tuple[Job, Step] | None, annotations: Collection[Annotation] | None) -> str:
+    """The security scan of the release, from the outcome its record step annotated: passed (no critical finding; high
+    ones, if any, are in the run summary, since the step accepts them), failed (critical findings, or the scan could not
+    run), not_run (the step is absent or was skipped), or unknown (it has not finished, or the run has no annotation,
+    as a run from before the record step). `annotations` is None when they could not be read."""
+    if found is None or (found[1].status == "completed" and found[1].conclusion == "skipped"):
+        return "not_run"
+    if not scan_ran(found) or annotations is None:
+        return "unknown"
+    message = next((a.message for a in annotations if a.title == SCAN_TITLE), "")
+    return {"success": "passed", "failure": "failed"}.get(message, "unknown")
+
+
+def waiting_since(jobs: Collection[Job]) -> datetime | None:
+    """When the production job began to wait for its approval, or None when no such job waits."""
+    for job in jobs:
+        if job.name == RELEASE_JOB and job.status == "waiting":
+            return job.started_at or job.created_at
+    return None

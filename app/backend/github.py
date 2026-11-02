@@ -23,6 +23,7 @@ import urllib.parse
 import urllib.request
 from collections.abc import Callable
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from typing import Any
 
 from databricks.sdk import WorkspaceClient
@@ -136,6 +137,9 @@ class Pull:
     head_branch: str
     body: str
     mergeable_state: str | None
+    title: str = ""
+    author: str = ""  # the login of whoever opened it
+    merged_by: str | None = None  # the login of whoever merged it; GitHub reports it on a single read only
 
 
 @dataclass(frozen=True)
@@ -146,6 +150,62 @@ class Run:
     status: str
     conclusion: str | None
     waiting: bool
+
+
+@dataclass(frozen=True)
+class WaitingRun:
+    """A skills-publish run that waits for the production approval. `updated_at` is when it last changed, which for a
+    waiting run is when it began to wait; `created_at` is when the merge started it."""
+
+    id: int
+    url: str
+    number: int
+    sha: str
+    created_at: datetime | None
+    updated_at: datetime | None
+
+
+@dataclass(frozen=True)
+class Step:
+    name: str
+    status: str
+    conclusion: str | None
+
+
+@dataclass(frozen=True)
+class Job:
+    """A job of a workflow run, with its steps. `started_at` of a job that waits for an approval is when it began to
+    wait."""
+
+    id: int  # also the id of the job's check run, which holds its annotations
+    name: str
+    status: str
+    conclusion: str | None
+    created_at: datetime | None
+    started_at: datetime | None
+    steps: tuple[Step, ...]
+
+
+@dataclass(frozen=True)
+class Annotation:
+    title: str
+    message: str
+
+
+def _time(value: object) -> datetime | None:
+    """A GitHub timestamp as an aware datetime, or None."""
+    if not isinstance(value, str):
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return parsed if parsed.tzinfo else parsed.replace(tzinfo=UTC)
+
+
+def _login(user: object) -> str | None:
+    login = user.get("login") if isinstance(user, dict) else None
+    return login if isinstance(login, str) and login else None
 
 
 def _pull(raw: dict) -> Pull:
@@ -161,6 +221,9 @@ def _pull(raw: dict) -> Pull:
         head_branch=str(head.get("ref") or ""),
         body=raw.get("body") or "",
         mergeable_state=raw.get("mergeable_state"),
+        title=str(raw.get("title") or ""),
+        author=_login(raw.get("user")) or "",
+        merged_by=_login(raw.get("merged_by")),
     )
 
 
@@ -325,3 +388,51 @@ class GitHubClient:
             conclusion=str(conclusion) if conclusion else None,
             waiting=waiting,
         )
+
+    def waiting_runs(self, workflow: str, limit: int) -> list[WaitingRun]:
+        """The newest runs of a workflow that wait for an approval, at most `limit`. Read only: whoever approves does
+        it in GitHub, as themselves."""
+        raw = self.get(
+            f"{self._root}/actions/workflows/{workflow}/runs", {"status": "waiting", "per_page": limit}
+        )
+        return [
+            WaitingRun(
+                id=int(run.get("id") or 0),
+                url=str(run.get("html_url") or ""),
+                number=int(run.get("run_number") or 0),
+                sha=str(run.get("head_sha") or ""),
+                created_at=_time(run.get("created_at")),
+                updated_at=_time(run.get("updated_at")),
+            )
+            for run in raw.get("workflow_runs") or []
+        ]
+
+    def merged_pull_number(self, sha: str) -> int | None:
+        """The number of the pull request whose merge commit is `sha`, or None: a commit pushed straight to main has
+        none."""
+        raw = self.get(f"{self._root}/commits/{sha}/pulls", {"per_page": 5})
+        return next((int(p["number"]) for p in raw if p.get("merge_commit_sha") == sha), None)
+
+    def run_jobs(self, run_id: int) -> list[Job]:
+        """The jobs of a workflow run with their steps (one read)."""
+        raw = self.get(f"{self._root}/actions/runs/{run_id}/jobs", {"per_page": PAGE})
+        return [
+            Job(
+                id=int(job.get("id") or 0),
+                name=str(job.get("name") or ""),
+                status=str(job.get("status") or ""),
+                conclusion=job.get("conclusion") or None,
+                created_at=_time(job.get("created_at")),
+                started_at=_time(job.get("started_at")),
+                steps=tuple(
+                    Step(str(st.get("name") or ""), str(st.get("status") or ""), st.get("conclusion") or None)
+                    for st in job.get("steps") or []
+                ),
+            )
+            for job in raw.get("jobs") or []
+        ]
+
+    def job_annotations(self, job_id: int) -> list[Annotation]:
+        """The annotations of a job's check run: what its steps recorded with `::notice title=...::message`."""
+        raw = self.get(f"{self._root}/check-runs/{job_id}/annotations", {"per_page": PAGE})
+        return [Annotation(str(a.get("title") or ""), str(a.get("message") or "")) for a in raw or []]
