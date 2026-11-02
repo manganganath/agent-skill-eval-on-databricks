@@ -66,12 +66,23 @@ The agent:
    npm install -g @aws/agentcore
    ```
 
-   Uninstall the older starter toolkit first (`pip uninstall bedrock-agentcore-starter-toolkit`): it also installs an `agentcore` command. `agentcore deploy` deploys a CDK stack, so the account and region must be bootstrapped for CDK once. Bootstrapping creates IAM roles, so it is for someone allowed to create them. Name the policy of the role that CloudFormation deploys with: without `--cloudformation-execution-policies` the role has none, and the deploy fails with `cdk-hnb659fds-cfn-exec-role ... is not authorized to perform: ssm:GetParameters`. `AdministratorAccess` is CDK's usual choice. Where that is not allowed, write a narrower policy that covers what this stack creates: an IAM role and its policy, the AgentCore runtime, and reading the CDK assets bucket and bootstrap version parameter. Add `--tags` if your account requires tags:
+   Uninstall the older starter toolkit first (`pip uninstall bedrock-agentcore-starter-toolkit`): it also installs an `agentcore` command. `agentcore deploy` deploys a CDK stack, so the account and region must be bootstrapped for CDK once. Bootstrapping creates IAM roles, so it is for someone allowed to create them.
+
+   CloudFormation deploys the stack with the bootstrap's execution role, and that role needs a policy. CDK attaches `AdministratorAccess` unless told otherwise, and many accounts remove that policy from roles. `agentcore/cdk/cfn-exec-policy.json` allows only what this stack does:
+   - its execution role (`AgentCore-skillhub-*`), and handing that role to AgentCore;
+   - runtimes named `skillhub_*` and their workload identities;
+   - reading the CDK assets bucket, CDK's bootstrap version parameter, and the subnets and security groups.
+
+   Create the policy, then bootstrap with it. Add `--tags` if your account requires tags:
 
    ```bash
+   sed -e s/ACCOUNT_ID/<account-id>/g -e s/REGION/<region>/g agentcore/cdk/cfn-exec-policy.json > /tmp/cfn-exec-policy.json
+   aws iam create-policy --policy-name skillhub-cdk-cfn-exec --policy-document file:///tmp/cfn-exec-policy.json
    npx -y aws-cdk@2 bootstrap aws://<account-id>/<region> \
-     --cloudformation-execution-policies arn:aws:iam::aws:policy/AdministratorAccess --tags Owner=<you>
+     --cloudformation-execution-policies arn:aws:iam::<account-id>:policy/skillhub-cdk-cfn-exec --tags Owner=<you>
    ```
+
+   Without a policy, the deploy fails with `cdk-hnb659fds-cfn-exec-role ... is not authorized to perform: ssm:GetParameters`. The execution role serves every CDK stack in the account and region, so a stack of your own may need more actions in this policy.
 
    `agentcore deploy` also turns on CloudWatch Transaction Search in the account and region, when it is off: it sends the account's X-Ray traces to CloudWatch Logs. The sample does not need it, because its traces go to Databricks. To leave the account as it is, run `agentcore config transactionSearch false` once before you deploy.
 
