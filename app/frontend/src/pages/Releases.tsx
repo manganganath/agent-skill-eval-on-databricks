@@ -28,7 +28,7 @@ export function waitedFor(since: string | null, now: number): string {
 export function scanText(scan: ScanState): string {
   switch (scan) {
     case "passed": return "No critical findings. Any high findings are listed in the run summary in GitHub.";
-    case "failed": return "The scan found critical findings. Details are in the run summary in GitHub.";
+    case "failed": return "The scan failed: critical findings, or the scan did not run. See the run summary in GitHub.";
     case "not_run": return "The scan was skipped for this release.";
     default: return "The scan result is not known yet. See the run summary in GitHub.";
   }

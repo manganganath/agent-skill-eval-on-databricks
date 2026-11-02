@@ -165,7 +165,7 @@ describe("waitedFor", () => {
 
 describe("scanText", () => {
   it.each([
-    ["passed", /No critical findings/], ["failed", /found critical findings/],
+    ["passed", /No critical findings/], ["failed", /critical findings, or the scan did not run/],
     ["not_run", /skipped/], ["unknown", /not known yet/],
   ] as const)("says in words what %s means and points to the run summary", (state, text) => {
     expect(scanText(state)).toMatch(text);

@@ -18,7 +18,7 @@ from dataclasses import dataclass
 from datetime import datetime
 
 from backend import candidates, github
-from backend.github import GitHubClient, Job, Pull, Run
+from backend.github import Annotation, GitHubClient, Job, Pull, Run, Step
 from skillhub.bundle import is_ignored
 from skillhub.config import HubConfig
 
@@ -31,6 +31,11 @@ PUBLISH_WORKFLOW = "skills-publish.yml"
 # Names in skills-publish.yml that the waiting-release list matches on; a test keeps them in step with the workflow.
 PLAN_JOB = "plan"
 SCAN_STEP = "Security scan of the release (for the approver)"
+SCAN_STEP_ID = "release_scan"
+RECORD_STEP = "Record the release scan's result"
+# The scan step never fails its job (continue-on-error), so GitHub reports it as passed either way. The record step
+# annotates the job with the scan's real outcome, `success` or `failure`, under this title.
+SCAN_TITLE = "skillhub-release-scan"
 RELEASE_JOB = (
     "publish and switch (production)"  # the job of the production environment, which waits for approval
 )
@@ -283,18 +288,29 @@ def merge_eval_key(run_keys: Collection[str], sha: str) -> str | None:
     return max(found)[1] if found else None
 
 
-def scan_state(jobs: Collection[Job]) -> str:
-    """The security scan of the release, as the plan job's scan step ended: passed (no critical finding; high ones, if
-    any, are in the run summary, since the step accepts them), failed, not_run (skipped), or unknown (no such step, or
-    it has not finished)."""
-    step = next(
-        (st for job in jobs if job.name == PLAN_JOB for st in job.steps if st.name == SCAN_STEP), None
+def scan_step(jobs: Collection[Job]) -> tuple[Job, Step] | None:
+    """The plan job and its security scan step, or None when the run has no such step."""
+    return next(
+        ((job, st) for job in jobs if job.name == PLAN_JOB for st in job.steps if st.name == SCAN_STEP), None
     )
-    if step is None or step.status != "completed":
+
+
+def scan_ran(found: tuple[Job, Step] | None) -> bool:
+    """Whether the scan step finished and was not skipped, so the job has an annotation with its outcome."""
+    return found is not None and found[1].status == "completed" and found[1].conclusion != "skipped"
+
+
+def scan_state(found: tuple[Job, Step] | None, annotations: Collection[Annotation] | None) -> str:
+    """The security scan of the release, from the outcome its record step annotated: passed (no critical finding; high
+    ones, if any, are in the run summary, since the step accepts them), failed (critical findings, or the scan could not
+    run), not_run (the step is absent or was skipped), or unknown (it has not finished, or the run has no annotation,
+    as a run from before the record step). `annotations` is None when they could not be read."""
+    if found is None or (found[1].status == "completed" and found[1].conclusion == "skipped"):
+        return "not_run"
+    if not scan_ran(found) or annotations is None:
         return "unknown"
-    return {"success": "passed", "failure": "failed", "skipped": "not_run"}.get(
-        step.conclusion or "", "unknown"
-    )
+    message = next((a.message for a in annotations if a.title == SCAN_TITLE), "")
+    return {"success": "passed", "failure": "failed"}.get(message, "unknown")
 
 
 def waiting_since(jobs: Collection[Job]) -> datetime | None:

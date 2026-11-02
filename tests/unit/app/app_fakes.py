@@ -257,6 +257,7 @@ class FakeGitHub:
         self.runs: dict[str, github.Run] = {}
         self.waiting: list[github.WaitingRun] = []
         self.jobs: dict[int, list[github.Job]] = {}  # a run id to its jobs
+        self.annotations: dict[int, list[github.Annotation]] = {}  # a job id to its annotations
         self.merges: list[tuple[int, str]] = []
         self.merge_refuse = False
         self.fail: dict[str, Exception] = {}
@@ -385,6 +386,10 @@ class FakeGitHub:
     def run_jobs(self, run_id):
         self._touch("run_jobs")
         return list(self.jobs.get(run_id, []))
+
+    def job_annotations(self, job_id):
+        self._touch("job_annotations")
+        return list(self.annotations.get(job_id, []))
 
     def merged_pull_number(self, sha):
         self._touch("merged_pull_number")

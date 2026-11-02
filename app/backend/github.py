@@ -177,12 +177,19 @@ class Job:
     """A job of a workflow run, with its steps. `started_at` of a job that waits for an approval is when it began to
     wait."""
 
+    id: int  # also the id of the job's check run, which holds its annotations
     name: str
     status: str
     conclusion: str | None
     created_at: datetime | None
     started_at: datetime | None
     steps: tuple[Step, ...]
+
+
+@dataclass(frozen=True)
+class Annotation:
+    title: str
+    message: str
 
 
 def _time(value: object) -> datetime | None:
@@ -411,6 +418,7 @@ class GitHubClient:
         raw = self.get(f"{self._root}/actions/runs/{run_id}/jobs", {"per_page": PAGE})
         return [
             Job(
+                id=int(job.get("id") or 0),
                 name=str(job.get("name") or ""),
                 status=str(job.get("status") or ""),
                 conclusion=job.get("conclusion") or None,
@@ -423,3 +431,8 @@ class GitHubClient:
             )
             for job in raw.get("jobs") or []
         ]
+
+    def job_annotations(self, job_id: int) -> list[Annotation]:
+        """The annotations of a job's check run: what its steps recorded with `::notice title=...::message`."""
+        raw = self.get(f"{self._root}/check-runs/{job_id}/annotations", {"per_page": PAGE})
+        return [Annotation(str(a.get("title") or ""), str(a.get("message") or "")) for a in raw or []]

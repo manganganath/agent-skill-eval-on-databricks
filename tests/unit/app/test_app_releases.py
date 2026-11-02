@@ -30,13 +30,19 @@ def waiting(number=9, sha="M5", updated=datetime(2026, 10, 29, 13, 30, tzinfo=UT
     )
 
 
-def put_jobs(gh, number=9, *, scan="success", scan_status="completed", began=None):
-    """The jobs of run `number`: the plan job with its scan step, and the production job that waits since `began`."""
+def put_jobs(gh, number=9, *, scan="success", scan_status="completed", began=None, outcome="success"):
+    """The jobs of run `number`: the plan job with its scan step, which GitHub reports as `scan` (it never fails the
+    job) and whose record step annotated `outcome` (None: no annotation), and the production job that waits since
+    `began`. `scan` "absent" leaves the step out."""
     steps = (github.Step(release.SCAN_STEP, scan_status, scan),) if scan != "absent" else ()
+    plan = 200 + number
     gh.jobs[100 + number] = [
-        github.Job(release.PLAN_JOB, "completed", "success", None, None, steps),
-        github.Job(release.RELEASE_JOB, "waiting", None, began, began, ()),
+        github.Job(plan, release.PLAN_JOB, "completed", "success", None, None, steps),
+        github.Job(300 + number, release.RELEASE_JOB, "waiting", None, began, began, ()),
     ]
+    gh.annotations[plan] = [github.Annotation("other", "x")] + (
+        [github.Annotation(release.SCAN_TITLE, outcome)] if outcome else []
+    )
 
 
 def merged(gh, number=5, *, sha="M5", head=SHA, paths=PATHS, **fields):
@@ -158,26 +164,51 @@ def test_the_newest_attempt_of_the_merge_eval_counts_and_a_hub_run_of_it_does_no
     assert skill["verdicts"] == {"claude-sonnet": "warn"} and skill["eval_source"] == "merge"
 
 
-def test_the_waiting_run_scan_is_how_its_scan_step_ended(make_client, gh):
+@pytest.mark.parametrize(
+    ("kw", "state"),
+    [
+        # GitHub reports the step as passed whatever it found (continue-on-error): the annotation says what it found.
+        ({"scan": "success", "outcome": "success"}, "passed"),
+        ({"scan": "success", "outcome": "failure"}, "failed"),
+        ({"scan": "success", "outcome": None}, "unknown"),  # a run from before the record step
+        ({"scan": "success", "outcome": "cancelled"}, "unknown"),
+        ({"scan": "skipped", "outcome": None}, "not_run"),
+        ({"scan": "absent", "outcome": None}, "not_run"),
+        ({"scan": None, "scan_status": "in_progress", "outcome": None}, "unknown"),
+    ],
+)
+def test_the_scan_is_the_outcome_the_record_step_annotated(make_client, gh, kw, state):
     merged(gh)
     gh.waiting = [waiting()]
-    for conclusion, status, state in [
-        ("success", "completed", "passed"),
-        ("failure", "completed", "failed"),
-        ("skipped", "completed", "not_run"),
-        (None, "in_progress", "unknown"),
-        ("cancelled", "completed", "unknown"),
-        ("absent", "completed", "unknown"),
-    ]:
-        put_jobs(gh, scan=conclusion, scan_status=status)
-        assert pending(make_client).json()[0]["scan"] == state
+    put_jobs(gh, **kw)
+    assert pending(make_client).json()[0]["scan"] == state
 
 
-def test_without_jobs_the_scan_is_unknown_and_the_wait_is_the_runs_last_change(make_client, gh):
+def test_the_annotations_are_read_only_when_the_scan_ran(make_client, gh):
+    merged(gh)
+    gh.waiting = [waiting()]
+    put_jobs(gh, scan="skipped", outcome=None)
+    pending(make_client)
+    assert "job_annotations" not in gh.calls
+    put_jobs(gh)
+    pending(make_client)
+    assert gh.calls.count("job_annotations") == 1
+
+
+def test_annotations_that_cannot_be_read_leave_the_scan_unknown_and_the_wait_known(make_client, gh):
+    merged(gh)
+    gh.waiting = [waiting()]
+    put_jobs(gh, began=datetime(2026, 10, 29, 13, 40, tzinfo=UTC))
+    gh.fail["job_annotations"] = github.GitHubUnavailable(502)
+    body = pending(make_client).json()[0]
+    assert body["scan"] == "unknown" and body["waiting_since"] == "2026-10-29T13:40:00Z"
+
+
+def test_without_a_plan_job_the_scan_did_not_run_and_the_wait_is_the_runs_last_change(make_client, gh):
     merged(gh)
     gh.waiting = [waiting()]
     body = pending(make_client).json()[0]
-    assert body["scan"] == "unknown" and body["waiting_since"] == "2026-10-29T13:30:00Z"
+    assert body["scan"] == "not_run" and body["waiting_since"] == "2026-10-29T13:30:00Z"
 
 
 def test_failing_jobs_read_leaves_the_run_listed_with_an_unknown_scan(make_client, gh):
@@ -207,7 +238,7 @@ def test_a_waiting_run_with_no_pull_request_is_listed_with_what_is_known(make_cl
             "waiting_since": "2026-10-29T13:30:00Z",
             "pull": None,
             "details": "ok",
-            "scan": "unknown",
+            "scan": "not_run",
             "run_key": None,
             "skills": [],
         }
@@ -289,7 +320,14 @@ def test_the_list_only_reads_github_and_never_approves_or_writes(make_client, gh
     gh.waiting = [waiting()]
     assert pending(make_client, sql=RowsSql(eval_rows())).status_code == 200
     assert WRITES.isdisjoint(gh.calls)
-    assert set(gh.calls) <= {"waiting_runs", "merged_pull_number", "pull", "pull_paths", "run_jobs"}
+    assert set(gh.calls) <= {
+        "waiting_runs",
+        "merged_pull_number",
+        "pull",
+        "pull_paths",
+        "run_jobs",
+        "job_annotations",
+    }
 
 
 def test_the_github_client_has_no_call_to_the_deployment_review_endpoints():
@@ -313,6 +351,16 @@ def test_the_workflow_still_has_the_job_and_step_names_the_list_matches_on():
 
     jobs = yaml.safe_load((REPO / ".github/workflows/skills-publish.yml").read_text())["jobs"]
     plan = next(j for j in jobs.values() if j.get("name") == release.PLAN_JOB)
-    assert release.SCAN_STEP in [step.get("name") for step in plan["steps"]]
+    steps = {step.get("name"): step for step in plan["steps"]}
+    scan = steps[release.SCAN_STEP]
+    assert scan["id"] == release.SCAN_STEP_ID and scan["continue-on-error"] is True
+    record = steps[release.RECORD_STEP]
+    # A failed scan leaves the job successful, so the implicit success() lets this step run after it; it does not run
+    # when the scan was skipped or never reached. The outcome goes in by env.
+    assert f"steps.{release.SCAN_STEP_ID}.outcome != ''" in record["if"]
+    assert f"steps.{release.SCAN_STEP_ID}.outcome != 'skipped'" in record["if"]
+    assert record["env"]["OUTCOME"] == f"${{{{ steps.{release.SCAN_STEP_ID}.outcome }}}}"
+    assert record["run"] == f'echo "::notice title={release.SCAN_TITLE}::$OUTCOME"'
+    assert list(steps).index(release.RECORD_STEP) == list(steps).index(release.SCAN_STEP) + 1
     prod = next(j for j in jobs.values() if j.get("name") == release.RELEASE_JOB)
     assert prod["environment"] == "production"

@@ -269,6 +269,7 @@ def test_run_jobs_reads_each_job_with_its_steps_in_one_get():
     answer = {
         "jobs": [
             {
+                "id": 77,
                 "name": "plan",
                 "status": "completed",
                 "conclusion": "success",
@@ -281,8 +282,20 @@ def test_run_jobs_reads_each_job_with_its_steps_in_one_get():
     }
     opener = recording_opener(answer)
     plan, prod = github.GitHubClient(REPO, TOKEN, opener=opener).run_jobs(109)
-    assert (plan.name, plan.conclusion, plan.started_at.hour) == ("plan", "success", 12)
+    assert (plan.id, plan.name, plan.conclusion, plan.started_at.hour) == (77, "plan", "success", 12)
     assert plan.steps == (github.Step("Install dependencies", "completed", "success"),)
     assert (prod.status, prod.conclusion, prod.started_at, prod.steps) == ("waiting", None, None, ())
     (req,) = opener.seen
     assert req.get_method() == "GET" and "/actions/runs/109/jobs" in req.full_url
+
+
+def test_job_annotations_reads_the_title_and_message_of_the_job_check_run():
+    answer = [
+        {"title": "skillhub-release-scan", "message": "failure", "annotation_level": "notice"},
+        {"message": "m"},
+    ]
+    opener = recording_opener(answer)
+    notes = github.GitHubClient(REPO, TOKEN, opener=opener).job_annotations(77)
+    assert notes == [github.Annotation("skillhub-release-scan", "failure"), github.Annotation("", "m")]
+    (req,) = opener.seen
+    assert req.get_method() == "GET" and "/check-runs/77/annotations" in req.full_url

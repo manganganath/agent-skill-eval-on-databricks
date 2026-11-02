@@ -318,7 +318,7 @@ Messages never quote a credential: they show at most its first four characters. 
 - **In step 1c, the LLM reviewer** (`scan.llm`, a `config/hub.yaml` model profile) reads each changed skill for exfiltration, unsafe actions such as trades or deletes without confirmation, deception, and injection. Its findings are at most high.
   - If the reviewer's answer can't be read, or its endpoint's content filter refuses the skill, that is a high finding: a person must read the skill.
   - If its endpoint can't be reached, the step warns and doesn't block. The rules carry the hard guarantees.
-- **In `skills-publish`,** the plan job writes the scan of the release to the run's summary, for the production approver. It doesn't block there.
+- **In `skills-publish`,** the plan job writes the scan of the release to the run's summary, for the production approver. It doesn't block there. Because the step never fails the job, a second step annotates the job with the scan's outcome (`skillhub-release-scan`: `success` or `failure`), which the Skill Hub's Releases page reads. Keep both step names when you edit the workflow: a test checks them.
 - **`skillhub publish` and the `skill-switch` Job** run the rules again, from `main`, and refuse a bundle with a critical finding, with a `publish_refused` journal row.
 
 **Accepting high findings.** A reviewer reads the findings, adds the label `skillhub-scan-override` to the pull request, then re-runs the failed `skills-pr` job. Set the repository variable `SKILLHUB_SCAN_OVERRIDE_LABEL` to use another label. The label counts only under these conditions:

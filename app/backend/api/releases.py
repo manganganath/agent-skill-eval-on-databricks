@@ -60,12 +60,16 @@ def _pull_and_skills(
 
 def _read(gh: github.GitHubClient, run: github.WaitingRun, cfg: HubConfig) -> _Read:
     pull, skills, ok = _pull_and_skills(gh, run, cfg)
+    jobs: list[github.Job] = []
+    scan = "unknown"
     try:
         jobs = gh.run_jobs(run.id)
-    except github.GitHubError as exc:  # the scan is unknown and the wait is the run's last change
+        found = release.scan_step(jobs)
+        notes = gh.job_annotations(found[0].id) if found and release.scan_ran(found) else []
+        scan = release.scan_state(found, notes)
+    except github.GitHubError as exc:  # the scan is unknown, and the wait may be the run's last change
         log.warning("could not read the jobs of run %s: %s", run.number, type(exc).__name__)
-        jobs = []
-    return _Read(pull, skills, release.scan_state(jobs), release.waiting_since(jobs) or run.updated_at, ok)
+    return _Read(pull, skills, scan, release.waiting_since(jobs) or run.updated_at, ok)
 
 
 def _evals(rows: list[dict], skill: str, sha: str, pr_key: str | None) -> tuple[str | None, str | None]:
