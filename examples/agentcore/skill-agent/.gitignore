@@ -1,0 +1,10 @@
+# The deployment's own state: the AWS account and region of each target, what the AgentCore CLI deployed there, and
+# local settings for `agentcore dev`.
+agentcore/aws-targets.json
+agentcore/.cli/
+agentcore/.env*.local
+# The CLI's build staging
+agentcore/.cache/
+# Python
+__pycache__/
+.venv/

@@ -1,0 +1,22 @@
+{
+  "name": "skillhub",
+  "version": 2,
+  "managedBy": "CDK",
+  "runtimes": [
+    {
+      "name": "skill_agent",
+      "description": "Skill Hub sample agent: skills from the Unity Gateway skills MCP, traces to Databricks",
+      "build": "CodeZip",
+      "entrypoint": "agent.py",
+      "codeLocation": "app/skill_agent",
+      "runtimeVersion": "PYTHON_3_13",
+      "protocol": "HTTP",
+      "instrumentation": {
+        "enableOtel": false
+      },
+      "tags": {
+        "project": "skillhub"
+      }
+    }
+  ]
+}
