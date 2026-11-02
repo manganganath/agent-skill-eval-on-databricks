@@ -1,7 +1,7 @@
 import { useEffect } from "react";
 import { Link } from "react-router-dom";
 import { api, ApiError } from "../api/client";
-import type { Me, PendingRelease, PendingScan, PendingSkill } from "../api/types";
+import type { Me, PendingRelease, PendingSkill, ScanState } from "../api/types";
 import { useAsync } from "../hooks/useAsync";
 import { EmptyState } from "../components/EmptyState";
 import { ErrorState } from "../components/ErrorState";
@@ -24,16 +24,20 @@ export function waitedFor(since: string | null, now: number): string {
   return hours > 0 ? `${hours} h ${minutes % 60} min` : `${minutes} min`;
 }
 
-const SEVERITIES = ["critical", "high", "medium", "low"];
-
-// The scan in words. A critical or high finding is flagged in words too, not by colour alone.
-export function scanText(scan: PendingScan): string {
-  if (scan.state === "unavailable") return "Not available: the pull request's upload is gone";
-  if (scan.state === "clean") return "No findings";
-  return SEVERITIES.filter((s) => (scan.counts[s] ?? 0) > 0).map((s) => `${scan.counts[s]} ${s}`).join(", ");
+// The run's own scan, in words. The findings themselves are in the run summary in GitHub.
+export function scanText(scan: ScanState): string {
+  switch (scan) {
+    case "passed": return "No critical findings. Any high findings are listed in the run summary in GitHub.";
+    case "failed": return "The scan found critical findings. Details are in the run summary in GitHub.";
+    case "not_run": return "The scan was skipped for this release.";
+    default: return "The scan result is not known yet. See the run summary in GitHub.";
+  }
 }
 
-const blocking = (scan: PendingScan) => (scan.counts.critical ?? 0) + (scan.counts.high ?? 0) > 0;
+export const EVAL_SOURCE = {
+  merge: "Merge eval: the merged content was evaluated again",
+  pull_request: "Pull request eval, reused by the release",
+} as const;
 
 function Verdicts({ skill }: { skill: PendingSkill }) {
   const verdicts = Object.entries(skill.verdicts);
@@ -70,18 +74,18 @@ function Skills({ release }: { release: PendingRelease }) {
     <div className="table-scroll" role="region" aria-label={`Skills of run ${release.run_number}`} tabIndex={0}>
       <table>
         <thead>
-          <tr><th scope="col">Skill</th><th scope="col">Eval gate verdicts</th><th scope="col">Security scan</th></tr>
+          <tr><th scope="col">Skill</th><th scope="col">Eval gate verdicts</th><th scope="col">Eval</th></tr>
         </thead>
         <tbody>
           {release.skills.map((s) => (
             <tr key={`${s.dept}/${s.skill}`}>
               <th scope="row">
-                {s.in_hub && release.run_key
+                {release.run_key
                   ? <Link to={`/candidates/${encodeURIComponent(release.run_key)}/${encodeURIComponent(s.dept)}/${encodeURIComponent(s.skill)}`}>{s.dept}/{s.skill}</Link>
                   : <>{s.dept}/{s.skill}</>}
               </th>
               <td><Verdicts skill={s} /></td>
-              <td className={blocking(s.scan) ? "scan-flag" : undefined}>{scanText(s.scan)}</td>
+              <td>{s.eval_source ? EVAL_SOURCE[s.eval_source] : <span className="muted">No eval found</span>}</td>
             </tr>
           ))}
         </tbody>
@@ -109,6 +113,9 @@ function Release({ release, now }: { release: PendingRelease; now: number }) {
         <p className="release-meta">No pull request: this commit was pushed to main directly.</p>
       ) : null}
       <Skills release={release} />
+      <p className={release.scan === "failed" ? "release-scan scan-flag" : "release-scan"}>
+        <strong>Security scan.</strong> {scanText(release.scan)}
+      </p>
       <p className="release-actions">
         <a className="btn btn-primary" href={release.run_url} target="_blank" rel="noreferrer">
           Review in GitHub<span className="visually-hidden"> (run {release.run_number})</span>

@@ -10,16 +10,17 @@ account, not as the reviewer.
 from __future__ import annotations
 
 import hashlib
+import re
 import time
 from collections.abc import Callable, Collection
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
+from datetime import datetime
 
 from backend import candidates, github
-from backend.github import GitHubClient, Pull, Run
+from backend.github import GitHubClient, Job, Pull, Run
 from skillhub.bundle import is_ignored
 from skillhub.config import HubConfig
-from skillhub.scan import counts, scan_file
 
 BASE = "main"
 SKILLS = "skills"
@@ -27,6 +28,12 @@ BRANCH_PREFIX = "skillhub/"
 GATE_CHECK = "skills-pr"  # the check run of skills-pr.yml, named by its job
 REQUIRED_CHECKS = (GATE_CHECK, "platform")
 PUBLISH_WORKFLOW = "skills-publish.yml"
+# Names in skills-publish.yml that the waiting-release list matches on; a test keeps them in step with the workflow.
+PLAN_JOB = "plan"
+SCAN_STEP = "Security scan of the release (for the approver)"
+RELEASE_JOB = (
+    "publish and switch (production)"  # the job of the production environment, which waits for approval
+)
 HUB_MARKER = "This pull request was opened from the Skill Hub."
 FILE_MODE = "100644"
 BLOB_WORKERS = 8
@@ -262,13 +269,37 @@ def eval_key(keys: Collection[candidates.CandidateKey], head_sha: str) -> candid
     return max(same, key=lambda k: (k.attempt or 0, k.run_key), default=None)
 
 
-def scan_counts(cfg: HubConfig, dept: str, skill: str, files: dict[str, bytes]) -> dict[str, int]:
-    """The security scan's findings by severity for what the skill would publish: its files without evals/. The rules
-    only, as `skillhub scan` runs them without the LLM reviewer, which needs a model the app never calls."""
-    found = [
-        f
-        for path in sorted(files)
-        if not path.startswith("evals/")
-        for f in scan_file(f"{dept}/{skill}", path, files[path], allowed_domains=cfg.scan.allowed_domains)
-    ]
-    return counts(found)
+def merge_prefix(sha: str) -> str:
+    """The start of the run keys of the merge evals of a commit: `merge_<sha7>_[r<N>_]a<attempt>`, as the plan job
+    makes them. eval_runs matches on it, so no listing of uploads is needed."""
+    return f"merge_{sha[:7].lower()}_"
+
+
+def merge_eval_key(run_keys: Collection[str], sha: str) -> str | None:
+    """The newest attempt of the commit's merge eval among the run keys, or None. A Hub run of a key (`_h<hex>`) is not
+    the merge eval."""
+    pattern = re.compile(re.escape(merge_prefix(sha)) + r"(?:r[0-9]+_)?a([0-9]+)")
+    found = [(int(m[1]), k) for k in run_keys if (m := pattern.fullmatch(k))]
+    return max(found)[1] if found else None
+
+
+def scan_state(jobs: Collection[Job]) -> str:
+    """The security scan of the release, as the plan job's scan step ended: passed (no critical finding; high ones, if
+    any, are in the run summary, since the step accepts them), failed, not_run (skipped), or unknown (no such step, or
+    it has not finished)."""
+    step = next(
+        (st for job in jobs if job.name == PLAN_JOB for st in job.steps if st.name == SCAN_STEP), None
+    )
+    if step is None or step.status != "completed":
+        return "unknown"
+    return {"success": "passed", "failure": "failed", "skipped": "not_run"}.get(
+        step.conclusion or "", "unknown"
+    )
+
+
+def waiting_since(jobs: Collection[Job]) -> datetime | None:
+    """When the production job began to wait for its approval, or None when no such job waits."""
+    for job in jobs:
+        if job.name == RELEASE_JOB and job.status == "waiting":
+            return job.started_at or job.created_at
+    return None

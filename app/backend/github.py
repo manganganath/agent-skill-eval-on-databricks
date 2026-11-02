@@ -157,11 +157,32 @@ class WaitingRun:
     """A skills-publish run that waits for the production approval. `updated_at` is when it last changed, which for a
     waiting run is when it began to wait; `created_at` is when the merge started it."""
 
+    id: int
     url: str
     number: int
     sha: str
     created_at: datetime | None
     updated_at: datetime | None
+
+
+@dataclass(frozen=True)
+class Step:
+    name: str
+    status: str
+    conclusion: str | None
+
+
+@dataclass(frozen=True)
+class Job:
+    """A job of a workflow run, with its steps. `started_at` of a job that waits for an approval is when it began to
+    wait."""
+
+    name: str
+    status: str
+    conclusion: str | None
+    created_at: datetime | None
+    started_at: datetime | None
+    steps: tuple[Step, ...]
 
 
 def _time(value: object) -> datetime | None:
@@ -369,6 +390,7 @@ class GitHubClient:
         )
         return [
             WaitingRun(
+                id=int(run.get("id") or 0),
                 url=str(run.get("html_url") or ""),
                 number=int(run.get("run_number") or 0),
                 sha=str(run.get("head_sha") or ""),
@@ -383,3 +405,21 @@ class GitHubClient:
         none."""
         raw = self.get(f"{self._root}/commits/{sha}/pulls", {"per_page": 5})
         return next((int(p["number"]) for p in raw if p.get("merge_commit_sha") == sha), None)
+
+    def run_jobs(self, run_id: int) -> list[Job]:
+        """The jobs of a workflow run with their steps (one read)."""
+        raw = self.get(f"{self._root}/actions/runs/{run_id}/jobs", {"per_page": PAGE})
+        return [
+            Job(
+                name=str(job.get("name") or ""),
+                status=str(job.get("status") or ""),
+                conclusion=job.get("conclusion") or None,
+                created_at=_time(job.get("created_at")),
+                started_at=_time(job.get("started_at")),
+                steps=tuple(
+                    Step(str(st.get("name") or ""), str(st.get("status") or ""), st.get("conclusion") or None)
+                    for st in job.get("steps") or []
+                ),
+            )
+            for job in raw.get("jobs") or []
+        ]

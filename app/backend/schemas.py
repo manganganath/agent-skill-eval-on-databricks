@@ -302,32 +302,25 @@ class PendingPull(BaseModel):
     url: str
 
 
-class PendingScan(BaseModel):
-    """The security scan's rules over what the skill would publish, by severity. `unavailable` when the pull request's
-    upload is gone, so there is nothing to scan; `findings` when any severity has one."""
-
-    state: Literal["clean", "findings", "unavailable"]
-    counts: dict[str, int]
-
-
 class PendingSkill(BaseModel):
-    """A skill the release changes. `verdicts` is {model profile: worst verdict across the gating modes} from the pull
-    request's own eval, as for a candidate; empty when it has no result. `in_hub` is whether the Hub still has the
-    upload, so the skill has a candidate page."""
+    """A skill the release changes. `verdicts` is {model profile: worst verdict across the gating modes} from the eval
+    the release gates on: `eval_source` `merge` when the merged content was evaluated again, `pull_request` when the
+    release reuses the pull request's eval. Both are empty or None when no result is found (the pull request's upload
+    is removed after 7 days)."""
 
     dept: str
     skill: str
     verdicts: dict[str, str]
     eval_access: EvalAccess
-    scan: PendingScan
-    in_hub: bool
+    eval_source: Literal["merge", "pull_request"] | None
 
 
 class PendingRelease(BaseModel):
     """A skills-publish run that waits for the production approval. `pull` is None for a merge commit that has no pull
     request (a direct push), and when `details` is `unavailable`: GitHub failed for this run, so only the run is known.
-    `run_key` names the pull request's eval upload (`pr<N>-<sha7>-a<attempt>`), None when none is left. The approval
-    itself is made in GitHub, at `run_url`."""
+    `run_key` names the pull request's eval upload (`pr<N>_<sha7>_a<attempt>`), None when none is left; the skills'
+    candidate pages are under it. `scan` is how the run's own security scan step ended (`passed`: no critical finding;
+    high findings, if any, are in the run summary in GitHub). The approval itself is made in GitHub, at `run_url`."""
 
     run_url: str
     run_number: int
@@ -336,6 +329,7 @@ class PendingRelease(BaseModel):
     waiting_since: datetime | None
     pull: PendingPull | None
     details: Literal["ok", "unavailable"]
+    scan: Literal["passed", "failed", "not_run", "unknown"]
     run_key: str | None
     skills: list[PendingSkill]
 

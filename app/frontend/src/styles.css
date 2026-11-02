@@ -572,4 +572,5 @@ a.badge:hover { background: var(--accent); color: var(--canvas); }
 .release-item .panel-head { margin-bottom: 0; }
 .release-meta { margin: 0; font-size: 0.9375rem; }
 .release-actions { margin: 0; display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem 1rem; }
+.release-scan { margin: 0; font-size: 0.9375rem; }
 .scan-flag { color: var(--fail); font-weight: 600; }

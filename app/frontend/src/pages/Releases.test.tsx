@@ -14,19 +14,19 @@ vi.mock("../api/client", async (orig) => {
 const reviewer: Me = { user: "rita@example.com", groups: ["skillhub-reviewers"], is_reviewer: true, is_author: false };
 const author: Me = { user: "ana@example.com", groups: ["skillhub-authors"], is_reviewer: false, is_author: true };
 const RUN = "https://github.test/acme/skills/actions/runs/9";
-const NO_FINDINGS = { critical: 0, high: 0, medium: 0, low: 0 };
 
 const WAITING: PendingRelease = {
   run_url: RUN, run_number: 9, sha: "M5abcdef0", started_at: "2026-10-29T12:01:00Z",
   waiting_since: "2026-10-29T13:30:00Z",
   pull: { number: 5, title: "Add new-skill (common) from the Skill Hub", author: "ana", merged_by: "rita",
     url: "https://github.test/acme/skills/pull/5" },
-  details: "ok", run_key: "pr5_c7ecd3e_a1",
+  details: "ok", scan: "passed", run_key: "pr5_c7ecd3e_a1",
   skills: [
     { dept: "common", skill: "new-skill", verdicts: { "claude-sonnet": "pass", "claude-haiku": "warn" }, eval_access: "ok",
-      scan: { state: "clean", counts: NO_FINDINGS }, in_hub: true },
-    { dept: "equity_research", skill: "earnings-note", verdicts: {}, eval_access: "denied",
-      scan: { state: "findings", counts: { ...NO_FINDINGS, high: 1, medium: 2 } }, in_hub: false },
+      eval_source: "pull_request" },
+    { dept: "equity_research", skill: "earnings-note", verdicts: { "claude-sonnet": "fail" }, eval_access: "ok",
+      eval_source: "merge" },
+    { dept: "common", skill: "old-skill", verdicts: {}, eval_access: "denied", eval_source: null },
   ],
 };
 const DIRECT_PUSH: PendingRelease = {
@@ -64,11 +64,24 @@ describe("Releases", () => {
     const chips = within(first.getByRole("list", { name: "Verdicts of new-skill" }));
     expect(chips.getByText("claude-sonnet").parentElement).toHaveTextContent("Pass");
     expect(chips.getByText("claude-haiku").parentElement).toHaveTextContent("Warn");
-    expect(first.getByText("No findings")).toBeTruthy();
+    expect(first.getByText("Pull request eval, reused by the release")).toBeTruthy();
     const second = within(rows[1]);
-    expect(second.queryByRole("link")).toBeNull(); // the Hub has no page for it: the upload is gone
-    expect(second.getByText("You can't read eval results for this department")).toBeTruthy();
-    expect(second.getByText("1 high, 2 medium")).toBeTruthy();
+    expect(second.getByText("fail", { exact: false })).toBeTruthy();
+    expect(second.getByText("Merge eval: the merged content was evaluated again")).toBeTruthy();
+    const third = within(rows[2]);
+    expect(third.getByText("You can't read eval results for this department")).toBeTruthy();
+    expect(third.getByText("No eval found")).toBeTruthy();
+    // The scan is shown once for the release, with where the findings are.
+    expect(screen.getAllByText(/Security scan\./)).toHaveLength(1);
+    expect(screen.getByText(/No critical findings\. Any high findings are listed in the run summary in GitHub/)).toBeTruthy();
+  });
+
+  it("does not link a skill to a candidate page when the pull request's upload is gone", async () => {
+    vi.mocked(api.pendingReleases).mockResolvedValue([{ ...WAITING, run_key: null }]);
+    open();
+    await screen.findByRole("table");
+    expect(within(screen.getByRole("table")).queryByRole("link")).toBeNull();
+    expect(screen.getByText("common/new-skill")).toBeTruthy();
   });
 
   it("never offers to approve or reject in the Hub", async () => {
@@ -151,7 +164,11 @@ describe("waitedFor", () => {
 });
 
 describe("scanText", () => {
-  it("names each severity that has a finding", () => {
-    expect(scanText({ state: "findings", counts: { critical: 1, high: 0, medium: 0, low: 3 } })).toBe("1 critical, 3 low");
+  it.each([
+    ["passed", /No critical findings/], ["failed", /found critical findings/],
+    ["not_run", /skipped/], ["unknown", /not known yet/],
+  ] as const)("says in words what %s means and points to the run summary", (state, text) => {
+    expect(scanText(state)).toMatch(text);
+    if (state !== "not_run") expect(scanText(state)).toMatch(/run summary in GitHub/);
   });
 });
