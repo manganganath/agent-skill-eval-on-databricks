@@ -100,6 +100,22 @@ def test_the_cli_reaches_the_anthropic_route_and_exports_its_spans_to_the_depart
     assert env["PATH"] == "/usr/bin" and env["CLAUDE_CONFIG_DIR"] == "/w/config"
 
 
+def test_the_trace_carries_the_prompt_and_each_tool_calls_input_and_output_for_the_judges():
+    # MLflow's Claude Code translation reads the span inputs from user_prompt and tool_input, and a tool's output from
+    # its tool.output event, which Claude Code records only when asked. Without them the tool-call judges see an empty
+    # request and tool calls without arguments.
+    env = environment(host=HOST, token=TOKEN, endpoint="databricks-claude-sonnet-5-5", case=agent_case(),
+                      config_dir=Path("/w/config"), base={})  # fmt: skip
+    for key in (
+        "OTEL_LOG_USER_PROMPTS",
+        "OTEL_LOG_TOOL_DETAILS",
+        "OTEL_LOG_TOOL_CONTENT",
+        "OTEL_LOG_ASSISTANT_RESPONSES",
+    ):
+        assert env[key] == "1", key
+    assert "OTEL_LOG_RAW_API_BODIES" not in env  # whole request bodies are not needed
+
+
 def test_the_answer_is_the_result_event():
     assert parse_stream(lines("claude_code_with_skill.jsonl")) == AgentAnswer(
         json.loads(lines("claude_code_with_skill.jsonl")[-1])["result"]

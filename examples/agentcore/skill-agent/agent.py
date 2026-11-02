@@ -5,7 +5,8 @@ It is a Strands agent served by the AgentCore runtime SDK. For each case it:
 2. loads the skills from the Unity Gateway skills MCP, one connection per URL, as its own Databricks principal,
    and gives the model the case's fixture tools when the case has files;
 3. calls the Bedrock model that the case names, for at most `max_turns` turns;
-4. puts the case's trace attributes on its spans and sends them, as OTLP/HTTP, to the trace table the case names;
+4. puts the case's trace attributes on its spans and sends them, as OTLP/HTTP, to the trace table the case names,
+   in the OpenTelemetry GenAI conventions that the Skill Hub's judges read (`contract.SEMCONV_OPT_IN`);
 5. answers {"answer": "<final text>"}, or {"error": "<why>"}.
 
 It is the reference implementation of the Skill Hub's external agent contract: an agent in any framework that does
@@ -34,8 +35,10 @@ from contract import (
     check_skills_urls,
     group_by_table,
     mcp_refusal,
+    partial_answer,
     plain_names,
     safe_tool_name,
+    semconv_opt_in,
 )
 from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
 from opentelemetry.sdk.trace.export import BatchSpanProcessor, SpanExporter, SpanExportResult
@@ -44,7 +47,7 @@ from strands.models import BedrockModel
 from strands.telemetry import StrandsTelemetry
 from strands.tools.mcp import MCPClient
 from strands.tools.mcp.mcp_agent_tool import MCPAgentTool
-from strands.types.exceptions import MCPClientInitializationError
+from strands.types.exceptions import MaxTokensReachedException, MCPClientInitializationError
 
 log = logging.getLogger("skill-agent")
 HOST = os.environ["DATABRICKS_HOST"].rstrip("/")
@@ -80,6 +83,8 @@ class DatabricksSpans(SpanExporter):
         return True
 
 
+# Read when the first agent is made, so set before it is.
+os.environ["OTEL_SEMCONV_STABILITY_OPT_IN"] = semconv_opt_in(os.environ.get("OTEL_SEMCONV_STABILITY_OPT_IN"))
 telemetry = StrandsTelemetry()  # the GenAI conventions: invoke_agent, chat and execute_tool spans
 telemetry.tracer_provider.add_span_processor(BatchSpanProcessor(DatabricksSpans()))
 app = BedrockAgentCoreApp()
@@ -159,7 +164,11 @@ def invoke(payload: dict) -> dict:
                 trace_attributes={**case.trace, UC_TABLE_ATTR: case.uc_table},
                 callback_handler=None,
             )
-            result = agent(case.prompt, limits={"turns": case.max_turns})
+            try:
+                result = agent(case.prompt, limits={"turns": case.max_turns})
+            except MaxTokensReachedException:  # an answer cut off at the output limit is judged as it stands
+                log.warning("the model reached its output limit: answering with what it wrote")
+                return {"answer": partial_answer(agent.messages)}
             return {"answer": str(result)}
     except Exception as exc:  # the case is an error for the Skill Hub, not a fail
         log.exception("case failed")

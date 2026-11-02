@@ -10,6 +10,8 @@ tested without the agent's own dependencies.
   is sent nowhere else.
 - `M2MToken` gets the OAuth token of the agent's own Databricks principal, and a new one before it expires.
 - `group_by_table` sorts finished spans by the trace table their case named.
+- `semconv_opt_in` turns on the OpenTelemetry GenAI conventions that the Skill Hub's judges read.
+- `partial_answer` is what the model wrote before it reached its output limit.
 """
 
 from __future__ import annotations
@@ -36,6 +38,10 @@ UC_TABLE_ATTR = "skillhub.uc_table"  # this agent's own span attribute: where th
 _TABLE = re.compile(r"[a-z0-9_]+\.[a-z0-9_]+\.[a-z0-9_]+")
 _ATTR_VALUE = re.compile(r"[A-Za-z0-9_-]{1,128}")
 _PLAIN = re.compile(r"(?:^|[./])amazon\.")  # Amazon Nova models refuse a hyphen in a tool name
+# The GenAI conventions that MLflow's judges read: the request and the response, each tool call's arguments and result,
+# and the tool definitions, as span attributes. By default Strands puts them in span events, where MLflow does not find
+# the request or a tool call's arguments, and judges the tool calls as made without either.
+SEMCONV_OPT_IN = ("gen_ai_latest_experimental", "gen_ai_tool_definitions", "gen_ai_span_attributes_only")
 
 
 @dataclass(frozen=True)
@@ -242,3 +248,21 @@ def group_by_table(spans: Iterable[Any], attr: str = UC_TABLE_ATTR) -> dict[str,
         if isinstance(table, str) and _TABLE.fullmatch(table):
             out.setdefault(table, []).append(span)
     return out
+
+
+def semconv_opt_in(current: str | None) -> str:
+    """OTEL_SEMCONV_STABILITY_OPT_IN with SEMCONV_OPT_IN added to whatever the runtime already opted into."""
+    tokens = [t.strip() for t in (current or "").split(",") if t.strip()]
+    return ",".join(tokens + [t for t in SEMCONV_OPT_IN if t not in tokens])
+
+
+def partial_answer(messages: Iterable[Any]) -> str:
+    """The text of the last assistant message: what the model wrote before it reached its output limit. The Skill
+    Hub's own agent loop judges such an answer as it stands, so the sample does too."""
+    for message in reversed(list(messages or [])):
+        if isinstance(message, dict) and message.get("role") == "assistant":
+            blocks = message.get("content") or []
+            return "".join(
+                b["text"] for b in blocks if isinstance(b, dict) and isinstance(b.get("text"), str)
+            )
+    return ""

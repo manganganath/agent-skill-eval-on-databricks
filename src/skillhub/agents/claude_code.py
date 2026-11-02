@@ -10,7 +10,8 @@
 - **Model.** The Unity Gateway Anthropic route, `<host>/serving-endpoints/anthropic`, as the eval identity, with the
   row's serving endpoint as the model, also for Claude Code's background calls.
 - **Trace.** Claude Code exports its own spans, one trace per run, to the department's trace table, with the
-  contract's attributes as OTEL_RESOURCE_ATTRIBUTES. Its spans are the evidence. The answer is the `result` event of
+  contract's attributes as OTEL_RESOURCE_ATTRIBUTES. Its spans are the evidence, with the prompt and each tool
+  call's input and output in them, which the tool-call judges read. The answer is the `result` event of
   `--output-format stream-json`, because no span holds it.
 - **Turns.** At most 3 in trigger mode and 8 otherwise (`contract.turns`).
 
@@ -120,6 +121,11 @@ def environment(
             "MCP_TIMEOUT": "30000",
             "CLAUDE_CODE_ENABLE_TELEMETRY": "1",
             "CLAUDE_CODE_ENHANCED_TELEMETRY_BETA": "1",
+            # The trace's content, for the judges that read it: the prompt, and each tool call's input and output.
+            "OTEL_LOG_USER_PROMPTS": "1",
+            "OTEL_LOG_TOOL_DETAILS": "1",
+            "OTEL_LOG_TOOL_CONTENT": "1",
+            "OTEL_LOG_ASSISTANT_RESPONSES": "1",
             "OTEL_TRACES_EXPORTER": "otlp",
             "OTEL_EXPORTER_OTLP_TRACES_PROTOCOL": "http/protobuf",
             "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT": otlp_endpoint(host),
