@@ -70,9 +70,12 @@ The agent:
 
    CloudFormation deploys the stack with the bootstrap's execution role, and that role needs a policy. CDK attaches `AdministratorAccess` unless told otherwise, and many accounts remove that policy from roles. `agentcore/cdk/cfn-exec-policy.json` allows only what this stack does:
    - its execution role (`AgentCore-skillhub-*`), and handing that role to AgentCore;
-   - runtimes named `skillhub_*` and their workload identities, and tagging new resources that carry `project=skillhub`;
+   - runtimes named `skillhub_*`, their endpoints and workload identities, and tagging new resources that carry `project=skillhub`;
    - AgentCore's own service-linked roles, which AgentCore makes the first time it needs them;
-   - reading the CDK assets bucket, CDK's bootstrap version parameter, and the subnets and security groups.
+   - reading the CDK assets bucket, CDK's bootstrap version parameter, and the subnets and security groups;
+   - network interfaces, for VPC mode.
+
+   These are the permissions that CloudFormation's `AWS::BedrockAgentCore::Runtime` lists for its handlers (`aws cloudformation describe-type --type RESOURCE --type-name AWS::BedrockAgentCore::Runtime`), less those for features the sample does not use: capacity providers and VPC Lattice.
 
    Create the policy, then bootstrap with it. Add `--tags` if your account requires tags:
 

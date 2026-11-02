@@ -60,9 +60,10 @@
         "bedrock-agentcore:UpdateAgentRuntime",
         "bedrock-agentcore:DeleteAgentRuntime",
         "bedrock-agentcore:GetAgentRuntime",
-        "bedrock-agentcore:ListAgentRuntimeVersions",
-        "bedrock-agentcore:ListAgentRuntimeEndpoints",
+        "bedrock-agentcore:CreateAgentRuntimeEndpoint",
         "bedrock-agentcore:GetAgentRuntimeEndpoint",
+        "bedrock-agentcore:UpdateAgentRuntimeEndpoint",
+        "bedrock-agentcore:DeleteAgentRuntimeEndpoint",
         "bedrock-agentcore:TagResource",
         "bedrock-agentcore:UntagResource",
         "bedrock-agentcore:ListTagsForResource"
@@ -72,7 +73,12 @@
     {
       "Sid": "CreateAndListAgentRuntimes",
       "Effect": "Allow",
-      "Action": ["bedrock-agentcore:CreateAgentRuntime", "bedrock-agentcore:ListAgentRuntimes"],
+      "Action": [
+        "bedrock-agentcore:CreateAgentRuntime",
+        "bedrock-agentcore:ListAgentRuntimes",
+        "bedrock-agentcore:ListAgentRuntimeVersions",
+        "bedrock-agentcore:ListAgentRuntimeEndpoints"
+      ],
       "Resource": "*"
     },
     {
@@ -103,10 +109,21 @@
       "Resource": "arn:aws:s3:::cdk-hnb659fds-assets-ACCOUNT_ID-REGION/*"
     },
     {
-      "Sid": "ListAgentCode",
+      "Sid": "DecryptAgentCode",
       "Effect": "Allow",
-      "Action": "s3:ListBucket",
-      "Resource": "arn:aws:s3:::cdk-hnb659fds-assets-ACCOUNT_ID-REGION"
+      "Action": "kms:Decrypt",
+      "Resource": "arn:aws:kms:REGION:ACCOUNT_ID:key/*",
+      "Condition": {"StringEquals": {"kms:ViaService": "s3.REGION.amazonaws.com"}}
+    },
+    {
+      "Sid": "CreateAgentNetworkInterfaces",
+      "Effect": "Allow",
+      "Action": "ec2:CreateNetworkInterface",
+      "Resource": [
+        "arn:aws:ec2:REGION:ACCOUNT_ID:network-interface/*",
+        "arn:aws:ec2:REGION:ACCOUNT_ID:subnet/*",
+        "arn:aws:ec2:REGION:ACCOUNT_ID:security-group/*"
+      ]
     },
     {
       "Sid": "CheckAgentNetwork",
