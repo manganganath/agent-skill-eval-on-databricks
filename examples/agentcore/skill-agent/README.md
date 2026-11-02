@@ -66,11 +66,14 @@ The agent:
    npm install -g @aws/agentcore
    ```
 
-   Uninstall the older starter toolkit first (`pip uninstall bedrock-agentcore-starter-toolkit`): it also installs an `agentcore` command. `agentcore deploy` deploys a CDK stack, so the account and region must be bootstrapped for CDK once. Bootstrapping creates IAM roles, so it is for someone allowed to create them. Add `--tags` if your account requires tags:
+   Uninstall the older starter toolkit first (`pip uninstall bedrock-agentcore-starter-toolkit`): it also installs an `agentcore` command. `agentcore deploy` deploys a CDK stack, so the account and region must be bootstrapped for CDK once. Bootstrapping creates IAM roles, so it is for someone allowed to create them. Name the policy of the role that CloudFormation deploys with: without `--cloudformation-execution-policies` the role has none, and the deploy fails with `cdk-hnb659fds-cfn-exec-role ... is not authorized to perform: ssm:GetParameters`. `AdministratorAccess` is CDK's usual choice. Where that is not allowed, write a narrower policy that covers what this stack creates: an IAM role and its policy, the AgentCore runtime, and reading the CDK assets bucket and bootstrap version parameter. Add `--tags` if your account requires tags:
 
    ```bash
-   npx -y aws-cdk@2 bootstrap aws://<account-id>/<region> --tags Owner=<you>
+   npx -y aws-cdk@2 bootstrap aws://<account-id>/<region> \
+     --cloudformation-execution-policies arn:aws:iam::aws:policy/AdministratorAccess --tags Owner=<you>
    ```
+
+   `agentcore deploy` also turns on CloudWatch Transaction Search in the account and region, when it is off: it sends the account's X-Ray traces to CloudWatch Logs. The sample does not need it, because its traces go to Databricks. To leave the account as it is, run `agentcore config transactionSearch false` once before you deploy.
 
 ## Try it locally
 
