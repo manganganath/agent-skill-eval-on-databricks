@@ -23,6 +23,8 @@ The agent:
 - refuses a skills MCP URL on any other host than `DATABRICKS_HOST`, so its token goes nowhere else;
 - never offers the skills MCP's authoring tools (`create_skill`, `update_skill`, `delete_skill`);
 - names each skill tool as Bedrock accepts: dots become underscores (and hyphens too for Amazon Nova models), and a name over 64 characters is shortened with a hash. The Skill Hub maps these names back;
+- records the request, the response, each tool call's arguments and result, and its tool definitions as span attributes, in the OpenTelemetry GenAI conventions (`gen_ai.input.messages`, `gen_ai.tool.call.arguments` and so on). The tool-call judges read them from the trace. By default Strands puts them in span events instead, where MLflow does not find the request or the tool calls' arguments, so the agent sets `OTEL_SEMCONV_STABILITY_OPT_IN` (`contract.SEMCONV_OPT_IN`), keeping any other values the runtime sets;
+- answers with what the model wrote when it reaches its output limit, as the Skill Hub's own agent loop does: the judges score the answer as it stands;
 - flushes its spans before it answers.
 
 ## Before you deploy
@@ -37,6 +39,12 @@ The agent:
    ```
 
    Create `skillhub-agents` once as an **account** group and assign it to the workspace (account console, or the account-level groups API). Do not use `databricks groups create`: it makes a workspace-local group, and Unity Catalog cannot grant to those, so the grants would fail with `PRINCIPAL_DOES_NOT_EXIST`.
+
+   Give the group the workspace entitlement `workspace-access`. The trace endpoint refuses a principal without it ("This API is disabled for users without the workspace-access entitlement"). `workspace-consume` is enough for the skills MCP, not for the traces:
+
+   ```bash
+   databricks api patch /api/2.0/preview/scim/v2/Groups/<group id> --json '{"schemas": ["urn:ietf:params:scim:api:messages:2.0:PatchOp"], "Operations": [{"op": "add", "path": "entitlements", "value": [{"value": "workspace-access"}]}]}'
+   ```
 
    Then give the group its grants. The `skillhub-bootstrap` Job runs as `skillhub-ci` and grants the group its schema and table access. The agent's principal gets `USE CATALOG` through its department reader group, which it must join (see above).
 2. **The eval key may invoke the runtime.** The IAM user whose key is in the `skillhub-aws` secret scope needs `bedrock-agentcore:InvokeAgentRuntime` on `arn:aws:bedrock-agentcore:<region>:<account-id>:runtime/skillhub*`. The runtime name must therefore start with `skillhub`.
@@ -84,4 +92,4 @@ If the test fails:
 - `AccessDeniedException` on the invoke: the eval key's IAM policy (step 2).
 - `the agent reported: ...`: the agent's own error, also in its CloudWatch logs.
 - `the agent reported: the skills MCP refused the agent (HTTP <code>: ...)`: the workspace's own reason. For example, the agent's principal has no workspace entitlement, or may not read the skills' schema.
-- `its trace did not reach ...`: the principal is not in `skillhub-agents`, bootstrap has not run since, or the runtime cannot reach the workspace.
+- `its trace did not reach ...`: the principal is not in `skillhub-agents`, the group has no `workspace-access` entitlement (the agent's logs show `Failed to export spans batch code: 403`), bootstrap has not run since, or the runtime cannot reach the workspace.

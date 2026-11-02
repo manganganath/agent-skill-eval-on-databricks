@@ -207,3 +207,49 @@ def test_spans_are_sorted_by_the_trace_table_their_case_named():
         "c.s.traces_otel_spans": [a, a],
         "c.t.traces_otel_spans": [b],
     }
+
+
+@pytest.mark.parametrize(
+    ("current", "expected"),
+    [
+        (None, "gen_ai_latest_experimental,gen_ai_tool_definitions,gen_ai_span_attributes_only"),
+        ("", "gen_ai_latest_experimental,gen_ai_tool_definitions,gen_ai_span_attributes_only"),
+        ("http, gen_ai_tool_definitions", "http,gen_ai_tool_definitions,gen_ai_latest_experimental,gen_ai_span_attributes_only"),
+        ("gen_ai_unredacted_attributes=gen_ai.input.*;gen_ai.output.*",
+         "gen_ai_unredacted_attributes=gen_ai.input.*;gen_ai.output.*,gen_ai_latest_experimental,"
+         "gen_ai_tool_definitions,gen_ai_span_attributes_only"),
+    ],
+)  # fmt: skip
+def test_the_genai_conventions_that_mlflow_reads_are_added_to_what_the_runtime_opted_into(current, expected):
+    assert sample.semconv_opt_in(current) == expected
+
+
+def test_the_genai_attributes_the_agent_opts_into_are_the_ones_mlflow_reads():
+    from mlflow.tracing.otel.translation.genai_semconv import GenAiTranslator
+
+    # What Strands records as span attributes under these opt-ins: the request and the response on every span, a
+    # tool call's arguments and result on its span, and the agent's tool definitions.
+    written = {"gen_ai.input.messages", "gen_ai.output.messages", "gen_ai.tool.call.arguments",
+               "gen_ai.tool.call.result", "gen_ai.tool.definitions"}  # fmt: skip
+    read = {
+        *GenAiTranslator.INPUT_VALUE_KEYS,
+        *GenAiTranslator.OUTPUT_VALUE_KEYS,
+        *GenAiTranslator.TOOL_DEFINITION_KEYS,
+    }
+    assert written <= read
+
+
+@pytest.mark.parametrize(
+    ("messages", "answer"),
+    [
+        ([{"role": "user", "content": [{"text": "Audit model.xlsx"}]},
+          {"role": "assistant", "content": [{"text": "Three findings: "}, {"toolUse": {"name": "x"}}, {"text": "1."}]}],
+         "Three findings: 1."),
+        ([{"role": "assistant", "content": [{"text": "first"}]}, {"role": "user", "content": [{"text": "go on"}]}],
+         "first"),
+        ([{"role": "user", "content": [{"text": "Audit model.xlsx"}]}], ""),
+        ([], ""),
+    ],
+)  # fmt: skip
+def test_an_answer_cut_off_at_the_output_limit_is_the_last_assistant_text(messages, answer):
+    assert sample.partial_answer(messages) == answer
