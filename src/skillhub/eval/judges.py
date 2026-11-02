@@ -13,6 +13,7 @@ from mlflow.genai.scorers import (
 )
 
 from skillhub import SkillHubError
+from skillhub.agent.loop import SKILL_PREFIX as SKILL_TOOL
 from skillhub.config import ConfigError
 from skillhub.eval.scorers import make_planted_bugs_scorer, make_skill_trigger_scorer
 from skillhub.naming import judge_name
@@ -66,10 +67,43 @@ def assertion_scorers(cfg, profile: str) -> list:
     return [ExpectationsGuidelines(name=judge_name("assertions", profile), model=_model_uri(cfg, profile))]
 
 
-def builtin_scorers(cfg, profile: str) -> list:
+class SkillAwareToolCallCorrectness(ToolCallCorrectness):
+    """`tool_call_correctness` for with_skill runs. The agent is meant to load the skill, so its call to the
+    skill's tool is expected as well as the case's `expected_tool_calls`; otherwise the judge counts it as an
+    extra call and answers no on every case that lists tool calls.
+
+    MLflow compares by meaning (an LLM, order ignored), so one entry with the tool's production name is
+    enough. Its arguments are `{}`, not left out: an entry without arguments would make the judge ignore the
+    arguments of every expected call. The shared expectations are copied, never changed."""
+
+    skill_name: str
+    skill_tool: str
+
+    def __call__(self, *, trace, expectations=None):
+        return super().__call__(trace=trace, expectations=self._with_skill_call(expectations))
+
+    def _with_skill_call(self, expectations: dict | None) -> dict | None:
+        if not expectations or not expectations.get("expected_tool_calls"):
+            return expectations
+        if expectations.get("expected_skill") != self.skill_name:
+            return expectations
+        skill_call = {"name": self.skill_tool, "arguments": {}}
+        return {**expectations, "expected_tool_calls": [*expectations["expected_tool_calls"], skill_call]}
+
+
+def builtin_scorers(
+    cfg, profile: str, *, skill_name: str | None = None, skill_fqn: str | None = None
+) -> list:
+    """With `skill_fqn` (a with_skill run) tool-call correctness also expects the call to that skill's tool."""
     # ToolCallCorrectness reads expectations["expected_tool_calls"] and the TOOL span inputs.
     uri = _model_uri(cfg, profile)
-    return [ToolCallCorrectness(model=uri), ToolCallEfficiency(model=uri), Safety(model=uri)]
+    if skill_fqn is None:
+        correctness = ToolCallCorrectness(model=uri)
+    else:
+        correctness = SkillAwareToolCallCorrectness(
+            model=uri, skill_name=skill_name, skill_tool=SKILL_TOOL + skill_fqn
+        )
+    return [correctness, ToolCallEfficiency(model=uri), Safety(model=uri)]
 
 
 def scorers_for(
@@ -81,11 +115,15 @@ def scorers_for(
     skill_name: str,
     cases: dict | None = None,
     fixtures_root: Path | None = None,
+    skill_fqn: str | None = None,
 ) -> list:
     """Scorer list for one (skill, mode) across the judge panel. `cases` and `fixtures_root` feed the
     audit-xls planted-bug scorer, which scopes itself to the workbook cases; `fixtures_root` is
     required for that skill and a ValueError is raised without it. `rubric` is None for a skill without
     rubric.json: the effectiveness modes then have no rubric judges.
+
+    `skill_fqn` is the skill's production FQN. In with_skill mode, tool-call correctness expects the agent's
+    call to that skill's tool in addition to each case's `expected_tool_calls`.
 
     The built-in scorers (tool-call correctness and efficiency, safety) have one fixed name each, so they
     are deduped: the first profile in `profiles` is the one that judges them.
@@ -99,7 +137,9 @@ def scorers_for(
         out += [*rubric_judges(cfg, rubric, p), *assertion_scorers(cfg, p)]
         if mode == "with_skill" and reads_traces(cfg, p):
             out.append(skill_use_judge(cfg, p))
-        out += builtin_scorers(cfg, p)
+        out += builtin_scorers(
+            cfg, p, skill_name=skill_name, skill_fqn=skill_fqn if mode == "with_skill" else None
+        )
     if skill_name == "audit-xls":
         out.append(make_planted_bugs_scorer(cases or {}, fixtures_root))
     return _dedupe(out)

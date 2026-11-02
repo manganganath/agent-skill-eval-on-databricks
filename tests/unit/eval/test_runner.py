@@ -240,7 +240,7 @@ def wired(tmp_path, monkeypatch):
         "scopes": SCOPES,
         "eval_files": eval_files(),
         "assess": default_assessments,
-        "scorers": lambda cfg, rubric, profiles, mode, *, skill_name, cases=None, fixtures_root=None: (
+        "scorers": lambda cfg, rubric, profiles, mode, *, skill_name, cases=None, fixtures_root=None, skill_fqn=None: (
             [SimpleNamespace(name="planted_bugs_found")]
             if skill_name == "audit-xls" and mode != "trigger"
             else []
@@ -733,7 +733,7 @@ def _runs(tmp_path, skill):
 
 
 def test_setup_failure_creates_no_child_run_and_is_recorded(wired, tmp_path):
-    def scorers(cfg, rubric, profiles, mode, *, skill_name, cases=None, fixtures_root=None):
+    def scorers(cfg, rubric, profiles, mode, *, skill_name, cases=None, fixtures_root=None, skill_fqn=None):
         if skill_name == "audit-xls" and mode != "trigger":
             raise FileNotFoundError("fixtures/northwind/model_bugs.json")
         return []
@@ -2642,7 +2642,9 @@ class _Judge:
         return Feedback(name=self.name, value=self.value)
 
 
-def _agent_scorers(cfg, rubric, profiles, mode, *, skill_name, cases=None, fixtures_root=None):
+def _agent_scorers(
+    cfg, rubric, profiles, mode, *, skill_name, cases=None, fixtures_root=None, skill_fqn=None
+):
     if mode == "trigger":
         return []  # the agent path builds its own trigger scorer
     out = [_Judge(f"rubric_{c.id}__gpt", True) for c in CRITERIA] + [_Judge("assertions__gpt", "yes")]
