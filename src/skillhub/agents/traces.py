@@ -10,6 +10,10 @@
   underscores (Claude Code), and shortened with a hash when a model allows only 64 characters (Bedrock). A name
   that an agent cut short still matches when it is the start of exactly one skill's tool name. Token counts come
   from the model-call spans only, because an agent's root span repeats the totals.
+- **For the judges.** `mlflow.get_trace` gives the spans of a trace table only their type: MLflow fills a span's inputs
+  and outputs from the OpenTelemetry conventions when it stores spans itself, and the workspace's OTLP endpoint does
+  not. `for_judges` translates each span as MLflow would have stored it, so the judges that read the trace see the
+  request, and each tool call's name, arguments and result where the agent sent them.
 """
 
 from __future__ import annotations
@@ -20,7 +24,8 @@ import time
 from collections.abc import Callable, Iterable, Mapping
 from typing import Any
 
-from mlflow.entities import SpanType
+from mlflow.entities import Span, SpanType, Trace, TraceData
+from mlflow.tracing.otel.translation import translate_span_when_storing
 
 from skillhub.agents.contract import CASE_ID, REPEAT, RUN_KEY, SPANS_TABLE, TRACE_KEY
 from skillhub.gateway.bedrock import tool_name as bedrock_tool_name
@@ -84,6 +89,27 @@ def skill_calls(trace: Any, names: Mapping[str, str]) -> list[str]:
         if skill is not None:
             out.append(skill)
     return out
+
+
+def _judged_span(span: Any) -> Any:
+    """The span as MLflow would have stored it, named after its tool when it is a tool call. Unchanged when it cannot
+    be translated: the judges then see what they saw before."""
+    try:
+        data = translate_span_when_storing(span)
+        tool = _attr(span, TOOL_NAME)
+        if isinstance(tool, str) and tool and _attr(span, "gen_ai.operation.name") == "execute_tool":
+            # Claude Code names every tool span claude_code.tool, and the judges read the tool's name from the span's.
+            data["name"] = tool
+        return Span.from_dict(data)
+    except Exception:
+        log.debug("span %s not translated for the judges", getattr(span, "name", "?"), exc_info=True)
+        return span
+
+
+def for_judges(trace: Any) -> Any:
+    """The trace with its spans translated for the judges that read it (see the module docstring). Its info, and so
+    its ID, tags and assessments, are the same object."""
+    return Trace(info=trace.info, data=TraceData(spans=[_judged_span(s) for s in trace.data.spans or []]))
 
 
 def _int(value: Any) -> int:

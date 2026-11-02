@@ -114,6 +114,25 @@ def test_judges_score_the_agents_answer_and_a_failing_judge_counts_as_no_answer(
     )
 
 
+def test_judges_read_the_trace_translated_for_them_and_the_scores_land_on_the_agents_own_trace(
+    tmp_path, agent, run_id, monkeypatch
+):
+    seen = []
+    monkeypatch.setattr(agent_cases, "for_judges", lambda trace: ("for the judges", trace.info.trace_id))
+
+    class Judge:
+        name = "tool_call_correctness"
+
+        def run(self, *, inputs, outputs, expectations, trace):
+            seen.append(trace)
+            return Feedback(name=self.name, value="yes")
+
+    [t] = agent_cases.run_agent_cases(ctx(tmp_path), agent, "cc", "with_skill", [101], 1, [Judge()], run_id)
+    assert seen == [("for the judges", t.info.trace_id)]
+    assert [a.name for a in t.info.assessments] == ["tool_call_correctness"]
+    assert [a.name for a in mlflow.get_trace(t.info.trace_id).info.assessments] == ["tool_call_correctness"]
+
+
 def test_a_failed_call_or_a_trace_that_never_arrived_leaves_the_case_without_a_trace(
     tmp_path, monkeypatch, run_id
 ):
