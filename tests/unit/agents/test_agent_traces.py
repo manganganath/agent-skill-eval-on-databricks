@@ -245,18 +245,40 @@ def test_a_claude_code_trace_gets_its_prompt_tool_names_and_tool_outputs_for_the
 
 
 def test_a_strands_trace_gets_its_request_and_each_tool_calls_arguments_and_result():
+    from mlflow.genai.utils.trace_utils import extract_tools_called_from_trace
+
     messages = [{"role": "user", "parts": [{"type": "text", "content": "Audit model.xlsx"}]}]
+    args = {"path": "northwind/model.xlsx"}
+    # A Strands tool span carries the call as chat messages too, which MLflow's translation prefers.
+    call = [
+        {
+            "role": "tool",
+            "parts": [{"type": "tool_call", "name": "read_workbook", "id": "t1", "arguments": args}],
+        }
+    ]
+    reply = [
+        {
+            "role": "tool",
+            "parts": [{"type": "tool_call_response", "id": "t1", "response": [{"text": "Sheet BS"}]}],
+        }
+    ]
     trace = _otel_trace(
         ("invoke_agent Strands Agents", {"gen_ai.operation.name": "invoke_agent",
                                          "gen_ai.input.messages": json.dumps(messages)}, []),
         ("execute_tool read_workbook", {"gen_ai.operation.name": "execute_tool", "gen_ai.tool.name": "read_workbook",
-                                        "gen_ai.tool.call.arguments": json.dumps({"path": "northwind/model.xlsx"}),
+                                        "gen_ai.input.messages": json.dumps(call),
+                                        "gen_ai.output.messages": json.dumps(reply),
+                                        "gen_ai.tool.call.arguments": json.dumps(args),
                                         "gen_ai.tool.call.result": json.dumps([{"text": "Sheet BS"}])}, []),
     )  # fmt: skip
-    root, tool = for_judges(trace).data.spans
+    judged = for_judges(trace)
+    root, tool = judged.data.spans
     assert root.inputs == messages
-    assert (tool.name, tool.inputs, tool.outputs) == ("read_workbook", {"path": "northwind/model.xlsx"},
-                                                      [{"text": "Sheet BS"}])  # fmt: skip
+    assert (tool.name, tool.inputs, tool.outputs) == ("read_workbook", args, [{"text": "Sheet BS"}])
+    # The tool-call judges read the calls with this, which fails on a call whose inputs are a list.
+    assert [(c.name, c.arguments) for c in extract_tools_called_from_trace(judged)] == [
+        ("read_workbook", args)
+    ]
 
 
 def test_a_trace_with_mlflow_inputs_keeps_them_and_a_span_that_cannot_be_translated_stays_as_it_was(
@@ -276,3 +298,97 @@ def test_a_trace_with_mlflow_inputs_keeps_them_and_a_span_that_cannot_be_transla
 
     monkeypatch.setattr(traces, "translate_span_when_storing", broken)
     assert [s.name for s in for_judges(trace).data.spans] == ["eval_case", "tool"]
+
+
+def _available_tools(trace, monkeypatch):
+    """The tools that the tool-call judges are told the agent had, by name: what MLflow finds on the model-call
+    spans, without its fallback, which asks an LLM."""
+    from mlflow.genai.utils import trace_utils
+
+    monkeypatch.setattr(trace_utils, "_try_extract_available_tools_with_llm", lambda trace, model=None: [])
+    return {t.function.name: t.function for t in trace_utils.extract_available_tools_from_trace(trace)}
+
+
+READ_WORKBOOK_SCHEMA = {"type": "object", "properties": {"path": {"type": "string"}}, "required": ["path"]}
+
+
+@pytest.mark.parametrize(
+    "definition",
+    [
+        # Strands, in Bedrock's shape
+        {"name": "read_workbook", "description": "Read a workbook.", "inputSchema": {"json": READ_WORKBOOK_SCHEMA},
+         "outputSchema": None},
+        {"toolSpec": {"name": "read_workbook", "description": "Read a workbook.",
+                      "inputSchema": {"json": READ_WORKBOOK_SCHEMA}}},
+        # the GenAI conventions
+        {"type": "function", "name": "read_workbook", "description": "Read a workbook.",
+         "parameters": READ_WORKBOOK_SCHEMA},
+        # MLflow's and OpenAI's own
+        {"type": "function", "function": {"name": "read_workbook", "description": "Read a workbook.",
+                                          "parameters": READ_WORKBOOK_SCHEMA}},
+    ],
+)  # fmt: skip
+def test_the_judges_get_the_tools_an_agent_defined_on_its_agent_span(definition, monkeypatch):
+    skill = {"name": "skill_c_s_audit-xls", "description": "The audit-xls skill.",
+             "inputSchema": {"json": {"type": "object", "properties": {}}}}  # fmt: skip
+    trace = _otel_trace(
+        ("invoke_agent Strands Agents", {"gen_ai.operation.name": "invoke_agent",
+                                         "gen_ai.tool.definitions": json.dumps([definition, skill])}, []),
+        ("chat", {"gen_ai.operation.name": "chat"}, []),
+        ("execute_tool read_workbook", {"gen_ai.operation.name": "execute_tool", "gen_ai.tool.name": "read_workbook",
+                                        "gen_ai.tool.call.arguments": json.dumps({"path": "northwind/model.xlsx"})},
+         []),
+    )  # fmt: skip
+    # MLflow reads available tools only from model-call spans, and only in its own shape, so the judges were told
+    # that the agent had no tools.
+    tools = _available_tools(for_judges(trace), monkeypatch)
+    assert sorted(tools) == ["read_workbook", "skill_c_s_audit-xls"]
+    assert tools["read_workbook"].description == "Read a workbook."
+    assert set(tools["read_workbook"].parameters.properties) == {"path"}
+    assert tools["read_workbook"].parameters.required == ["path"]
+
+
+def test_a_tool_whose_schema_mlflow_rejects_keeps_its_name_for_the_judges(monkeypatch):
+    odd = {
+        "name": "lookup",
+        "inputSchema": {"json": {"type": "object", "properties": {"q": {"anyOf": [{}]}}}},
+    }
+    trace = _otel_trace(
+        ("invoke_agent", {"gen_ai.operation.name": "invoke_agent", "gen_ai.tool.definitions": json.dumps([odd])}, []),
+        ("chat", {"gen_ai.operation.name": "chat"}, []),
+    )  # fmt: skip
+    assert list(_available_tools(for_judges(trace), monkeypatch)) == ["lookup"]
+
+
+def test_an_agent_that_records_no_tool_definitions_has_the_tools_it_called(monkeypatch):
+    """Claude Code records no tool definitions. The tools it called existed, so the judges are not told that it had
+    none, which made them fail every call."""
+    trace = _otel_trace(
+        ("claude_code.interaction", {"span.type": "interaction", "gen_ai.operation.name": "invoke_agent",
+                                     "user_prompt": PROMPT}, []),
+        ("claude_code.llm_request", {"span.type": "llm_request", "model": "claude-sonnet"}, []),
+        ("claude_code.tool", {"span.type": "tool", "gen_ai.operation.name": "execute_tool",
+                              "gen_ai.tool.name": "mcp__skills__skill_c_s_audit-xls"}, []),
+        ("claude_code.tool", {"span.type": "tool", "gen_ai.operation.name": "execute_tool",
+                              "gen_ai.tool.name": "read_workbook"}, []),
+        ("claude_code.tool", {"span.type": "tool", "gen_ai.operation.name": "execute_tool",
+                              "gen_ai.tool.name": "read_workbook"}, []),
+    )  # fmt: skip
+    tools = _available_tools(for_judges(trace), monkeypatch)
+    assert list(tools) == ["mcp__skills__skill_c_s_audit-xls", "read_workbook"]
+    assert "does not record" in tools["read_workbook"].description
+
+
+def test_tools_that_a_model_call_span_already_has_are_kept(monkeypatch):
+    own = [
+        {
+            "type": "function",
+            "function": {"name": "search", "parameters": {"type": "object", "properties": {}}},
+        }
+    ]
+    trace = _otel_trace(
+        ("agent", {"gen_ai.operation.name": "invoke_agent",
+                   "gen_ai.tool.definitions": json.dumps([{"name": "other", "inputSchema": {"json": {}}}])}, []),
+        ("llm", {"mlflow.spanType": "CHAT_MODEL", "mlflow.chat.tools": own}, []),
+    )  # fmt: skip
+    assert list(_available_tools(for_judges(trace), monkeypatch)) == ["search"]
