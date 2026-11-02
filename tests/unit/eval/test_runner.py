@@ -732,6 +732,26 @@ def _runs(tmp_path, skill):
     return MlflowClient().search_runs(_experiment_ids(tmp_path), filter_string=f"params.skill = '{skill}'")
 
 
+def test_the_scorers_get_the_skills_production_fqn(monkeypatch):
+    """Tool-call correctness expects the call to the skill's tool in with_skill mode, so it needs the FQN."""
+    got = {}
+
+    def scorers_for(cfg, rubric, profiles, mode, **kwargs):
+        got.update(kwargs, mode=mode)
+        return []
+
+    monkeypatch.setattr(runner, "scorers_for", scorers_for)
+    skill = SimpleNamespace(name="audit-xls", production_fqn="prod.common.audit-xls")
+    runner._scorers(
+        None, None, ["gpt"], "with_skill", skill, {}, SimpleNamespace(root=None), "common/audit-xls"
+    )
+    assert (got["mode"], got["skill_name"], got["skill_fqn"]) == (
+        "with_skill",
+        "audit-xls",
+        "prod.common.audit-xls",
+    )
+
+
 def test_setup_failure_creates_no_child_run_and_is_recorded(wired, tmp_path):
     def scorers(cfg, rubric, profiles, mode, *, skill_name, cases=None, fixtures_root=None, skill_fqn=None):
         if skill_name == "audit-xls" and mode != "trigger":
