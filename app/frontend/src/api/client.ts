@@ -1,7 +1,7 @@
 import type {
   AppConfig, CandidateDetail, CandidateSummary, CaseRow, CatalogModel, DraftIn, DraftOut, EvalRunIn, EvalRunOut,
   EvalRunStatus, Dashboard, DashboardOut, JournalRow, MatrixRow, Me, MergeOut, ModelIn, ModelPatch, ModelsList,
-  ProbeStarted, ProbeStatus, ReadableDepartments, ReleaseStatus, ServingEndpoint, SkillDetail, SkillSummary, SubmitOut,
+  PendingRelease, ProbeStarted, ProbeStatus, ReadableDepartments, ReleaseStatus, ServingEndpoint, SkillDetail, SkillSummary, SubmitOut,
   SwitchOut, TryCandidateIn, TryIn, TryModelResult,
 } from "./types";
 
@@ -130,6 +130,7 @@ export const api = {
   submitDraft: (runKey: string) => request<SubmitOut>(`/drafts/${enc(runKey)}/submit`, { method: "POST" }),
   releaseStatus: (pr: number, dept: string, skill: string) =>
     request<ReleaseStatus>(`/release-status${qs({ pr: String(pr), dept, skill })}`),
+  pendingReleases: () => request<PendingRelease[]>("/releases/pending"),
   mergePull: (number: number) => request<MergeOut>(`/pulls/${number}/merge`, { method: "POST" }),
   matrix: (params: { skill?: string; dept?: string; fqn?: string }) => requestList<MatrixRow>(`/results/matrix${qs(params)}`),
   cases: (runId: string) => requestList<CaseRow>(`/results/cases${qs({ run_id: runId })}`),

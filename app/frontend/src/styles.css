@@ -565,3 +565,11 @@ a.badge:hover { background: var(--accent); color: var(--canvas); }
 .btn-danger:hover:not(:disabled) { filter: brightness(0.92); }
 .btn-danger-outline { color: var(--fail); border-color: var(--fail-tint); background: var(--canvas); }
 .btn-danger-outline:hover { background: var(--fail-wash); }
+
+/* Releases waiting for approval: one panel per run, with the skills it changes and the button to GitHub. */
+.release-queue { list-style: none; margin: 0; padding: 0; display: grid; gap: 1rem; }
+.release-item { display: grid; gap: 0.6rem; }
+.release-item .panel-head { margin-bottom: 0; }
+.release-meta { margin: 0; font-size: 0.9375rem; }
+.release-actions { margin: 0; display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem 1rem; }
+.scan-flag { color: var(--fail); font-weight: 600; }

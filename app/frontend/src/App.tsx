@@ -11,6 +11,7 @@ import RunEval from "./pages/RunEval";
 import Models from "./pages/Models";
 import Switch from "./pages/Switch";
 import Access from "./pages/Access";
+import Releases from "./pages/Releases";
 
 export function App() {
   return (
@@ -26,6 +27,7 @@ export function App() {
           <Route path="dashboard" element={<Dashboard />} />
           <Route path="run" element={<RunEval />} />
           <Route path="models" element={<Models />} />
+          <Route path="releases" element={<Releases />} />
           <Route path="access" element={<Access />} />
           <Route path="*" element={<EmptyState title="Page not found" />} />
         </Route>
