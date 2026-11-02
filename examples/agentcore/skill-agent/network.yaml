@@ -1,0 +1,148 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >-
+  A network for the Skill Hub sample agent with one fixed outbound IP address, for a Databricks workspace with IP
+  access lists. The agent runs in two private subnets and reaches the workspace through a NAT gateway with an Elastic
+  IP; that one address goes in the workspace's IP access list. It has no inbound access.
+
+Parameters:
+  AvailabilityZoneIds:
+    Type: CommaDelimitedList
+    Default: use1-az1,use1-az2
+    Description: >-
+      Two zone IDs where AgentCore Runtime supports VPC mode in this Region, such as use1-az1,use1-az2 in
+      us-east-1. Zone IDs, not names: names map to different zones in each account.
+  CidrBlock:
+    Type: String
+    Default: 10.80.0.0/16
+    AllowedPattern: '\d+\.\d+\.\d+\.\d+/16'
+    Description: The VPC's /16 range. Each subnet takes one /24 of it.
+
+Resources:
+  Vpc:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: !Ref CidrBlock
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      Tags: [{Key: Name, Value: !Sub "${AWS::StackName}"}]
+
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags: [{Key: Name, Value: !Sub "${AWS::StackName}"}]
+
+  GatewayAttachment:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref Vpc
+      InternetGatewayId: !Ref InternetGateway
+
+  PublicSubnet:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref Vpc
+      AvailabilityZoneId: !Select [0, !Ref AvailabilityZoneIds]
+      CidrBlock: !Select [0, !Cidr [!Ref CidrBlock, 3, 8]]
+      Tags: [{Key: Name, Value: !Sub "${AWS::StackName}-public"}]
+
+  PrivateSubnetA:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref Vpc
+      AvailabilityZoneId: !Select [0, !Ref AvailabilityZoneIds]
+      CidrBlock: !Select [1, !Cidr [!Ref CidrBlock, 3, 8]]
+      Tags: [{Key: Name, Value: !Sub "${AWS::StackName}-private-a"}]
+
+  PrivateSubnetB:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref Vpc
+      AvailabilityZoneId: !Select [1, !Ref AvailabilityZoneIds]
+      CidrBlock: !Select [2, !Cidr [!Ref CidrBlock, 3, 8]]
+      Tags: [{Key: Name, Value: !Sub "${AWS::StackName}-private-b"}]
+
+  PublicRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref Vpc
+      Tags: [{Key: Name, Value: !Sub "${AWS::StackName}-public"}]
+
+  PublicRoute:
+    Type: AWS::EC2::Route
+    DependsOn: GatewayAttachment
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref InternetGateway
+
+  PublicSubnetRoutes:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PublicSubnet
+      RouteTableId: !Ref PublicRouteTable
+
+  # The address the workspace sees. Retained when the stack is deleted, so that an IP access list entry keeps
+  # meaning this network until the address is released on purpose.
+  EgressIp:
+    Type: AWS::EC2::EIP
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      Domain: vpc
+      Tags: [{Key: Name, Value: !Sub "${AWS::StackName}-egress"}]
+
+  NatGateway:
+    Type: AWS::EC2::NatGateway
+    DependsOn: GatewayAttachment
+    Properties:
+      SubnetId: !Ref PublicSubnet
+      AllocationId: !GetAtt EgressIp.AllocationId
+      Tags: [{Key: Name, Value: !Sub "${AWS::StackName}"}]
+
+  PrivateRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref Vpc
+      Tags: [{Key: Name, Value: !Sub "${AWS::StackName}-private"}]
+
+  PrivateRoute:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref PrivateRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      NatGatewayId: !Ref NatGateway
+
+  PrivateSubnetARoutes:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PrivateSubnetA
+      RouteTableId: !Ref PrivateRouteTable
+
+  PrivateSubnetBRoutes:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PrivateSubnetB
+      RouteTableId: !Ref PrivateRouteTable
+
+  # Outbound HTTPS only: the workspace, Bedrock, Secrets Manager and the other AWS endpoints the agent calls.
+  AgentSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Skill Hub sample agent, outbound HTTPS only
+      VpcId: !Ref Vpc
+      SecurityGroupEgress:
+        - {IpProtocol: tcp, FromPort: 443, ToPort: 443, CidrIp: 0.0.0.0/0, Description: HTTPS}
+      Tags: [{Key: Name, Value: !Sub "${AWS::StackName}-agent"}]
+
+Outputs:
+  EgressIp:
+    Description: The one address to allow in the workspace's IP access list.
+    Value: !Ref EgressIp
+  SubnetIds:
+    Description: The agent's subnets.
+    Value: !Join [",", [!Ref PrivateSubnetA, !Ref PrivateSubnetB]]
+  SecurityGroupId:
+    Description: The agent's security group.
+    Value: !Ref AgentSecurityGroup
+  VpcId:
+    Value: !Ref Vpc

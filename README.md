@@ -269,7 +269,7 @@ uv run --frozen skillhub --help               # the CLI: generate, eval, sync, p
 | `docs/` | Architecture, operations, API and onboarding guides |
 | `fixtures/` | Synthetic test data for evaluations, with the Northwind Robotics suite |
 | `scripts/` | Helpers: `configure_github.sh`, `build_app.sh`, `mark_reviewed.py`, `wait_job_run.sh` |
-| `examples/agentcore/skill-agent/` | A sample agent on Amazon Bedrock AgentCore that the Skill Hub can evaluate, with its deploy script |
+| `examples/agentcore/skill-agent/` | A sample agent on Amazon Bedrock AgentCore that the Skill Hub can evaluate: an AgentCore CLI project, with its deploy script and an optional network with a fixed outbound address |
 
 Example skills are imported from [anthropics/financial-services](https://github.com/anthropics/financial-services) under the Apache-2.0 license; see `THIRD_PARTY_NOTICES`.
 

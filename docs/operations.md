@@ -623,7 +623,7 @@ The eval Job runs the Claude Code CLI as `skillhub-ci-eval`, inside the `skill-e
 
 ### Amazon Bedrock AgentCore
 
-The eval Job invokes an agent runtime on Amazon Bedrock AgentCore with the same IAM user key as the Bedrock models, from the `skillhub-aws` secret scope. `examples/agentcore/skill-agent/` is a sample agent: a Strands agent with a deploy script and a README.
+The eval Job invokes an agent runtime on Amazon Bedrock AgentCore with the same IAM user key as the Bedrock models, from the `skillhub-aws` secret scope. `examples/agentcore/skill-agent/` is a sample agent: a Strands agent in an AgentCore CLI (`@aws/agentcore`) project, with a deploy script and a README.
 
 1. **Let the key invoke the runtime.** Add this statement to the IAM user's policy. The runtime's name must start with `skillhub`:
 
@@ -633,7 +633,8 @@ The eval Job invokes an agent runtime on Amazon Bedrock AgentCore with the same 
    ```
 
 2. **Give the agent its own Databricks principal.** A workspace admin creates a service principal for the agent, with an OAuth secret, and adds it to the group `skillhub-agents` (`roles.agents` in `config/hub.yaml`) and to the reader group of each department whose skills it may load. Bootstrap gives `skillhub-agents` `USE SCHEMA` on each `<dept>_evals` schema and `MODIFY` and `SELECT` on its `traces_otel_spans` table, and nothing else there; the agent's principal gets `USE CATALOG` through the reader group of its department, which it must join. Create the group as an **account** group and assign it to the workspace, because Unity Catalog cannot grant to a workspace-local group. Give the group the workspace entitlement `workspace-access`: the trace endpoint refuses a principal without it, and `workspace-consume` is enough for the skills MCP only. Bootstrap skips these grants, and says so, while the group does not exist. The agent keeps its OAuth secret in AWS Secrets Manager.
-3. **Deploy the agent** with the sample's `deploy.sh`, signed in to AWS. It prints the runtime ARN.
+3. **Deploy the agent** with the sample's `deploy.sh`, signed in to AWS, with Node.js and the AgentCore CLI installed, in an account and region bootstrapped for CDK. It prints the runtime ARN.
+   - **IP access lists.** If the workspace has them, run the runtime in VPC mode (`AGENT_SUBNETS`, `AGENT_SECURITY_GROUPS`), in subnets whose outbound traffic leaves through a NAT gateway with a fixed Elastic IP, and allow that address in an IP access list. In public mode, AgentCore calls the workspace from AWS addresses that change, and the workspace refuses them: the token request succeeds, then the skills MCP and the trace endpoint answer 403, and the audit log records `IpAccessDenied`. The sample's `network.yaml` makes such a network.
 4. **Register and test.** On the Models page, add an external agent with the harness Amazon Bedrock AgentCore, the runtime ARN and the Bedrock model ID the agent calls. Register one row per model. **Test** invokes the runtime once and waits for the trace.
 
 **What the group can read.** `SELECT` on `traces_otel_spans` lets every principal in `skillhub-agents` read the spans of every department's evals, not only its own. Those spans hold the prompts, the answers and the text of the skills that the built-in loop loaded. Add only principals you trust with all departments' eval data. Bootstrap grants `SELECT` on every run, so revoking it by hand does not last. A later release drops `SELECT` if writing works with `MODIFY` alone.

@@ -1,4 +1,4 @@
-"""The sample AgentCore agent's contract module (examples/agentcore/skill-agent/contract.py) against the Skill Hub's
+"""The sample AgentCore agent's contract module (examples/agentcore/skill-agent/app/skill_agent/contract.py) against the Skill Hub's
 own code: the payload the eval Job builds parses, its tool names map back to the skills, and its fixture tools answer
 as the built-in agent loop's do. The module uses the standard library only, so it is loaded from its file."""
 
@@ -24,7 +24,7 @@ FIXTURES = ROOT / "fixtures"
 
 def _load():
     spec = importlib.util.spec_from_file_location(
-        "skill_agent_contract", ROOT / "examples/agentcore/skill-agent/contract.py"
+        "skill_agent_contract", ROOT / "examples/agentcore/skill-agent/app/skill_agent/contract.py"
     )
     module = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = module  # dataclasses resolve their annotations through sys.modules

@@ -1,0 +1,16 @@
+# The sample agent's own dependencies. The Skill Hub package is not one of them. The AgentCore CLI installs them with
+# uv for Linux ARM64 when it builds the runtime's code.
+[project]
+name = "skillhub-skill-agent"
+version = "0.1.0"
+description = "Sample agent on Amazon Bedrock AgentCore that the Skill Hub can evaluate"
+requires-python = ">=3.11"
+dependencies = [
+    "strands-agents==1.62.0",
+    "bedrock-agentcore==1.25.0",
+    "opentelemetry-exporter-otlp-proto-http>=1.30,<2",
+    "boto3>=1.43.115",
+]
+
+[tool.agentcore]
+entrypoint = "agent.py"
