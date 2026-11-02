@@ -1,9 +1,12 @@
+import json
+
 import pytest
 
 from skillhub.agents import contract
 from skillhub.agents.traces import (
     find_sql,
     find_traces,
+    for_judges,
     mlflow_trace_id,
     skill_calls,
     token_usage,
@@ -181,3 +184,95 @@ def test_the_contract_fields_for_a_case():
     assert attrs[contract.CASE_ID] == "7" and attrs[contract.REPEAT] == "2"
     with pytest.raises(ValueError, match="trace attribute values"):
         contract.attributes(run_key="a,b=c", trace_key="k", case_id=1, repeat=0, mode="trigger", profile="cc")
+
+
+def _otel_trace(*spans):
+    """A trace as mlflow.get_trace reads it back from a trace table: the spans' OpenTelemetry attributes as the agent
+    sent them, with no MLflow inputs or outputs. Built in memory: the test store would translate spans it stores."""
+    import base64
+    import json
+
+    from mlflow.entities import Span, Trace, TraceData, TraceInfo, TraceLocation, TraceState
+
+    def b64(n, size):
+        return base64.b64encode(n.to_bytes(size, "big")).decode()
+
+    built = [
+        Span.from_dict(
+            {
+                "trace_id": b64(1, 16),
+                "span_id": b64(i, 8),
+                "parent_span_id": None if i == 1 else b64(1, 8),
+                "name": name,
+                "start_time_unix_nano": i,
+                "end_time_unix_nano": 100 + i,
+                "events": [{"name": e, "time_unix_nano": i, "attributes": a} for e, a in events],
+                "status": {"code": "STATUS_CODE_OK", "message": ""},
+                "attributes": {
+                    "mlflow.traceRequestId": json.dumps("tr-1"),
+                    **{k: json.dumps(v) for k, v in attrs.items()},
+                },
+            }
+        )
+        for i, (name, attrs, events) in enumerate(spans, start=1)
+    ]
+    info = TraceInfo(trace_id="tr-1", trace_location=TraceLocation.from_experiment_id("0"), request_time=0,
+                     state=TraceState.OK)  # fmt: skip
+    return Trace(info=info, data=TraceData(spans=built))
+
+
+PROMPT = "Run a full model audit on Northwind's model.xlsx before it goes to IC. Model scope."
+
+
+def test_a_claude_code_trace_gets_its_prompt_tool_names_and_tool_outputs_for_the_judges():
+    trace = _otel_trace(
+        ("claude_code.interaction", {"span.type": "interaction", "gen_ai.operation.name": "invoke_agent",
+                                     "user_prompt": PROMPT}, []),
+        ("claude_code.tool", {"span.type": "tool", "gen_ai.operation.name": "execute_tool",
+                              "gen_ai.tool.name": "read_workbook", "tool_name": "mcp__fx__read_workbook"},
+         [("tool.output", {"output": "Inputs!B1 value=Northwind Robotics"})]),
+    )  # fmt: skip
+    assert trace.data.spans[0].inputs is None  # as the judges saw it before
+    judged = for_judges(trace)
+    root, tool = judged.data.spans
+    assert root.inputs == PROMPT and root.span_type == "AGENT"
+    # Every Claude Code tool span is named claude_code.tool.
+    assert (tool.name, tool.span_type) == ("read_workbook", "TOOL")
+    assert tool.outputs == "Inputs!B1 value=Northwind Robotics"
+    assert judged.info is trace.info and [s.span_id for s in judged.data.spans] == [
+        s.span_id for s in trace.data.spans
+    ]
+
+
+def test_a_strands_trace_gets_its_request_and_each_tool_calls_arguments_and_result():
+    messages = [{"role": "user", "parts": [{"type": "text", "content": "Audit model.xlsx"}]}]
+    trace = _otel_trace(
+        ("invoke_agent Strands Agents", {"gen_ai.operation.name": "invoke_agent",
+                                         "gen_ai.input.messages": json.dumps(messages)}, []),
+        ("execute_tool read_workbook", {"gen_ai.operation.name": "execute_tool", "gen_ai.tool.name": "read_workbook",
+                                        "gen_ai.tool.call.arguments": json.dumps({"path": "northwind/model.xlsx"}),
+                                        "gen_ai.tool.call.result": json.dumps([{"text": "Sheet BS"}])}, []),
+    )  # fmt: skip
+    root, tool = for_judges(trace).data.spans
+    assert root.inputs == messages
+    assert (tool.name, tool.inputs, tool.outputs) == ("read_workbook", {"path": "northwind/model.xlsx"},
+                                                      [{"text": "Sheet BS"}])  # fmt: skip
+
+
+def test_a_trace_with_mlflow_inputs_keeps_them_and_a_span_that_cannot_be_translated_stays_as_it_was(
+    monkeypatch,
+):
+    from skillhub.agents import traces
+
+    trace = _otel_trace(
+        ("eval_case", {"mlflow.spanInputs": {"prompt": "kept"}, "mlflow.spanType": "CHAIN"}, []),
+        ("tool", {"gen_ai.tool.name": "read_workbook"}, []),
+    )
+    root, _ = for_judges(trace).data.spans
+    assert root.inputs == {"prompt": "kept"}
+
+    def broken(span):
+        raise ValueError("cannot translate")
+
+    monkeypatch.setattr(traces, "translate_span_when_storing", broken)
+    assert [s.name for s in for_judges(trace).data.spans] == ["eval_case", "tool"]
