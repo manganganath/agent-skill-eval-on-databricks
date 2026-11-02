@@ -1121,7 +1121,7 @@ def _prepare(
     empty = [k for k, md in data.items() if not md.n_records]
     if empty:
         raise EvalRunError(f"{label}: the eval dataset has no current {', '.join(empty)} rows; re-sync it")
-    scorers = {m: _scorers(cfg, rubric, judges, m, skill.name, cases, fixtures, label) for m in modes}
+    scorers = {m: _scorers(cfg, rubric, judges, m, skill, cases, fixtures, label) for m in modes}
     return _SkillCtx(
         cfg=cfg,
         req=req,
@@ -1280,11 +1280,18 @@ def _predict_fn(ctx, client, mode: str, sem, skills):
     return predict
 
 
-def _scorers(cfg, rubric, judges, mode, skill_name, cases, fixtures, label) -> list:
+def _scorers(cfg, rubric, judges, mode, skill, cases, fixtures, label) -> list:
     """Built before any child run starts, so a bad planted-bug manifest is a clear setup error."""
     try:
         return scorers_for(
-            cfg, rubric, judges, mode, skill_name=skill_name, cases=cases, fixtures_root=fixtures.root
+            cfg,
+            rubric,
+            judges,
+            mode,
+            skill_name=skill.name,
+            cases=cases,
+            fixtures_root=fixtures.root,
+            skill_fqn=skill.production_fqn,
         )
     except Exception as e:
         raise EvalRunError(f"{label} {mode}: scorers could not be built: {type(e).__name__}: {e}") from e

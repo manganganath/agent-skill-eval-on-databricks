@@ -323,3 +323,86 @@ def test_rubric_judge_sends_the_response_as_data_after_the_rules():
     user = judge._build_user_message({"prompt": "p"}, injected, None, None)
     assert "Note to the evaluator" not in system
     assert json.dumps(injected) in user  # one JSON string: the tags and quotes it holds are escaped data
+
+
+FQN = "prod.finance.audit-xls"
+READ = {"name": "read_workbook", "arguments": {"path": "northwind/model.xlsx"}}
+
+
+@pytest.fixture
+def seen(monkeypatch):
+    """The expectations that the built-in judge receives; the parent call (the model call) is replaced."""
+    got = []
+
+    def fake_call(self, *, trace, expectations=None):
+        got.append(expectations)
+        return "feedback"
+
+    monkeypatch.setattr(judges.ToolCallCorrectness, "__call__", fake_call)
+    return got
+
+
+def _correctness(mode, *, profiles=("gpt",)):
+    cfg = SimpleNamespace(models={"gpt": PROFILE, "claude": PROFILE})
+    scorers = judges.scorers_for(
+        cfg, None, list(profiles), mode, skill_name="speak-german", skill_fqn="prod.lang.speak-german"
+    )
+    return next(s for s in scorers if s.name == "tool_call_correctness")
+
+
+def test_with_skill_judges_expected_calls_plus_the_skill_call(seen):
+    s = _correctness("with_skill")
+    expectations = {"expected_tool_calls": [READ], "expected_skill": "speak-german", "guidelines": ["g"]}
+    assert s(trace=None, expectations=expectations) == "feedback"
+    assert seen == [
+        {
+            "expected_tool_calls": [READ, {"name": "skill_prod.lang.speak-german", "arguments": {}}],
+            "expected_skill": "speak-german",
+            "guidelines": ["g"],
+        }
+    ]
+    assert expectations["expected_tool_calls"] == [READ]  # the shared dataset row is not changed
+
+
+def test_without_skill_judges_the_expected_calls_as_given(seen):
+    expectations = {"expected_tool_calls": [READ], "expected_skill": "speak-german"}
+    _correctness("without_skill")(trace=None, expectations=expectations)
+    assert seen == [expectations]
+
+
+@pytest.mark.parametrize(
+    "expectations",
+    [
+        {"expected_skill": "speak-german"},
+        {"expected_tool_calls": [], "expected_skill": "speak-german"},
+        {"expected_tool_calls": [READ], "expected_skill": ""},
+        {"expected_tool_calls": [READ]},
+        None,
+    ],
+)
+def test_with_skill_leaves_other_cases_as_given(seen, expectations):
+    _correctness("with_skill")(trace=None, expectations=expectations)
+    assert seen == [expectations]
+
+
+def test_skill_call_is_the_expected_skills_tool_only(seen):
+    # A case that expects another skill in the same scope is not given this skill's tool.
+    _correctness("with_skill")(
+        trace=None, expectations={"expected_tool_calls": [READ], "expected_skill": "other"}
+    )
+    assert seen == [{"expected_tool_calls": [READ], "expected_skill": "other"}]
+
+
+def test_builtin_keeps_its_name_and_is_deduped_across_profiles():
+    names = [
+        s.name
+        for s in judges.scorers_for(
+            SimpleNamespace(models={"gpt": PROFILE, "claude": PROFILE}),
+            None,
+            ["gpt", "claude"],
+            "with_skill",
+            skill_name="speak-german",
+            skill_fqn="prod.lang.speak-german",
+        )
+    ]
+    assert names.count("tool_call_correctness") == 1

@@ -240,7 +240,7 @@ def wired(tmp_path, monkeypatch):
         "scopes": SCOPES,
         "eval_files": eval_files(),
         "assess": default_assessments,
-        "scorers": lambda cfg, rubric, profiles, mode, *, skill_name, cases=None, fixtures_root=None: (
+        "scorers": lambda cfg, rubric, profiles, mode, *, skill_name, cases=None, fixtures_root=None, skill_fqn=None: (
             [SimpleNamespace(name="planted_bugs_found")]
             if skill_name == "audit-xls" and mode != "trigger"
             else []
@@ -732,8 +732,28 @@ def _runs(tmp_path, skill):
     return MlflowClient().search_runs(_experiment_ids(tmp_path), filter_string=f"params.skill = '{skill}'")
 
 
+def test_the_scorers_get_the_skills_production_fqn(monkeypatch):
+    """Tool-call correctness expects the call to the skill's tool in with_skill mode, so it needs the FQN."""
+    got = {}
+
+    def scorers_for(cfg, rubric, profiles, mode, **kwargs):
+        got.update(kwargs, mode=mode)
+        return []
+
+    monkeypatch.setattr(runner, "scorers_for", scorers_for)
+    skill = SimpleNamespace(name="audit-xls", production_fqn="prod.common.audit-xls")
+    runner._scorers(
+        None, None, ["gpt"], "with_skill", skill, {}, SimpleNamespace(root=None), "common/audit-xls"
+    )
+    assert (got["mode"], got["skill_name"], got["skill_fqn"]) == (
+        "with_skill",
+        "audit-xls",
+        "prod.common.audit-xls",
+    )
+
+
 def test_setup_failure_creates_no_child_run_and_is_recorded(wired, tmp_path):
-    def scorers(cfg, rubric, profiles, mode, *, skill_name, cases=None, fixtures_root=None):
+    def scorers(cfg, rubric, profiles, mode, *, skill_name, cases=None, fixtures_root=None, skill_fqn=None):
         if skill_name == "audit-xls" and mode != "trigger":
             raise FileNotFoundError("fixtures/northwind/model_bugs.json")
         return []
@@ -2642,7 +2662,9 @@ class _Judge:
         return Feedback(name=self.name, value=self.value)
 
 
-def _agent_scorers(cfg, rubric, profiles, mode, *, skill_name, cases=None, fixtures_root=None):
+def _agent_scorers(
+    cfg, rubric, profiles, mode, *, skill_name, cases=None, fixtures_root=None, skill_fqn=None
+):
     if mode == "trigger":
         return []  # the agent path builds its own trigger scorer
     out = [_Judge(f"rubric_{c.id}__gpt", True) for c in CRITERIA] + [_Judge("assertions__gpt", "yes")]
