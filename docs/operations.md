@@ -208,6 +208,10 @@ Every CI job that talks to Databricks (deploys, pull request and merge evals, pu
 
 The runner needs `bash`, `git`, `jq` and the GitHub CLI `gh`, and outbound access to GitHub and the Databricks workspace.
 
+Put the runner on an always-on machine in the allowed network, for example a small VM, not a laptop:
+- **A runner that loses its connection loses its job.** When the network drops or the machine sleeps during a job, GitHub fails the job. Re-run it from the run's page in GitHub. For a release, `gh workflow run skills-publish.yml --ref main` also works.
+- **One runner runs one job at a time.** An eval job holds the runner until the eval ends, and other jobs wait. Register two or more runners with the same label, so that a pull request eval does not wait behind a merge eval.
+
 Jobs without Databricks access (unit tests, lint, the publish plan) always run on GitHub-hosted runners. A pull request from a fork always runs on a GitHub-hosted runner, so code from a fork never reaches your runner. Also require approval for workflow runs from outside contributors (Settings → Actions → General). To go back to GitHub-hosted runners, delete the variable.
 
 ## Deploy
