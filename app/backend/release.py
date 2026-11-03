@@ -36,6 +36,15 @@ RECORD_STEP = "Record the release scan's result"
 # The scan step never fails its job (continue-on-error), so GitHub reports it as passed either way. The record step
 # annotates the job with the scan's real outcome, `success` or `failure`, under this title.
 SCAN_TITLE = "skillhub-release-scan"
+# The plan job also annotates what the run publishes and retires, and the eval-merge job which eval it gates on. A
+# release covers everything since the skillhub/released tag, which can be several merges, so the page reads these, not
+# the last pull request.
+PLAN_RECORD_STEP = "Record the release plan"
+PLAN_RECORD_STEP_ID = "plan_record"
+PLAN_TITLE = "skillhub-release-plan"
+EVAL_JOB = "re-evaluate merged content"
+EVAL_RECORD_STEP = "Record the eval the release gates on"
+EVAL_TITLE = "skillhub-release-eval"
 RELEASE_JOB = (
     "publish and switch (production)"  # the job of the production environment, which waits for approval
 )
