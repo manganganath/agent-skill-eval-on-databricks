@@ -161,7 +161,7 @@ read -rs GITHUB_TOKEN && databricks secrets put-secret skillhub github-token --s
 databricks secrets put-acl skillhub <app-service-principal-application-id> READ
 ```
 
-The Releases page also reads pull requests, their files and workflow runs and jobs, with the same token. Until both the repository and the secret are in place, the pull request features answer 503 `github_not_configured`, and the Skill Hub says so. The token is read at most once a minute, and it is never logged or returned.
+The Releases page also reads pull requests, their files, and workflow runs, their jobs and the jobs' annotations, with the same token. Until both the repository and the secret are in place, the pull request features answer 503 `github_not_configured`, and the Skill Hub says so. The token is read at most once a minute, and it is never logged or returned.
 
 A pull request opened from the Skill Hub shows the token's owner as its author. The person who submitted it is named in the commit's `Submitted-by` trailer and in the pull request body. A GitHub App is the production choice: its bot is the author, its permissions are narrower, and no one person's account has to hold the token.
 
