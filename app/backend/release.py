@@ -10,17 +10,21 @@ account, not as the reviewer.
 from __future__ import annotations
 
 import hashlib
+import json
 import re
 import time
 from collections.abc import Callable, Collection
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import datetime
+from typing import TypeVar
 
 from backend import candidates, github
 from backend.github import Annotation, GitHubClient, Job, Pull, Run, Step
 from skillhub.bundle import is_ignored
 from skillhub.config import HubConfig
+
+_T = TypeVar("_T")
 
 BASE = "main"
 SKILLS = "skills"
@@ -276,10 +280,15 @@ def unmet_merge_rules(
 # --- the releases that wait for approval ------------------------------------------------------------------------------
 
 
-def eval_key(keys: Collection[candidates.CandidateKey], head_sha: str) -> candidates.CandidateKey | None:
-    """The upload of the pull request's PR eval that the release reuses: the newest attempt for the head commit that was
-    merged. None when no folder of that commit is left (candidate folders are removed after a week)."""
-    same = [k for k in keys if k.sha7 is not None and head_sha.startswith(k.sha7)]
+def eval_key(
+    keys: Collection[candidates.CandidateKey], head_sha: str, pr_number: int
+) -> candidates.CandidateKey | None:
+    """The upload of the pull request's PR eval that the release reuses: the newest attempt of that pull request for the
+    head commit that was merged. A pull request closed and reopened as another one at the same head has two folders;
+    the number tells them apart. None when no folder of it is left (candidate folders are removed after a week)."""
+    same = [
+        k for k in keys if k.sha7 is not None and k.pr_number == pr_number and head_sha.startswith(k.sha7)
+    ]
     return max(same, key=lambda k: (k.attempt or 0, k.run_key), default=None)
 
 
@@ -313,13 +322,111 @@ def scan_state(found: tuple[Job, Step] | None, annotations: Collection[Annotatio
     """The security scan of the release, from the outcome its record step annotated: passed (no critical finding; high
     ones, if any, are in the run summary, since the step accepts them), failed (critical findings, or the scan could not
     run), not_run (the step is absent or was skipped), or unknown (it has not finished, or the run has no annotation,
-    as a run from before the record step). `annotations` is None when they could not be read."""
+    as a run from before the record step). `annotations` is None when they could not be read.
+
+    It fails closed: the scan prints file names, so a line of its output may look like an annotation, and the workflow
+    stops that. Should one get through, the job holds two. Any `failure` makes it failed, and it is passed only when
+    every annotation of the title says `success`."""
     if found is None or (found[1].status == "completed" and found[1].conclusion == "skipped"):
         return "not_run"
     if not scan_ran(found) or annotations is None:
         return "unknown"
-    message = next((a.message for a in annotations if a.title == SCAN_TITLE), "")
-    return {"success": "passed", "failure": "failed"}.get(message, "unknown")
+    messages = [a.message for a in annotations if a.title == SCAN_TITLE]
+    if "failure" in messages:
+        return "failed"
+    return "passed" if messages and all(m == "success" for m in messages) else "unknown"
+
+
+# --- what the run itself says it does: the plan and the eval the workflow annotated ----------------------------------
+
+# Where a note's facts stand. `found`: exactly one annotation, well formed. `absent`: none, as in a run from before
+# the notes. `unknown`: the job's annotations could not be read, there are two with the title, or the one is not
+# what the workflow writes, so nothing in it is trusted.
+FOUND, ABSENT, UNKNOWN = "found", "absent", "unknown"
+
+
+@dataclass(frozen=True)
+class PlanNote:
+    """What the run publishes and retires, as (department, skill) pairs."""
+
+    publish: tuple[tuple[str, str], ...]
+    retire: tuple[tuple[str, str], ...]
+
+
+@dataclass(frozen=True)
+class EvalNote:
+    """The eval the release gates on: its run key, and `merge` when the merged content was evaluated or `pr` when the
+    release reuses the pull request gate's eval."""
+
+    run_key: str
+    trigger_source: str
+
+
+def job_named(jobs: Collection[Job], name: str) -> Job | None:
+    return next((job for job in jobs if job.name == name), None)
+
+
+def _skill_list(value: object, depts: Collection[str]) -> tuple[tuple[str, str], ...] | None:
+    if not isinstance(value, list):
+        return None
+    out: list[tuple[str, str]] = []
+    for item in value:
+        if not isinstance(item, dict):
+            return None
+        dept, skill = item.get("dept"), item.get("skill")
+        if not isinstance(dept, str) or dept not in depts or not isinstance(skill, str):
+            return None
+        if not candidates.valid_skill_name(skill):
+            return None
+        out.append((dept, skill))
+    return tuple(out)
+
+
+def parse_plan(message: str, depts: Collection[str]) -> PlanNote | None:
+    """The plan note's `{"publish": [{dept, skill}], "retire": [...]}`, or None when it is anything else."""
+    try:
+        data = json.loads(message)
+    except ValueError:
+        return None
+    if not isinstance(data, dict) or set(data) != {"publish", "retire"}:
+        return None
+    publish, retire = _skill_list(data["publish"], depts), _skill_list(data["retire"], depts)
+    return None if publish is None or retire is None else PlanNote(publish, retire)
+
+
+def parse_eval(message: str, sha: str) -> EvalNote | None:
+    """The eval note's `{"run_key": ..., "trigger_source": "merge" | "pr"}`, or None when it is anything else. A merge
+    eval's key must be one of this commit, and a pull request's key the form of a pull request upload."""
+    try:
+        data = json.loads(message)
+    except ValueError:
+        return None
+    if not isinstance(data, dict) or set(data) != {"run_key", "trigger_source"}:
+        return None
+    key, source = data["run_key"], data["trigger_source"]
+    if not isinstance(key, str):
+        return None
+    if source == "merge":
+        pattern = re.escape(merge_prefix(sha)) + r"(?:r[0-9]+_)?a[0-9]+"
+    elif source == "pr":
+        pattern = r"pr[1-9][0-9]{0,8}_[0-9a-f]{7}_a[0-9]{1,4}"
+    else:
+        return None
+    return EvalNote(key, source) if re.fullmatch(pattern, key) else None
+
+
+def read_note(
+    annotations: Collection[Annotation] | None, title: str, parse: Callable[[str], _T | None]
+) -> tuple[_T | None, str]:
+    """(the note, its standing) from a job's annotations: the parsed note when exactly one annotation has the title and
+    it parses. `annotations` is None when they could not be read."""
+    if annotations is None:
+        return None, UNKNOWN
+    messages = [a.message for a in annotations if a.title == title]
+    if not messages:
+        return None, ABSENT
+    note = parse(messages[0]) if len(messages) == 1 else None
+    return (note, FOUND) if note is not None else (None, UNKNOWN)
 
 
 def waiting_since(jobs: Collection[Job]) -> datetime | None:
