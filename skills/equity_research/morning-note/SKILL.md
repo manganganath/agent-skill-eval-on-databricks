@@ -17,7 +17,7 @@ Scan for relevant events across coverage universe:
 - Guidance changes (raised, lowered, maintained)
 
 **News & Events**
-- M&A announcements or rumors
+- M&A announcements or rumors (label a rumor as unconfirmed, and say who reported it)
 - Management changes
 - Product launches or regulatory decisions
 - Analyst upgrades/downgrades from competitors
@@ -85,5 +85,6 @@ If a coverage company reported, provide a quick reaction:
 - Lead with the most important thing — don't bury the headline
 - "No news" is a valid morning note — say "nothing material overnight, maintaining positioning"
 - Distinguish between actionable events (earnings, M&A) and noise (minor analyst notes, non-events)
+- Source every number and event: say where it came from and when (for example, "company press release, 6:05am"). A PM must be able to check a figure before trading on it
 - Time-stamp your takes — if you're writing at 6am, note that pre-market may change by open
 - If you're wrong, own it in the next morning note — credibility matters more than being right every time
