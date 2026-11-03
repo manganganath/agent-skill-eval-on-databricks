@@ -89,15 +89,21 @@ export interface ReleaseStatus {
 // app/backend/schemas.py. The approval is given in GitHub, at `run_url`; the Hub never approves.
 // `scan` is how the run's own security scan step ended; high findings, if any, are in the run summary in GitHub.
 // `eval_source` says which eval the verdicts come from: the merge eval, or the pull request eval the release reuses.
+// `skills_source` says where the skills come from: the plan the run annotated (`release`, which includes
+// retirements), or the merged pull request when the run has no plan (`pull_request`, a run from before it) or its plan
+// could not be trusted (`unknown`). `eval_basis` is the same for the eval: `release` (annotated), `inferred` (a guess
+// from the rows that exist) or `unknown`. `earlier_changes`: the release also carries merges before `pull`.
 export type ScanState = "passed" | "failed" | "not_run" | "unknown";
 export interface PendingSkill {
-  dept: string; skill: string; verdicts: Record<string, Verdict>; eval_access: EvalAccess;
+  dept: string; skill: string; action: "publish" | "retire"; verdicts: Record<string, Verdict>; eval_access: EvalAccess;
   eval_source: "merge" | "pull_request" | null;
 }
 export interface PendingPull { number: number; title: string; author: string; merged_by: string | null; url: string }
 export interface PendingRelease {
   run_url: string; run_number: number; sha: string; started_at: string | null; waiting_since: string | null;
-  pull: PendingPull | null; details: "ok" | "unavailable"; scan: ScanState; run_key: string | null; skills: PendingSkill[];
+  pull: PendingPull | null; details: "ok" | "unavailable"; scan: ScanState;
+  skills_source: "release" | "pull_request" | "unknown"; eval_basis: "release" | "inferred" | "unknown";
+  earlier_changes: boolean; run_key: string | null; skills: PendingSkill[];
 }
 export interface MergeOut { pr_number: number; merged: boolean; sha: string }
 
