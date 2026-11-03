@@ -39,7 +39,25 @@ export const EVAL_SOURCE = {
   pull_request: "Pull request eval, reused by the release",
 } as const;
 
+// What the skills column stands on, when it is not the release's own plan: the merged pull request's skills.
+export function skillsSourceText(source: PendingRelease["skills_source"]): string | null {
+  switch (source) {
+    case "pull_request": return "These skills are from the merged pull request; this run predates the release plan, so the release may include more.";
+    case "unknown": return "These skills are from the merged pull request: the release plan could not be read or trusted, so the release may include more.";
+    default: return null;
+  }
+}
+
+export function evalBasisText(basis: PendingRelease["eval_basis"]): string | null {
+  switch (basis) {
+    case "inferred": return "The eval shown is inferred from the results that exist; this run predates the release plan.";
+    case "unknown": return "The eval could not be confirmed from the run, so the one shown is inferred from the results that exist.";
+    default: return null;
+  }
+}
+
 function Verdicts({ skill }: { skill: PendingSkill }) {
+  if (skill.action === "retire") return <span className="muted">Nothing is evaluated for a retirement</span>;
   const verdicts = Object.entries(skill.verdicts);
   if (verdicts.length === 0) {
     return (
@@ -70,7 +88,13 @@ function Skills({ release }: { release: PendingRelease }) {
       </p>
     );
   }
+  const sourceNote = skillsSourceText(release.skills_source);
+  const evalNote = release.skills.some((s) => s.action === "publish") ? evalBasisText(release.eval_basis) : null;
   return (
+    <>
+    {sourceNote ? <p className="muted">{sourceNote}</p> : null}
+    {release.earlier_changes ? <p className="muted">This release also carries changes from earlier merges, which are listed with the skills below.</p> : null}
+    {evalNote ? <p className="muted">{evalNote}</p> : null}
     <div className="table-scroll" role="region" aria-label={`Skills of run ${release.run_number}`} tabIndex={0}>
       <table>
         <thead>
@@ -85,12 +109,16 @@ function Skills({ release }: { release: PendingRelease }) {
                   : <>{s.dept}/{s.skill}</>}
               </th>
               <td><Verdicts skill={s} /></td>
-              <td>{s.eval_source ? EVAL_SOURCE[s.eval_source] : <span className="muted">No eval found</span>}</td>
+              <td>
+                {s.action === "retire" ? "Retired: the skill is removed from the registry"
+                  : s.eval_source ? EVAL_SOURCE[s.eval_source] : <span className="muted">No eval found</span>}
+              </td>
             </tr>
           ))}
         </tbody>
       </table>
     </div>
+    </>
   );
 }
 
@@ -132,10 +160,18 @@ function Queue() {
   const { data, error } = releases;
 
   // A new answer (or a failed one) schedules the next read, so the timer runs once per answer, as on the release path.
+  // A hidden tab does not read: a read that falls due then is dropped, and the tab reads once when it shows again.
   useEffect(() => {
-    const timer = window.setTimeout(reload, POLL_MS);
+    const timer = window.setTimeout(() => {
+      if (document.visibilityState !== "hidden") reload();
+    }, POLL_MS);
     return () => window.clearTimeout(timer);
   }, [data, error, reload]);
+  useEffect(() => {
+    const shown = () => { if (document.visibilityState === "visible") reload(); };
+    document.addEventListener("visibilitychange", shown);
+    return () => document.removeEventListener("visibilitychange", shown);
+  }, [reload]);
 
   if (!data) {
     if (!error) return <Loading label="Loading the releases" />;

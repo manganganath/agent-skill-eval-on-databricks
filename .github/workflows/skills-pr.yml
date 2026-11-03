@@ -165,7 +165,8 @@ jobs:
             echo "run_key=pr${PR_NUMBER}-${HEAD_SHA:0:7}-a${RUN_ATTEMPT}"
           } >> "$GITHUB_OUTPUT"
 
-      # Before anything is generated or staged: a skill with a critical finding must never reach the workspace.
+      # Before anything is generated or staged: a skill with a critical finding must never reach the workspace. The
+      # scans print the pull request's file names, so they run with workflow commands turned off.
       - name: 1b. Scan changed skills (no Databricks needed)
         id: scan
         if: ${{ steps.changed.outputs.non_deleted != '' }}
@@ -176,7 +177,7 @@ jobs:
         run: |
           accept=()
           if [ "$SCAN_ACCEPTED" = "true" ]; then accept=(--allow-high); fi
-          uv run skillhub scan --skills "$SKILLS" "${accept[@]}" --json "$RUNNER_TEMP/scan.json" --summary "$GITHUB_STEP_SUMMARY"
+          scripts/without_workflow_commands.sh uv run skillhub scan --skills "$SKILLS" "${accept[@]}" --json "$RUNNER_TEMP/scan.json" --summary "$GITHUB_STEP_SUMMARY"
 
       # The LLM reviewer (hub.yaml scan.llm). Its findings are at most high; when it cannot be reached it warns.
       - name: 1c. LLM review of changed skills
@@ -193,7 +194,7 @@ jobs:
         run: |
           accept=()
           if [ "$SCAN_ACCEPTED" = "true" ]; then accept=(--allow-high); fi
-          uv run skillhub scan --llm-only --skills "$SKILLS" "${accept[@]}" --json "$RUNNER_TEMP/scan-llm.json" --summary "$GITHUB_STEP_SUMMARY"
+          scripts/without_workflow_commands.sh uv run skillhub scan --llm-only --skills "$SKILLS" "${accept[@]}" --json "$RUNNER_TEMP/scan-llm.json" --summary "$GITHUB_STEP_SUMMARY"
 
       - name: 2. Generate missing evals and rubrics
         id: generate-cases

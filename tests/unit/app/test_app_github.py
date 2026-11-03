@@ -299,3 +299,72 @@ def test_job_annotations_reads_the_title_and_message_of_the_job_check_run():
     assert notes == [github.Annotation("skillhub-release-scan", "failure"), github.Annotation("", "m")]
     (req,) = opener.seen
     assert req.get_method() == "GET" and "/check-runs/77/annotations" in req.full_url
+
+
+# --- what never changes is kept longer than a few seconds ---
+
+
+@pytest.fixture
+def clock(monkeypatch):
+    """A monotonic clock the test moves."""
+    now = [1000.0]
+    monkeypatch.setattr(github.time, "monotonic", lambda: now[0])
+    return now
+
+
+def reads_after(clock, seconds, call, answer):
+    """How many requests `call` makes the second time, `seconds` after the first, over the same client."""
+    github._cache.clear()
+    opener = recording_opener(answer)
+    client = github.GitHubClient(REPO, TOKEN, opener=opener)
+    call(client)
+    first = len(opener.seen)
+    clock[0] += seconds
+    call(client)
+    return len(opener.seen) - first
+
+
+MERGED = {"number": 5, "merged": True, "head": {}}
+OPEN = {"number": 5, "merged": False, "head": {}}
+NOTES = [{"title": "skillhub-release-plan", "message": "{}"}]
+
+
+@pytest.mark.parametrize(
+    ("call", "answer"),
+    [
+        (lambda c: c.merged_pull_number("M5"), [{"number": 5, "merge_commit_sha": "M5"}]),
+        (lambda c: c.pull(5), MERGED),
+        (lambda c: c.pull_paths(5, settled=True), [{"filename": "skills/common/a/SKILL.md"}]),
+        (lambda c: c.job_annotations(77), NOTES),
+    ],
+)
+def test_a_merged_commits_pull_request_its_files_and_a_jobs_annotations_are_kept_for_minutes(
+    configured, clock, call, answer
+):
+    assert reads_after(clock, github.ANSWER_S + 1, call, answer) == 0
+    assert reads_after(clock, github.SETTLED_S - 1, call, answer) == 0
+    assert reads_after(clock, github.SETTLED_S + 1, call, answer) > 0
+
+
+@pytest.mark.parametrize(
+    ("call", "answer"),
+    [
+        # An open pull request changes, and so do its files unless the caller says the pull request is merged.
+        (lambda c: c.pull(5), OPEN),
+        (lambda c: c.pull_paths(5), [{"filename": "skills/common/a/SKILL.md"}]),
+        # Nothing is known yet about a commit with no pull request, or a job with no annotation: read it soon again.
+        (lambda c: c.merged_pull_number("M9"), [{"number": 5, "merge_commit_sha": "M5"}]),
+        (lambda c: c.job_annotations(77), []),
+        (lambda c: c.run_jobs(109), {"jobs": []}),
+    ],
+)
+def test_what_can_still_change_is_kept_only_a_few_seconds(configured, clock, call, answer):
+    assert reads_after(clock, github.ANSWER_S - 1, call, answer) == 0
+    assert reads_after(clock, github.ANSWER_S + 1, call, answer) > 0
+
+
+def test_the_cache_is_still_bounded(configured, clock):
+    client = github.GitHubClient(REPO, TOKEN, opener=recording_opener(MERGED))
+    for number in range(github.MAX_CACHED + 5):
+        client.get(f"/repos/acme/skills/pulls/{number}")
+    assert len(github._cache) <= github.MAX_CACHED

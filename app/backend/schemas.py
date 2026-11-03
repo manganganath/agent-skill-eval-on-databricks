@@ -303,13 +303,14 @@ class PendingPull(BaseModel):
 
 
 class PendingSkill(BaseModel):
-    """A skill the release changes. `verdicts` is {model profile: worst verdict across the gating modes} from the eval
-    the release gates on: `eval_source` `merge` when the merged content was evaluated again, `pull_request` when the
-    release reuses the pull request's eval. Both are empty or None when no result is found (the pull request's upload
-    is removed after 7 days)."""
+    """A skill the release publishes or retires (`action`). `verdicts` is {model profile: worst verdict across the
+    gating modes} from the eval the release gates on: `eval_source` `merge` when the merged content was evaluated
+    again, `pull_request` when the release reuses the pull request's eval. Both are empty or None when no result is
+    found (the pull request's upload is removed after 7 days), and for a retirement, which has no eval."""
 
     dept: str
     skill: str
+    action: Literal["publish", "retire"]
     verdicts: dict[str, str]
     eval_access: EvalAccess
     eval_source: Literal["merge", "pull_request"] | None
@@ -318,6 +319,12 @@ class PendingSkill(BaseModel):
 class PendingRelease(BaseModel):
     """A skills-publish run that waits for the production approval. `pull` is None for a merge commit that has no pull
     request (a direct push), and when `details` is `unavailable`: GitHub failed for this run, so only the run is known.
+    `skills_source` says where `skills` come from: `release` (the plan the run annotated: everything since the last
+    release, publishes and retirements), `pull_request` (no plan annotation, a run from before it: the merged pull
+    request's skills) or `unknown` (the annotation could not be read or is not trusted; the pull request's skills).
+    `eval_basis` says the same for the eval the verdicts come from: `release` (the run annotated its eval),
+    `inferred` (no annotation: the page guesses from the rows that exist) or `unknown`. `earlier_changes` is True when
+    the release carries a skill that `pull` did not change, so it covers earlier merges too.
     `run_key` names the pull request's eval upload (`pr<N>_<sha7>_a<attempt>`), None when none is left; the skills'
     candidate pages are under it. `scan` is how the run's own security scan step ended (`passed`: no critical finding;
     high findings, if any, are in the run summary in GitHub). The approval itself is made in GitHub, at `run_url`."""
@@ -330,6 +337,9 @@ class PendingRelease(BaseModel):
     pull: PendingPull | None
     details: Literal["ok", "unavailable"]
     scan: Literal["passed", "failed", "not_run", "unknown"]
+    skills_source: Literal["release", "pull_request", "unknown"]
+    eval_basis: Literal["release", "inferred", "unknown"]
+    earlier_changes: bool
     run_key: str | None
     skills: list[PendingSkill]
 
