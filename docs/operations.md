@@ -6,9 +6,9 @@ Prerequisites: a workspace with Unity Catalog and a SQL warehouse, serverless jo
 
 Follow this order. The first deploy takes two passes, because the deploy creates the Skill Hub app, and with it the app's service principal. Until pass 2, the `skillhub-ci` application ID stands in for the app's.
 
-1. **A person runs the first bootstrap.** Set `SKILLHUB_CATALOG`, `SQL_WAREHOUSE_ID`, and `SKILLHUB_WORKSPACE_ROOT` to the folder for the experiments and CI candidates, normally `/Users/<skillhub-ci application ID>/skill-hub`. Leave `SKILLHUB_APP_PRINCIPAL` unset: the app does not exist yet, so bootstrap warns and skips the app's grants. Then run `uv run skillhub bootstrap --create-identities --secret-out <file> --eval-secret-out <file>`. The person must own the catalog and be a workspace admin. Without `SKILLHUB_WORKSPACE_ROOT` the folder is `/Shared/skill-hub`, which every user can edit (see [Experiment folders](#experiment-folders)).
+1. **A person runs the first bootstrap.** Set `SKILLHUB_CATALOG`, `SQL_WAREHOUSE_ID`, and `SKILLHUB_WORKSPACE_ROOT` to the folder for the experiments and CI candidates, normally `/Users/<skillhub-ci application ID>/skill-hub`. Leave `SKILLHUB_APP_PRINCIPAL` unset: the app does not exist yet, so bootstrap warns and skips the app's grants. Sign in to the workspace as the catalog owner and a workspace admin (set `DATABRICKS_HOST`, then run `databricks auth login`, or use a profile). Then run `uv run skillhub bootstrap --create-identities --secret-out <file> --eval-secret-out <file>`. The person must own the catalog and be a workspace admin. Without `SKILLHUB_WORKSPACE_ROOT` the folder is `/Shared/skill-hub`, which every user can edit (see [Experiment folders](#experiment-folders)).
 2. **Grant one role by hand.** `skillhub-ci` needs the Service Principal User role on `skillhub-ci-eval`. Do this before the first prod deploy. See [Service Principal User role](#service-principal-user-role).
-3. **Configure GitHub.** Run `scripts/configure_github.sh` (see [Secrets](#secrets)). Give `--app-principal` and `--app-principal-dev` the `skillhub-ci` application ID as the stand-in. This is safe: bootstrap gives no app grants to a principal that is a CI principal, and the bundle accepts `skillhub-ci` twice on the `skill-switch` Job.
+3. **Configure GitHub.** Run `scripts/configure_github.sh` (see [Secrets](#secrets)). Give `--app-principal` and `--app-principal-dev` the `skillhub-ci` application ID as the stand-in. This is safe: bootstrap gives no app grants to a principal that is a CI principal, and the bundle accepts `skillhub-ci` twice on the `skill-switch` Job. On a new repository, branch protection may be refused until the checks `skills-pr` and `platform` have each run once. If the script stops there, open a pull request so both checks run, then run the script again. It is safe to repeat.
 4. **Deploy (pass 1).** Push to `main`, or run `gh workflow run platform.yml --ref main -f deploy=prod`. Then approve the `production` deployment. The deploy creates the Jobs and the app (see [Deploy](#deploy)).
 5. **Replace the stand-in (pass 2).**
    1. Read the app's application ID: `databricks apps get skill-hub -o json`, field `service_principal_client_id`. The app names are `app_name` in `databricks.yml`: `skill-hub` for `prod`, `skill-hub-dev` for `dev`.
@@ -17,27 +17,30 @@ Follow this order. The first deploy takes two passes, because the deploy creates
    4. The dev app exists only after a dev deploy. After the first one, set `APP_PRINCIPAL_DEV` from `skill-hub-dev` in the same way, and deploy dev again.
 
    Finish pass 2 before the nightly run at 02:00 UTC. With the stand-in, `skillhub-ci` counts as the app, so `check-permissions` reports its access from its home folder as `inherited_access`.
-6. **Grant the app, then run the bootstrap Job.** Give the app's principal `USE CATALOG` and `CREATE SCHEMA` on the catalog (see [Try on skills under review](#try-on-skills-under-review)). Then run the `skillhub-bootstrap` Job once. It runs as `skillhub-ci` and gives the app its schema grants, trace-table access and folder access. Run it again after every upgrade, so the tables, views, alerts and prompts match the new code.
+6. **Grant the app, then run the bootstrap Job.** Give the app's principal `USE CATALOG` and `CREATE SCHEMA` on the catalog (see [Try on skills under review](#try-on-skills-under-review)). Then run the `skillhub-bootstrap` Job once. It runs as `skillhub-ci` and gives the app its schema grants, trace-table access and folder access. Run it again after every upgrade, so the tables, alerts and prompts match the new code. If the upgrade changes a results view, see Later runs below.
+7. **Create the Skill Hub's GitHub token.** Without it, the pull request features answer 503 `github_not_configured`. Store the token in a secret scope and give the app's principal READ on it (see [GitHub token for the Skill Hub](#github-token-for-the-skill-hub)).
 
 What the first run does:
 
 - It creates the account groups and the two CI service principals if they are missing.
 - It creates the schemas, applies the grants from `config/hub.yaml`, creates the tables and views, and creates the experiment folders with their access lists. It creates an experiment for each skill on `main` and an unreleased experiment for each department (see [Experiments of new skills](#experiments-of-new-skills)).
 - It registers the prompts and the skill-use judge (see below).
-- It creates or updates the SQL alerts and the Genie space.
+- It creates or updates the SQL alerts and the Genie space, and gives `skillhub-authors` and `skillhub-reviewers` `CAN_RUN` on the space.
 - It gives `skillhub-ci-eval` `CAN_USE` on the SQL warehouse, and `skillhub-ci` `CAN_MANAGE`: the deploy binds the warehouse to the app, and Databricks Apps needs `CAN_MANAGE` for that. Without `--create-identities` it only warns.
 - It makes `skillhub-ci` the owner of the SQL alerts and gives it the Genie space (owner where the API allows it, else `CAN_MANAGE`). If the workspace refuses, bootstrap prints the manual step.
-- It hands ownership of every schema, results table and view it created to `skillhub-ci`. This is why the Job, which runs as `skillhub-ci`, passes the owner checks. The check accepts only the deploying person and `skillhub-ci` as owners. It refuses `skillhub-ci-eval` and any other owner.
+- It hands ownership of every schema and results table it created to `skillhub-ci`. Tables named `ds_<skill>` go to `skillhub-ci-eval`. Views stay with the person who ran it, because Unity Catalog lets a non-admin owner move a view only to a group they belong to. This is why the Job, which runs as `skillhub-ci`, passes the owner checks. The check accepts only the deploying person and `skillhub-ci` as owners. It refuses `skillhub-ci-eval` and any other owner.
 
 Later runs:
 
-- The Job re-applies grants, tables, views, alerts and hooks. It cannot create schemas. It changes catalog-level grants only if `skillhub-ci` owns the catalog. Otherwise it skips them and logs that. It leaves an alert that `skillhub-ci` does not own unchanged, with a warning, so the Job does not fail on it.
-- A person who re-runs the command after the hand-over does identities, catalog-level grants and new departments only. The Job does the rest.
+- The Job re-applies grants, tables, alerts and hooks. It replaces the results views only when `skillhub-ci` owns them, which is normally not the case. It cannot create schemas. It changes catalog-level grants only if `skillhub-ci` owns the catalog. Otherwise it skips them and logs that. It leaves an alert that `skillhub-ci` does not own unchanged, with a warning, so the Job does not fail on it.
+- A person who re-runs the command after the hand-over does identities, catalog-level grants, new departments, and replaces the results views they own. The Job does the rest.
+- After an upgrade that changes a results view, run the Job first, because it adds new columns. Then run `uv run skillhub bootstrap` as the person who owns the catalog. A view that reads a new column fails until both have run.
 
 ### Groups
 
 The required groups are account groups that are assigned to the workspace. Unity Catalog cannot grant to workspace-local groups.
 
+- Bootstrap does not create `skillhub-agents`, and `--print-identities` does not list it. An admin creates it as an account group (see [Amazon Bedrock AgentCore](#amazon-bedrock-agentcore)).
 - With `--create-identities`, bootstrap creates a missing group through the workspace's account SCIM proxy and assigns it to the workspace. The person who runs it must be a workspace admin.
 - Without the flag, bootstrap checks that each group exists as an account group and is assigned. If one is missing, it stops before any grant. It prints what an admin must create. Run `uv run skillhub bootstrap --print-identities` to see the full list, give it to an admin, then run `uv run skillhub bootstrap --no-create-identities`.
 - A workspace-local group with a required name is an error. Delete it (Settings → Identity and access → Groups), create an account group with the same name, and re-run.
@@ -59,7 +62,7 @@ Some workspaces refuse to create an OAuth secret through the API. Then bootstrap
 
 ### Service Principal User role
 
-Bootstrap does not grant this role. The prod deploy runs as `skillhub-ci` and sets the Jobs `skill-eval` and `skillhub-nightly` to run as `skillhub-ci-eval`. That needs the Service Principal User role on `skillhub-ci-eval`. Without it, the first prod deploy fails.
+Bootstrap does not grant this role. The prod deploy runs as `skillhub-ci` and sets the Jobs `skill-eval`, `skillhub-nightly` and `skillhub-probe` to run as `skillhub-ci-eval`. That needs the Service Principal User role on `skillhub-ci-eval`. Without it, the first prod deploy fails.
 
 A workspace admin or the owner of `skillhub-ci-eval` grants it in the UI:
 
@@ -82,19 +85,19 @@ Bootstrap leaves alone a judge that an experiment already holds unchanged. MLflo
 | Identity | Kind | Purpose |
 |---|---|---|
 | `skillhub-users` | Account group | Readers of the common department |
-| `dept-<key>` | Account group | Readers of each department, as named in `config/hub.yaml` |
+| `dept-<name>` | Account group | Readers of each department, as named in `readers` in `config/hub.yaml` (for example `dept-equity-research`) |
 | `skillhub-authors` | Account group | Authors |
 | `skillhub-reviewers` | Account group | Reviewers. They switch versions in the Skill Hub, read the cross-department views, and read the quarantined `external` department. They do not control GitHub approvals (see Secrets). |
-| `skillhub-ci` | Service principal | Owns the hub schemas, tables and views after the hand-over. Owns live and versioned skills and writes the version journal. Deploys the bundle and runs `skill-switch` (publish, switch, retire). Its secret is only in the GitHub `production` environment |
+| `skillhub-ci` | Service principal | Owns the hub schemas and results tables after the hand-over. Views stay with the person who ran bootstrap. Owns live and versioned skills and writes the version journal. Deploys the bundle and runs `skill-switch` (publish, switch, retire). Its secret is only in the GitHub `production` environment |
 | `skillhub-ci-eval` | Service principal | Runs `skill-eval` for pull requests, merges and the nightly run, and syncs results. It writes `eval_runs`, `eval_cases`, `rubrics` and the trace tables. It cannot publish or switch. Its secret is only in the GitHub `ci-eval` environment |
-| `skillhub-agents` | Account group | The Databricks principals of agents on Amazon Bedrock AgentCore (`roles.agents`). Bootstrap gives it `USE SCHEMA` on each `<dept>_evals` schema and `MODIFY` and `SELECT` on that schema's `traces_otel_spans` table, so the agents can write their spans. See [Amazon Bedrock AgentCore](#amazon-bedrock-agentcore) for what that lets them read |
-| App service principal | Service principal | Starts the Jobs on behalf of users. The Jobs run as `skillhub-ci-eval` or `skillhub-ci`. It may switch and retire through `skill-switch`, but never publish, and the gates do not trust MLflow runs it writes. It also writes Try traces, runs the effective-permissions fallback, and stores Skill Hub drafts in `<workspace_root>/<catalog>/drafts`, where bootstrap gives it `CAN_MANAGE`. When `SKILLHUB_APP_PRINCIPAL` is set, bootstrap grants it `USE CATALOG`, `USE SCHEMA` and `READ VOLUME` on each department's live and versions schemas, `USE SCHEMA` on each `<d>_evals`, write access to the trace tables, and `CREATE SCHEMA` on the catalog for Try's private schemas (see [Try on skills under review](#try-on-skills-under-review)). It never gets Unity Catalog `MANAGE`, so if the fallback cannot read a user's effective permissions, the app skips that department. |
+| `skillhub-agents` | Account group | The Databricks principals of agents on Amazon Bedrock AgentCore (`roles.agents`). Bootstrap gives it `USE SCHEMA` on each `<dept>_evals` schema and `MODIFY` and `SELECT` on that schema's `traces_otel_spans` table, so the agents can write their spans. A person's run that owns the catalog also gives it `USE CATALOG`. See [Amazon Bedrock AgentCore](#amazon-bedrock-agentcore) for what that lets them read |
+| App service principal | Service principal | Starts the Jobs on behalf of users. The Jobs run as `skillhub-ci-eval` or `skillhub-ci`. It may switch and retire through `skill-switch`, but never publish, and the gates do not trust MLflow runs it writes. It also writes Try traces, runs the effective-permissions fallback, and stores Skill Hub drafts in `<workspace_root>/<catalog>/drafts`, where bootstrap gives it `CAN_MANAGE`. When `SKILLHUB_APP_PRINCIPAL` is set, bootstrap grants it `USE CATALOG`, `USE SCHEMA` and `READ VOLUME` on each department's live and versions schemas, `USE SCHEMA` on each `<d>_evals`, write access to the trace tables, `USE SCHEMA` on the `eval` schema with `SELECT` and `MODIFY` on its model-catalog table, and `CREATE SCHEMA` on the catalog for Try's private schemas (see [Try on skills under review](#try-on-skills-under-review)). It never gets Unity Catalog `MANAGE`, so if the fallback cannot read a user's effective permissions, the app skips that department. |
 
 In this release CI uses an OAuth machine-to-machine secret. OIDC federation is planned.
 
 ## Secrets
 
-GitHub holds the CI credentials in environments, not as repository secrets. Run `scripts/configure_github.sh` once after bootstrap. It needs every secret file and every required option on each run. So keep the files, with mode 0600, until setup is complete, then delete them. After that, change one value at a time with `gh` (see [Change one variable](#change-one-variable)). The script sets branch protection on `main` and creates two environments:
+GitHub holds the CI credentials in environments, not as repository secrets. Run `scripts/configure_github.sh` once after bootstrap. It needs every secret file and every required option on each run. So keep the files, with mode 0600, until setup is complete, then delete them. After that, change one value at a time with `gh` (see [Change one variable](#change-one-variable)). The script sets branch protection on `main` and creates two environments. On a new repository, GitHub may refuse branch protection until the checks `skills-pr` and `platform` have each run once. If the script stops there, open a pull request so both checks run, then run the script again:
 
 | Environment | Reviewers | Credentials | Used by |
 |---|---|---|---|
@@ -147,8 +150,8 @@ The Skill Hub opens pull requests from drafts, shows their gate and release, and
 |---|---|---|
 | Contents | Read and write | The branch, commit and tree of a submitted draft |
 | Pull requests | Read and write | Opening, reading and merging the pull request |
-| Actions | Read | The `skills-publish` run that waits for the production approval |
-| Commit statuses | Read | The eval gate (the `skills-pr` check) of a pull request |
+| Actions | Read | The `skills-publish` run that waits for the production approval, and its jobs |
+| Checks | Read | The eval gate (the `skills-pr` check run) of a pull request, and the release scan annotation |
 
 Store it as the secret `skillhub/github-token`: the scope `skillhub`, the key `github-token`. The bundle variable `github_token_secret` sets that name, and the platform workflow sets `github_repo` from `github.repository`, so each fork names its own repository. The app principal needs READ on the scope:
 
@@ -158,7 +161,7 @@ read -rs GITHUB_TOKEN && databricks secrets put-secret skillhub github-token --s
 databricks secrets put-acl skillhub <app-service-principal-application-id> READ
 ```
 
-Until both the repository and the secret are in place, the pull request features answer 503 `github_not_configured`, and the Skill Hub says so. The token is read at most once a minute, and it is never logged or returned.
+The Releases page also reads pull requests, their files and workflow runs and jobs, with the same token. Until both the repository and the secret are in place, the pull request features answer 503 `github_not_configured`, and the Skill Hub says so. The token is read at most once a minute, and it is never logged or returned.
 
 A pull request opened from the Skill Hub shows the token's owner as its author. The person who submitted it is named in the commit's `Submitted-by` trailer and in the pull request body. A GitHub App is the production choice: its bot is the author, its permissions are narrower, and no one person's account has to hold the token.
 
@@ -169,7 +172,7 @@ The script sets these gates and no others. Read this section before you rely on 
 - **`production` reviewer.** One GitHub user is the required reviewer. The default is the repository owner. For a repository owned by an organization, `--reviewer <login>` is required. GitHub environment reviewers are GitHub users or teams. A Databricks group such as `skillhub-reviewers` cannot be one. Membership of that group does not decide who approves a deployment.
 - **Self-review.** The script sets `prevent_self_review` to `false`. The person who starts a run can approve it.
 - **Branch protection on `main`.** The checks `skills-pr` and `platform` must pass. They must come from GitHub Actions, so a status posted by hand under the same name does not count. Branches must be up to date. The script requires 0 approving reviews and `enforce_admins` is `false`. Force pushes and deletions are blocked.
-- **Code-owner review.** `.github/CODEOWNERS` names an owner for `skills/**/evals/**` and `.github/**`. The script sets `require_code_owner_reviews` to `false`, so GitHub does not enforce it. An author can merge a change to `evals/**` without a review. That includes the `reviewed: true` marks that decide which cases gate a verdict.
+- **Code-owner review.** `.github/CODEOWNERS` names an owner for `skills/**/evals/**`, `.github/**`, `config/**` and the scan code (`src/skillhub/scan.py`, `src/skillhub/scan_llm.py` and `src/skillhub/prompts/scan_reviewer.txt`). The script sets `require_code_owner_reviews` to `false`, so GitHub does not enforce it. An author can merge a change to `evals/**` without a review. That includes the `reviewed: true` marks that decide which cases gate a verdict.
 
 To add real review gates once you have more than one maintainer:
 
@@ -203,6 +206,8 @@ Every CI job that talks to Databricks (deploys, pull request and merge evals, pu
 1. Register a self-hosted runner for the repository with a label, for example `skillhub`.
 2. Set the repository variable: `gh variable set SKILLHUB_RUNNER --body skillhub`.
 
+The runner needs `bash`, `git`, `jq` and the GitHub CLI `gh`, and outbound access to GitHub and the Databricks workspace.
+
 Jobs without Databricks access (unit tests, lint, the publish plan) always run on GitHub-hosted runners. A pull request from a fork always runs on a GitHub-hosted runner, so code from a fork never reaches your runner. Also require approval for workflow runs from outside contributors (Settings → Actions → General). To go back to GitHub-hosted runners, delete the variable.
 
 ## Deploy
@@ -224,13 +229,13 @@ gh workflow run platform.yml --ref main -f deploy=none   # the checks only
 
 Both deploys run in the `production` environment, so each one asks for the approval. GitHub starts no `pull_request` run for a commit that a workflow pushes. So when the `skills-pr` bot commits generated evals to a pull request, it starts the `skills-pr` and `platform` checks on that commit itself, with `deploy=none`.
 
-To deploy from your own machine, run `scripts/build_app.sh` first. Set the bundle variables that the workflow sets: `BUNDLE_VAR_warehouse_id`, `BUNDLE_VAR_ci_principal`, `BUNDLE_VAR_ci_eval_principal`, `BUNDLE_VAR_app_principal`, `BUNDLE_VAR_catalog` and `BUNDLE_VAR_workspace_root`. A deploy creates the app but neither starts it nor deploys its source; `databricks bundle run skill_hub -t dev` does both. The dev Jobs and app need the `<catalog>_dev` catalog. Create it, then run a person's bootstrap with `SKILLHUB_CATALOG=<catalog>_dev`.
+To deploy from your own machine, run `scripts/build_app.sh` first. Set the bundle variables that the workflow sets: `BUNDLE_VAR_warehouse_id`, `BUNDLE_VAR_ci_principal`, `BUNDLE_VAR_ci_eval_principal`, `BUNDLE_VAR_app_principal`, `BUNDLE_VAR_catalog`, `BUNDLE_VAR_workspace_root`, `BUNDLE_VAR_alert_destination_id` and `BUNDLE_VAR_github_repo`. The last two are optional: without them the alerts notify nobody and the pull request features answer 503. A deploy creates the app but neither starts it nor deploys its source; `databricks bundle run skill_hub -t dev` does both. The dev Jobs and app need the `<catalog>_dev` catalog. Create it, then run a person's bootstrap with `SKILLHUB_CATALOG=<catalog>_dev`.
 
 ### Replaced runs
 
 The prod deploy, `skills-publish.yml` and `skills-switch.yml` share one concurrency group, `skillhub-release`. Only one of them runs at a time, so the Jobs never change during a publish or a switch. A run that waits for the group is pending. GitHub keeps at most one pending run in the group. When a newer run joins, GitHub cancels the older pending run and shows it as Cancelled, although nothing failed.
 
-For example, a merge that changes `skills/` starts a release at once, and the prod deploy about 7 minutes later, after the checks. While the release runs, the deploy is pending. If the next merge starts a release before the first one ends, that release replaces the pending deploy.
+For example, a merge that changes `skills/` starts a release at once, and the prod deploy a few minutes later, after the checks. While the release runs, the deploy is pending. If the next merge starts a release before the first one ends, that release replaces the pending deploy.
 
 Nothing is lost, but a replaced run does not start again by itself:
 
@@ -267,7 +272,7 @@ Verdicts: `inconclusive` means infrastructure failed or too many votes were miss
 `config/hub.yaml` sets how much one eval run does at once:
 
 - `defaults.skill_workers` (6): skills evaluated at once, each in its own worker process. A worker peaks at about 400 to 500 MB of memory.
-- `defaults.concurrency_per_endpoint` (6): agent runs at once per serving endpoint, in each worker. A child run's 3 repeats of 5 effectiveness cases are 15 records of one `evaluate`. Each case runs at most 2 judges at once.
+- `defaults.concurrency_per_endpoint` (6 in the shipped `hub.yaml`): agent runs at once per serving endpoint, in each worker. A child run's 3 repeats of 5 effectiveness cases are 15 records of one `evaluate`. Each case runs at most 2 judges at once.
 
 Each skill is isolated in its own process because MLflow keeps tracing state per process (see Evaluation method in the architecture document). Inside a worker, one child run and one `evaluate` call run at a time; that call holds all the repeats. Two `evaluate` calls at once in one process deadlocked inside MLflow. Each skill starts on a different model of its list, so the workers spread over the endpoints. Lower either value if endpoints answer 429 often; the model client retries with backoff. `skill_workers: 1` evaluates the skills one after another in the Job's own process. Several `skill-eval` runs can run at the same time (`max_concurrent_runs: 4`), and each adds its own load.
 
@@ -289,16 +294,14 @@ A worker's log lines appear in the Job output, prefixed with `[dept/skill]`. A w
 - The PR and merge gates pass that output to `check-verdict --expect-file`. They fail if a planned cell has no trusted row ("no result for planned cells"), or if a gating row evaluated other content, another rubric, or other cases or fixtures ("wrong content"). So an `evals.json` or fixture swapped in the candidate folder, or a failing child run deleted before sync, fails the gate.
 - A release cites the pull request gate's run instead of a merge eval only under the rule in [Data flow](architecture.md#data-flow). `skillhub reuse-pr-gate` applies it in the `eval-merge` job of `skills-publish.yml`. When a rule fails, or the check cannot run, the job shows the reason as a notice and evaluates the merged content as before.
 - To start a release again after a run failed outside the eval (for example the runner lost the workspace), run `gh workflow run skills-publish.yml --ref main`. It plans from the `skillhub/released` tag like a push run, so it releases every unreleased change, and it still waits for the production approval. A dispatch from another branch plans nothing. Do the same for a release that shows as Cancelled: a newer run replaced it while it was pending (see [Replaced runs](#replaced-runs)).
-- Publishing is bound the same way. `skillhub job-switch --action publish` takes `--run-key`, `--trigger-source` and the plan's `--expect-rubric-hash`, `--expect-dataset-digest` and `--expect-cells`. It exits 2 and writes a `publish_refused` journal row unless all of these hold:
+- Publishing is bound the same way. `skillhub job-switch --action publish` (which exits 1, not 2, for a quarantined department) takes `--run-key`, `--trigger-source` and the plan's `--expect-rubric-hash`, `--expect-dataset-digest` and `--expect-cells`. It exits 2 and writes a `publish_refused` journal row unless all of these hold:
   - The `skill-switch` Job run was started by `skillhub-ci` (`SKILLHUB_CI_PRINCIPAL`). The Skill Hub may switch and retire through the Job, but never publish.
   - Every planned cell has a trusted row for that run key, from the eval the release cites: only rows with its `trigger_source` count. That is `merge` for the merge eval (the default), or `pr` when the release reuses the pull request gate's run. A Skill Hub run (`hub`, `hub-try` or `manual`, which covers candidates and drafts) or a nightly run never satisfies publish, even under the same run key.
   - Every gating row evaluated exactly the bundle being published with the expected rubric, cases and fixtures.
-  - None of the latest trigger and with-skill verdicts is blocking.
+  - None of the latest verdicts in the gating modes (`defaults.gating_modes`) is blocking.
 
   So published content always equals evaluated content. The `skill-switch` Job has the parameters `run_key`, `trigger_source` (`merge` or `pr`; default `merge`), `expect_rubric_hash`, `expect_dataset_digest` and `expect_cells` for this. The `run_key` default is the key of the eval run ID. The operator command `skillhub publish` reads the eval inputs and the cells from its own checkout (`evals/` and `SKILLHUB_FIXTURES`).
 - A merge that changes `defaults.models` can run its eval on the Jobs of the previous deploy. The gate then misses the new models' cells and fails closed. Re-run the release after the prod deploy.
-
-One-off cleanup after you upgrade: treat MLflow traces written before this fix as holding expired `skillhub-ci-eval` tokens. Restrict or purge them.
 
 ## Security scanning
 
@@ -307,8 +310,8 @@ One-off cleanup after you upgrade: treat MLflow traces written before this fix a
 | Severity | Rules | Effect |
 |---|---|---|
 | critical | `secret`: a credential format, such as an AWS, GitHub, Databricks, Slack, OpenAI, Anthropic or Google key, a private key or a JWT. `hidden-unicode`: format characters such as zero-width, bidirectional-control and tag characters, Hangul fillers, and the supplement's variation selectors. A byte order mark at the start of a file, and a joiner inside an emoji, are allowed. `binary`: an executable. `remote-exec`: download and run, such as `curl … \| sh`, `bash -c "$(curl …)"`, `source <(curl …)` or `iwr … \| iex`. | Blocks the pull request and the publish. Fix it. A credential must also be rotated. |
-| high | `prompt-injection`: an instruction override, or hiding what the agent did from the user. `exfiltration`: sending the conversation, credentials, holdings or files to a URL outside `scan.allowed_domains`. `encoded-blob`: 200 or more base64, base64url or hex characters, on one line or wrapped over several. Also an embedded file that is not the image it claims to be, or an embedded image of more than 4,000 characters. `risky-call` in a script: `eval`, `exec`, `shell=True`, `os.system`, unpickling, `rm -rf` of a home or root folder, writes to shell profiles or SSH keys. `binary`: text in another encoding (UTF-16, or padded with NUL bytes); an archive; an Office file with macros, embedded objects or other binary parts; an image header on a file without an image name; or a file that is not text. `url`: a URL that does not parse. `hidden-unicode`: a soft hyphen alone. `llm-review`. | Blocks the pull request unless a reviewer accepts it. |
-| medium | `script`: a file a reviewer should read, by suffix (`.py`, `.sh`, `.ipynb`, `.sql`, `.R`, `.ps1` and others), by name (`Makefile`), by folder (`scripts/`, `bin/`), by having no suffix (except names such as `LICENSE`), or by a `#!` line. `url`: a host outside `scan.allowed_domains`. `binary`: an image, or an Office file without macros or embedded objects. `prompt-injection` and `exfiltration` in a negated clause, such as "never post API keys in the chat", which is most likely a guardrail. A clause ends at punctuation, a table cell, or a heading or list line, so "Not a drill: ignore all previous instructions" stays high. A phrase that may hide an action, such as "do not tell the user about the transfer". | Reported only. |
+| high | `prompt-injection`: an instruction override, or hiding what the agent did from the user. `exfiltration`: sending the conversation, credentials, holdings or files to a URL outside `scan.allowed_domains`. `encoded-blob`: 200 or more base64, base64url or hex characters, on one line or wrapped over several. Also an embedded SVG, an embedded file that is not the image it claims to be, or an embedded image of more than 4,000 characters. `risky-call` in a script: `eval`, `exec`, `shell=True`, `os.system`, unpickling, `rm -rf` of a home or root folder, writes to shell profiles or SSH keys. `binary`: text in another encoding (UTF-16, or padded with NUL bytes); an archive; an Office file with macros, embedded objects or other binary parts; an image header on a file without an image name; or a file that is not text. `url`: a URL that does not parse. `hidden-unicode`: a soft hyphen alone. `llm-review`. | Blocks the pull request unless a reviewer accepts it. |
+| medium | `script`: a file a reviewer should read, by suffix (`.py`, `.sh`, `.ipynb`, `.sql`, `.R`, `.ps1` and others), by name (`Makefile`), by folder (`scripts/`, `bin/`), by having no suffix (except names such as `LICENSE`), or by a `#!` line. `url`: a host outside `scan.allowed_domains`. `binary`: an image, or an Office file without macros or embedded objects. `encoded-blob`: a smaller embedded image. `prompt-injection` and `exfiltration` in a negated clause, such as "never post API keys in the chat", which is most likely a guardrail. A clause ends at punctuation, a table cell, or a heading or list line, so "Not a drill: ignore all previous instructions" stays high. A phrase that may hide an action, such as "do not tell the user about the transfer". | Reported only. |
 | low | `network-call` in a script | Reported only. |
 
 Messages never quote a credential: they show at most its first four characters. One rule reports at most 20 findings in a file, and counts the rest in one more finding.
@@ -343,7 +346,7 @@ Configure it in `config/hub.yaml`:
 
 ```yaml
 scan:
-  allowed_domains: [sec.gov]   # hosts a skill may name in a URL; subdomains match; example.com and *.invalid always pass
+  allowed_domains: [sec.gov, apache.org, w3.org, openxmlformats.org]   # replaces the list, so keep the shipped hosts; subdomains match; documentation hosts such as example.com and *.invalid always pass
   llm: {enabled: true, model: claude-opus}
 ```
 
@@ -355,7 +358,7 @@ A switch is any of these:
 - The `skills-switch.yml` workflow (needs the `production` approval).
 - `uv run skillhub switch --dept <dept> --skill <skill> --to <N> --actor <name>`. This is the break-glass path for operators with the right grants. It runs the switch directly and bypasses the Job queue and the approval.
 
-The first two start the `skill-switch` Job, which runs `skillhub job-switch`. It journals the switch and verifies it. Only a Job run that `skillhub-ci` started can publish (see What gates a verdict).
+The first two start the `skill-switch` Job, which runs `skillhub job-switch`. It journals the switch and verifies it. Only the `skill-switch` Job, run as `skillhub-ci`, can publish (see What gates a verdict).
 
 Rollback is a switch to the previous version number. Old versions are kept. Two changes never run at once through the Job. If a switch ends `switch_failed`, the `switch-failed` alert fires. Re-run the switch to either version, which is safe because each step is idempotent.
 
@@ -435,8 +438,8 @@ CI never promotes content out of quarantine. An operator does it, outside the pi
 
 `uv run skillhub reconcile` lists issues and exits 1 if any exist. The four kinds are:
 
-- `hash_drift`: someone changed a live skill outside the pipeline.
-- `unfinished_switch`: a `switch_started` with no ending row.
+- `hash_drift`: the live skill differs from the journal, or a live copy exists for a skill that is retired or was never switched.
+- `unfinished_switch`: the last switch row is `switch_started` or `switch_failed`. Re-run the switch.
 - `unfinalized_change`: files changed after the last finalise.
 - `missing_live`: a published skill with no live copy.
 
@@ -446,14 +449,16 @@ Find the skill in `skill_versions`, check who acted and when, and decide: re-run
 
 Bootstrap creates these alerts and updates them on every run:
 
-- `verdict-regression`: a gating verdict got worse than the previous one.
-- `error-rate`: the error rate of a gating run is above `max_error_rate`.
-- `inconclusive`: a gating run ended `inconclusive`.
+- `verdict-regression`: in the last day, a gating verdict got worse than the previous one.
+- `error-rate`: in the last day, the error rate of a gating run is above `max_error_rate`.
+- `inconclusive`: in the last day, a gating run ended `inconclusive`.
 - `switch-failed`: in the last day, a switch ended `switch_failed` or was refused for drift, or a switch has been `switch_started` for more than an hour. It reads the view `versions_all`. "Still started" looks only at the rows that start or end a switch (`switch_started`, `switch_failed`, `switched`, `retired`), so a later `published`, `publish_refused` or `drift` row does not hide a stuck switch.
 
-The first three count only gating runs: merge and nightly runs, without the `without_skill` mode.
+The first three count only gating runs: merge and nightly runs, without the `without_skill` mode, and only for the release gate models of `config/hub.yaml`.
 
-Alerts notify the destination in the `SKILLHUB_ALERT_DESTINATION_ID` variable of the `production` environment. Set it with `scripts/configure_github.sh --alert-destination-id <id>` during setup, or later with `gh variable set SKILLHUB_ALERT_DESTINATION_ID --env production --repo <owner>/<repo> --body <id>` (see [Change one variable](#change-one-variable)). The prod deploy passes it to the bundle and to bootstrap. It also makes failed `skill-switch` and nightly Job runs notify the same destination. If the variable is empty, the deploy prints a warning and the alerts have no subscribers. Bootstrap adds the destination to an existing alert but never removes a subscriber. The first bootstrap makes `skillhub-ci` the alerts' owner. The `skillhub-bootstrap` Job changes only alerts that `skillhub-ci` owns. For any other alert it logs a warning and leaves it as it is: change the owner in the UI, or apply the change by hand.
+- **Destination.** Alerts notify the destination in the `SKILLHUB_ALERT_DESTINATION_ID` variable of the `production` environment. Set it with `scripts/configure_github.sh --alert-destination-id <id>` during setup, or later with `gh variable set SKILLHUB_ALERT_DESTINATION_ID --env production --repo <owner>/<repo> --body <id>` (see [Change one variable](#change-one-variable)). The prod deploy passes it to the bundle and to bootstrap. If the variable is empty, the deploy prints a warning and the alerts have no subscribers. Bootstrap adds the destination to an existing alert but never removes a subscriber.
+- **Job failures.** The same destination is notified when a `skill-switch` or nightly Job run fails.
+- **Owner.** The first bootstrap makes `skillhub-ci` the alerts' owner. The `skillhub-bootstrap` Job changes only alerts that `skillhub-ci` owns. For any other alert it logs a warning and leaves it as it is: change the owner in the UI, or apply the change by hand.
 
 ### Experiment folders
 
@@ -537,7 +542,7 @@ external:
     default_region: us-east-1
 ```
 
-1. **Create a least-privilege IAM user.** It may invoke models and inference profiles and read model metadata, nothing else. `bedrock:InvokeModel` authorizes the Converse API, which the client calls (`InvokeModelWithResponseStream` authorizes ConverseStream). Narrow the resources to the models you register if you want; a cross-region inference profile also needs the foundation model in each region it routes to.
+1. **Create a least-privilege IAM user.** It may invoke models and inference profiles, nothing else. `bedrock:InvokeModel` authorizes the Converse API, which the client calls (`InvokeModelWithResponseStream` authorizes ConverseStream). Narrow the resources to the models you register if you want; a cross-region inference profile also needs the foundation model in each region it routes to.
 
    ```bash
    cat > skillhub-bedrock.json <<'POLICY'
@@ -547,11 +552,7 @@ external:
        {"Sid": "InvokeModels", "Effect": "Allow", "Action": ["bedrock:InvokeModel", "bedrock:InvokeModelWithResponseStream"],
         "Resource": ["arn:aws:bedrock:*::foundation-model/*",
                      "arn:aws:bedrock:*:<account-id>:inference-profile/*",
-                     "arn:aws:bedrock:*:<account-id>:application-inference-profile/*"]},
-       {"Sid": "ReadModelMetadata", "Effect": "Allow",
-        "Action": ["bedrock:ListFoundationModels", "bedrock:GetFoundationModel",
-                   "bedrock:ListInferenceProfiles", "bedrock:GetInferenceProfile"],
-        "Resource": "*"}
+                     "arn:aws:bedrock:*:<account-id>:application-inference-profile/*"]}
      ]
    }
    POLICY
@@ -619,7 +620,7 @@ The eval Job runs the Claude Code CLI as `skillhub-ci-eval`, inside the `skill-e
 - **Model.** Claude Code calls `https://<workspace host>/serving-endpoints/anthropic` with the eval identity's token and the row's endpoint as the model, also for its background calls. `skillhub-ci-eval` needs `CAN_QUERY` on that endpoint.
 - **Lockdown.** Each case runs non-interactively in a new scratch folder with its own configuration folder. `--tools ""` turns off every built-in tool (files, shell, web), so Claude Code has only the MCP servers the Job gives it with `--mcp-config` and `--strict-mcp-config`: one skills server per schema, and the case's fixture files. The skills MCP's authoring tools are removed with `--disallowedTools`. Trigger mode allows 3 turns, the other modes 8. The Job's own credentials are not passed on; the token reaches the CLI only in its environment and in a scratch file readable by the Job, both gone when the case ends.
 - **Trace.** Claude Code exports its own spans (`CLAUDE_CODE_ENABLE_TELEMETRY=1`, `OTEL_TRACES_EXPORTER=otlp`), one trace per case, with the trace attributes as resource attributes. With `OTEL_LOG_USER_PROMPTS`, `OTEL_LOG_TOOL_DETAILS`, `OTEL_LOG_TOOL_CONTENT` and `OTEL_LOG_ASSISTANT_RESPONSES` set to `1`, its spans also hold the prompt, each tool call's output, and the model's responses, which the tool-call judges read. Claude Code 2.1.314 records neither a tool call's input nor its tool definitions, so the judges see its calls without arguments, and the tools that it called as the tools that it had. Its answer is the `result` event of `--output-format stream-json`.
-- **Load.** At most 2 cases run at once in each eval worker process, because each is a CLI process.
+- **Load.** At most 2 cases run at once in each eval worker process, because each is a CLI process. The number of worker processes is `defaults.skill_workers` (see [Eval concurrency](#eval-concurrency)).
 
 ### Amazon Bedrock AgentCore
 
@@ -632,7 +633,7 @@ The eval Job invokes an agent runtime on Amazon Bedrock AgentCore with the same 
     "Resource": "arn:aws:bedrock-agentcore:<region>:<account-id>:runtime/skillhub*"}
    ```
 
-2. **Give the agent its own Databricks principal.** A workspace admin creates a service principal for the agent, with an OAuth secret, and adds it to the group `skillhub-agents` (`roles.agents` in `config/hub.yaml`) and to the reader group of each department whose skills it may load. Bootstrap gives `skillhub-agents` `USE SCHEMA` on each `<dept>_evals` schema and `MODIFY` and `SELECT` on its `traces_otel_spans` table, and nothing else there; the agent's principal gets `USE CATALOG` through the reader group of its department, which it must join. Create the group as an **account** group and assign it to the workspace, because Unity Catalog cannot grant to a workspace-local group. Give the group the workspace entitlement `workspace-access`: the trace endpoint refuses a principal without it, and `workspace-consume` is enough for the skills MCP only. Bootstrap skips these grants, and says so, while the group does not exist. The agent keeps its OAuth secret in AWS Secrets Manager.
+2. **Give the agent its own Databricks principal.** A workspace admin creates a service principal for the agent, with an OAuth secret, and adds it to the group `skillhub-agents` (`roles.agents` in `config/hub.yaml`) and to the reader group of each department whose skills it may load. Bootstrap gives `skillhub-agents` `USE SCHEMA` on each `<dept>_evals` schema and `MODIFY` and `SELECT` on its `traces_otel_spans` table, and nothing else there. A person's bootstrap run that owns the catalog also gives the group `USE CATALOG`. The agent's principal gets `USE CATALOG` through the reader group of its department, which it must join. Create the group as an **account** group and assign it to the workspace, because Unity Catalog cannot grant to a workspace-local group. Give the group the workspace entitlement `workspace-access`: the trace endpoint refuses a principal without it, and `workspace-consume` is enough for the skills MCP only. Bootstrap skips these grants, and says so, while the group does not exist. The agent keeps its OAuth secret in AWS Secrets Manager.
 3. **Deploy the agent** with the sample's `deploy.sh`, signed in to AWS, with Node.js and the AgentCore CLI installed, in an account and region bootstrapped for CDK. It prints the runtime ARN.
    - **IP access lists.** If the workspace has them, run the runtime in VPC mode (`AGENT_SUBNETS`, `AGENT_SECURITY_GROUPS`), in subnets whose outbound traffic leaves through a NAT gateway with a fixed Elastic IP, and allow that address in an IP access list. In public mode, AgentCore calls the workspace from AWS addresses that change, and the workspace refuses them: the token request succeeds, then the skills MCP and the trace endpoint answer 403, and the audit log records `IpAccessDenied`. The sample's `network.yaml` makes such a network.
 4. **Register and test.** On the Models page, add an external agent with the harness Amazon Bedrock AgentCore, the runtime ARN and the Bedrock model ID the agent calls. Register one row per model. **Test** invokes the runtime once and waits for the trace.
@@ -669,13 +670,18 @@ To check, list the principal's effective privileges on the catalog (`GET /api/2.
 A skill under review is not in Unity Catalog, so the app stages it for each run into a private schema `run_try_<id>_<dept>`, which it creates. Only the user who runs the Try gets `USE SCHEMA` and `READ VOLUME` on that schema. The app drops the schema when the run ends, including when it times out. Each candidate Try also drops, beside the run, the app's own `run_try_*` schemas that are more than an hour old. They are left only when a run died with its process. Until the grant is in place, a Try answers 503 `try_setup_required`.
 
 Two things to know:
+
 - `CREATE SCHEMA` cannot be limited to a name pattern, so the app's principal can create any schema in the catalog. The app's own code creates and drops only `run_try_*` names. A schema with a production name that someone else pre-creates is caught by bootstrap's owner checks.
 - A Try writes its trace, including the skill text the agent loaded, to the skill's experiment (or, for a skill that has none yet, its department's unreleased experiment) and the `<d>_evals` trace tables. The department's eval readers can read those traces, as they can read the traces of a candidate's pull request eval. Don't put anything in a skill under review that the department's readers must not see.
 
+### Who can open the app
+
 - **App.** The bundle gives the group `users` `CAN_USE` on the Skill Hub app. The app reads with each user's own Unity Catalog permissions, so a wide group is safe. Change the group with the bundle variable `app_users_group`.
 - **Dashboard tab.** It needs no grant of its own. It reads the department eval tables with each user's permissions, so a user sees only the departments they can read; a refused department is named on the page. Its token section also needs `SELECT` on `system.serving.endpoint_usage` and `system.serving.served_entities`. It counts evaluation tokens by the eval service principal (`SKILLHUB_CI_EVAL_PRINCIPAL`, set from `ci_eval_principal`) and by the `usage_context` tag each eval and Try request carries; Try calls run as the signed-in user, so only the tag identifies them, and they count from the release that started tagging them. Without that access the section says so, and the rest of the page still works.
+- **Releases page.** It shows only for reviewers. Anyone else gets 403 `not_reviewer`. It lists the `skills-publish` runs that wait for the `production` approval, and links to GitHub, where the required reviewers approve. The Skill Hub never approves. It needs the GitHub token and repository (see [GitHub token for the Skill Hub](#github-token-for-the-skill-hub)). Without them it says GitHub is not set up (503 `github_not_configured`). It reads eval verdicts with the reviewer's own Unity Catalog rights, so a department the reviewer cannot read shows an access note.
+- **Who may do what.** Skills, Eval and Dashboard: any user, with their own Unity Catalog rights. Try and Run eval: any user, with their own rights. Models (register and Test), the switch action and Releases: reviewers only.
 - The deploy resets permissions that you set by hand on the app. Change the bundle variables instead.
 
 ## Nightly
 
-The `skillhub-nightly` Job runs daily at 02:00 UTC. It evaluates every live skill on its default models (`trigger_source = nightly`, `source = live`). It then runs `reconcile`, `check-permissions` (reports drift between Unity Catalog grants and experiment permissions; `users` inheriting access is reported but does not fail the Job) and `cleanup` (drops `run_*` schemas older than 24 hours, and this catalog's candidate and draft folders older than 168 hours). Review the nightly matrix for drift caused by model updates. Failed runs notify the alert destination (see Reconcile alerts). `cleanup` dates a candidate or draft folder by its `.uploaded_at` marker, which CI and the Skill Hub write with each upload, or by its newest file. It drops only run schemas that the running principal owns.
+The `skillhub-nightly` Job runs daily at 02:00 UTC. It evaluates every live skill on its default models (`trigger_source = nightly`, `source = live`). It then runs `sync`, `reconcile`, `check-permissions` (reports drift between Unity Catalog grants and experiment permissions; `users` inheriting access is reported but does not fail the Job) and `cleanup` (drops `run_*` schemas older than 24 hours, and this catalog's candidate and draft folders older than 168 hours). Review the nightly matrix for drift caused by model updates. Failed runs notify the alert destination (see Reconcile alerts). `reconcile` exits 1 on any issue, so any drift fails the Job and notifies. `cleanup` runs even when earlier tasks fail. `cleanup` dates a candidate or draft folder by its `.uploaded_at` marker, which CI and the Skill Hub write with each upload, or by its newest file. It drops only run schemas that the running principal owns.

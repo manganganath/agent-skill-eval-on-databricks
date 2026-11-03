@@ -7,18 +7,21 @@ An auditor may ask, years later, why a skill version went live. The evidence mus
 
 ## What is kept, and where
 
+In the paths below, `<d>` is `common`, `external` or `dept_<key>`, so a department `equity_research` has `dept_equity_research_evals`.
+
 | Evidence | Where | Written by | How long it stays |
 |---|---|---|---|
-| **The release journal:** every publish, switch, retire and refusal, with the content hash, Git commit, eval run, actor and Job run | `<catalog>.<dept>_evals.skill_versions` | `skillhub-ci`, through the `skill-switch` Job | Until the table is dropped. Append-only. |
-| **Eval results:** one row per run, and one per case and score | `eval_runs` and `eval_cases` in each `<dept>_evals` schema | `skillhub-ci-eval`, through `skillhub sync` | The same. Append-only. |
-| **Rubrics**, by hash | `rubrics` in each `<dept>_evals` schema | The same | The same. Append-only. |
-| **Skill versions** | Unity Catalog skills `<catalog>.<dept>_versions.<skill>-v<N>` | `skillhub-ci` | The product never deletes them. Retire switches the live skill away, and the versions stay. |
-| **Agent traces and judge assessments** | The `traces_*` tables in each `<dept>_evals` schema | MLflow, for the eval Job, the Skill Hub and external agents | Until they are deleted with SQL. MLflow manages these tables. |
+| **The release journal:** every publish, switch, retire and refusal, with the content hash, Git commit, eval run, actor and Job run | `<catalog>.<d>_evals.skill_versions` | `skillhub-ci`, through the `skill-switch` Job | Until the table is dropped. Append-only. |
+| **Eval results:** one row per run, and one per case and score | `eval_runs` and `eval_cases` in each `<d>_evals` schema | `skillhub-ci-eval`, through `skillhub sync` | The same. Append-only. |
+| **Rubrics**, by hash | `rubrics` in each `<d>_evals` schema | The same | The same. Append-only. |
+| **Skill versions** | Unity Catalog skills `<catalog>.<d>_versions.<skill>-v<N>` | `skillhub-ci` | The product never deletes them. Retire switches the live skill away, and the versions stay. |
+| **Agent traces and judge assessments** | The `traces_*` tables in each `<d>_evals` schema | MLflow, for the eval Job and the Skill Hub; the workspace's OTLP endpoint, for external agents | Until they are deleted with SQL. MLflow manages these tables. |
 | **Run details** (params, metrics, tags) | The MLflow experiments under `<workspace_root>/<catalog>` | The eval Job | While the experiment exists. `skillhub sync` copies what an audit needs into `eval_runs`. |
 | **The model catalog** | `<catalog>.eval.model_profiles` | The Skill Hub | The current state only: rows are updated. Each run keeps its own copy of the profile in `eval_runs` (`model_profile`, `endpoint`, `route`, `model_id`, `region`, `catalog_version`). |
 | **Who did what in the workspace,** including each skill load (`aiGatewaySkills`) | `system.access.audit` | Databricks | Limited: the audit system table keeps about a year. |
 | **Pull requests, approvals and commits** | GitHub | GitHub | Git history stays as long as the repository does. Actions logs and artifacts stay 90 days by default. |
-| **Candidates and run schemas** | `<workspace_root>/<catalog>/candidates` and the `run_<key>_<d>` schemas | The eval Job | Temporary. `skillhub cleanup` deletes them after a day. |
+| **Candidates and drafts** | `<workspace_root>/<catalog>/candidates` and `<workspace_root>/<catalog>/drafts` | The eval Job and the Skill Hub | Temporary. The nightly `skillhub cleanup` deletes them after 7 days. |
+| **Run schemas** | `run_<key>_<schema_base>` | The eval Job | Temporary. `skillhub cleanup` drops them after 24 hours. |
 
 ## What the product guarantees
 
@@ -37,6 +40,8 @@ An auditor may ask, years later, why a skill version went live. The evidence mus
 retention:
   history_days: 2555   # 7 years; leave the block out to keep Delta's default
 ```
+
+The value must be between 30 and 36500. If the bootstrap principal does not own a table, bootstrap fails and prints the `ALTER TABLE` statement for the table's owner to run. Removing the block later does not reset the property.
 
 Check it with:
 
@@ -68,7 +73,7 @@ WHERE a.workspace_id = <workspace id>
   AND NOT EXISTS (SELECT 1 FROM <catalog>.eval.audit_log c WHERE c.event_id = a.event_id);
 ```
 
-Grant `SELECT` on `audit_log` to your auditors, and grant `MODIFY` only to the principal that runs the copy. If Databricks adds a column to `system.access.audit`, the daily insert fails until you add the column to the copy with `ALTER TABLE <catalog>.eval.audit_log ADD COLUMNS (...)`.
+Reviewers hold `SELECT` on the whole `<catalog>.eval` schema, so they can read `audit_log` there. It holds workspace-wide events. To restrict it, create the table in a separate schema, for example `<catalog>.archive` as in step 3, and replace `<catalog>.eval.audit_log` with that name. The principal that runs the copy needs `CREATE TABLE` on the schema, and `MODIFY` on the table; no one else needs `MODIFY`. Grant `SELECT` on `audit_log` to your auditors. If Databricks adds a column to `system.access.audit`, the daily insert fails until you add the column to the copy with `ALTER TABLE <catalog>.eval.audit_log ADD COLUMNS (...)`.
 
 ### 3. Back up the trace tables
 
