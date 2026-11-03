@@ -123,6 +123,30 @@ def test_everyone_reads_the_release_gate_models_first_then_the_catalog(make_clie
     )  # fmt: skip
 
 
+def test_each_release_gate_model_says_what_hub_yaml_uses_it_for(make_client):
+    cfg, sql = catalog(ug())
+    cfg = cfg.model_copy(
+        update={
+            "judges": ["gemini-flash", "claude-sonnet"],
+            "generator": "gemini-flash",
+            "scan": cfg.scan.model_copy(update={"llm": cfg.scan.llm.model_copy(update={"enabled": True, "model": "gemini-flash"})}),
+        }
+    )  # fmt: skip
+    r = client(make_client, cfg, sql).get("/api/models", headers={"x-forwarded-access-token": "t"})
+    assert {m["name"]: m["roles"] for m in r.json()["models"]} == {
+        "claude-sonnet": ["default_gate", "judge", "pr_judge"],
+        "gemini-flash": ["judge", "generator", "scan_reviewer"],
+        "llama": [],
+    }
+
+
+def test_a_scan_reviewer_that_is_off_is_not_a_role(make_client):
+    cfg = make_cfg()
+    cfg = cfg.model_copy(update={"scan": cfg.scan.model_copy(update={"llm": cfg.scan.llm.model_copy(update={"model": "gemini-flash"})})})  # fmt: skip
+    r = client(make_client, cfg, ThreadSql()).get("/api/models", headers={"x-forwarded-access-token": "t"})
+    assert {m["name"]: m["roles"] for m in r.json()["models"]}["gemini-flash"] == []
+
+
 def test_without_the_catalog_table_the_release_gate_models_are_still_listed(make_client):
     cfg = make_cfg()
     r = client(make_client, cfg, ThreadSql()).get("/api/models", headers={"x-forwarded-access-token": "t"})

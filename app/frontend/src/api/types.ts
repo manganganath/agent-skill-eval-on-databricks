@@ -197,10 +197,12 @@ export interface Dashboard extends DashboardOut { deniedDepartments: string[] }
 export interface ModelTest { status: "passed" | "failed"; message: string; job_run_id: number | null }
 // An external agent's harness, and its settings: {cli_version} for Claude Code, {runtime_arn} for AgentCore.
 export type AgentHarness = "claude-code" | "agentcore";
+// What hub.yaml uses a profile for: defaults.models, `judges`, `judges_pr`, `generator`, the scan's LLM reviewer.
+export type ModelRole = "default_gate" | "judge" | "pr_judge" | "generator" | "scan_reviewer";
 export interface CatalogModel {
   name: string; kind: ProfileKind; route: string | null; endpoint: string | null; model_id: string | null;
   region: string | null; model_class: "frontier" | "fast"; harness: string; agent?: Record<string, string> | null;
-  enabled: boolean; release_gate: boolean;
+  enabled: boolean; release_gate: boolean; roles: ModelRole[];
   price_in: number | null; price_out: number | null; tested_at: string | null; test: ModelTest | null;
   updated_by: string | null; updated_at: string | null;
 }

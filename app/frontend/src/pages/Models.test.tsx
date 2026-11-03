@@ -20,10 +20,17 @@ const reader: Me = { user: "rae@example.com", groups: [], is_reviewer: false, is
 const reviewer: Me = { user: "rita@example.com", groups: ["skillhub-reviewers"], is_reviewer: true, is_author: false };
 const row = (over: Partial<CatalogModel>): CatalogModel => ({
   name: "x", kind: "ug_model", route: "serving", endpoint: null, model_id: null, region: null, model_class: "fast",
-  harness: "reference", enabled: false, release_gate: false, price_in: null, price_out: null, tested_at: null,
-  test: null, updated_by: null, updated_at: null, ...over,
+  harness: "reference", enabled: false, release_gate: false, roles: [], price_in: null, price_out: null,
+  tested_at: null, test: null, updated_by: null, updated_at: null, ...over,
 });
-const GPT = row({ name: "gpt", kind: "hub_yaml", endpoint: "databricks-gpt-5-5", model_class: "frontier", enabled: true, release_gate: true });
+const GPT = row({
+  name: "gpt", kind: "hub_yaml", endpoint: "databricks-gpt-5-5", model_class: "frontier", enabled: true,
+  release_gate: true, roles: ["default_gate", "judge", "pr_judge"],
+});
+const OPUS = row({
+  name: "claude-opus", kind: "hub_yaml", endpoint: "databricks-claude-opus-5-5", model_class: "frontier", enabled: true,
+  release_gate: true, roles: ["judge", "generator", "scan_reviewer"],
+});
 const LLAMA = row({ name: "llama", endpoint: "databricks-llama-4-maverick" });
 const NOVA = row({ name: "nova-lite", kind: "external_model", route: "bedrock", model_id: "amazon.nova-lite-v1:0", region: "us-east-1" });
 const ARN = "arn:aws:bedrock-agentcore:us-east-1:123456789012:runtime/skillhub_skill_agent-AbCd123456";
@@ -62,6 +69,17 @@ describe("Models", () => {
     expect(screen.queryByRole("button", { name: /add a model/i })).toBeNull();
     expect(screen.queryByRole("button", { name: /test nova-lite/i })).toBeNull();
     expect(screen.getByRole("link", { name: /who can do what/i })).toBeTruthy();
+  });
+
+  it("says which release gate models gate by default, and what else hub.yaml uses each for", async () => {
+    vi.mocked(api.models).mockResolvedValue(list([GPT, OPUS, LLAMA]));
+    open();
+    const gate = await screen.findByRole("table", { name: "Release gate" });
+    const [gpt, opus] = within(gate).getAllByRole("row").slice(1);
+    expect(gpt.textContent).toContain("Gates by default");
+    expect(gpt.textContent).toContain("Also the judge, the pull request judge");
+    expect(opus.textContent).toContain("Gates a skill that names it");
+    expect(opus.textContent).toContain("Also the judge, the test case generator, the scan reviewer");
   });
 
   it("gives a reviewer no actions on a release gate model", async () => {
