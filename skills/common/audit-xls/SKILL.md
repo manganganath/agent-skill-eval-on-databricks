@@ -57,7 +57,7 @@ If scope is **model**, identify the model type (DCF / LBO / 3-statement / merger
 | Check | Test |
 |---|---|
 | BS balances | Total Assets = Total Liabilities + Equity (every period) |
-| RE rollforward | Prior RE + Net Income − Dividends = Current RE |
+| RE roll-forward | Prior RE + Net Income − Dividends = Current RE |
 | Goodwill/intangibles | Flow from acquisition assumptions (if M&A) |
 
 If BS doesn't balance, **quantify the gap per period and trace where it breaks** — nothing else matters until this is fixed.
@@ -69,7 +69,7 @@ If BS doesn't balance, **quantify the gap per period and trace where it breaks**
 | Cash tie-out | CF Ending Cash = BS Cash (every period) |
 | CF sums | CFO + CFI + CFF = Δ Cash |
 | D&A match | D&A on CF = D&A on IS |
-| CapEx match | CapEx on CF matches PP&E rollforward on BS |
+| CapEx match | CapEx on CF matches PP&E roll-forward on BS |
 | WC changes | Signs match BS movements (ΔAR, ΔAP, ΔInventory) |
 
 ### 3d. Income Statement

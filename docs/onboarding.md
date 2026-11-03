@@ -33,7 +33,7 @@ The Skill Hub shows the same table on its Access page, with your own roles marke
 | Approve a release | In GitHub: the required reviewers of the `production` environment, not a Skill Hub role | | |
 | Publish a version | No one: CI publishes after approval | | |
 
-Nobody publishes a version from the app, and skills are not edited in it. To change a skill, open a pull request that changes `skills/<department>/<skill>/`. The pull request's evaluation runs by itself, and a failed trigger eval blocks the merge. After the merge, the required reviewers of the GitHub `production` environment approve the release, and CI publishes the new version and makes it live.
+Nobody publishes a version from the app, and skills are not edited in it. To change a skill, open a pull request that changes `skills/<department>/<skill>/`. A change to the skill's files makes its rubric stale, and the unit tests then fail: regenerate the rubric (`uv run skillhub generate --skills <name> --rubric-only --force`), or, when the change leaves what the rubric judges as it was, check every criterion and record the new content hash (`uv run python scripts/mark_reviewed.py --skill <name> --rubric --rehash`). The pull request's evaluation runs by itself, and a failed trigger eval blocks the merge. After the merge, the required reviewers of the GitHub `production` environment approve the release, and CI publishes the new version and makes it live.
 
 ## Add a skill
 
