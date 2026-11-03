@@ -364,6 +364,23 @@ def test_with_skill_judges_expected_calls_plus_the_skill_call(seen):
     assert expectations["expected_tool_calls"] == [READ]  # the shared dataset row is not changed
 
 
+@pytest.mark.parametrize(
+    "name",
+    [
+        "skill_prod.lang.speak-german",
+        "skill_prod_lang_speak-german",
+        "mcp__skills__skill_prod_lang_speak-german",
+    ],
+)
+def test_with_skill_does_not_expect_the_skill_call_twice(seen, name):
+    expectations = {
+        "expected_tool_calls": [{"name": name, "arguments": {}}, READ],
+        "expected_skill": "speak-german",
+    }
+    _correctness("with_skill")(trace=None, expectations=expectations)
+    assert seen == [expectations]
+
+
 def test_without_skill_judges_the_expected_calls_as_given(seen):
     expectations = {"expected_tool_calls": [READ], "expected_skill": "speak-german"}
     _correctness("without_skill")(trace=None, expectations=expectations)
