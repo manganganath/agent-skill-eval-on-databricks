@@ -8,7 +8,12 @@
   files, as `files` and `search_index` (`FixtureStore.payload`): the agent runs elsewhere and cannot read them here.
 - **Answer.** A JSON object: `{"answer": "<final text>"}`, or `{"error": "<why>"}`.
 - **Retries.** Throttling, a quota, a retryable conflict and an internal error are retried with backoff, each time
-  in a new session. Any other error is the case's error. No key value reaches an error: they are redacted.
+  in a new session (up to `MAX_TRIES` calls). So is a connection that drops (`ConnectionClosedError`) or cannot be
+  made (`EndpointConnectionError`, `ConnectTimeoutError`), but only `NETWORK_RETRIES` time: the first call may have
+  run for the whole read timeout, so the worst case is two such calls (about 30 minutes), not four. The retry
+  leaves two traces for the case at most, and the trace reader keeps the newest. A read timeout is not retried: a
+  second run would wait as long again. Any other error is the case's error. No key value reaches an error: they are
+  redacted.
 """
 
 from __future__ import annotations
@@ -27,6 +32,7 @@ from skillhub.retry import backoff_s
 
 HARNESS = "agentcore"
 MAX_TRIES = 4
+NETWORK_RETRIES = 1  # after a dropped connection: the call may have run up to READ_TIMEOUT_S
 BACKOFF_S = 2.0
 BACKOFF_MAX_S = 30.0
 CONNECT_TIMEOUT_S = 10
@@ -123,11 +129,18 @@ class AgentCoreAgent:
         return redact(text, self._keys)[:MESSAGE_MAX]
 
     def run(self, case: AgentCase) -> AgentAnswer:
-        from botocore.exceptions import BotoCoreError, ClientError
+        from botocore.exceptions import (
+            BotoCoreError,
+            ClientError,
+            ConnectionClosedError,
+            ConnectTimeoutError,
+            EndpointConnectionError,
+        )
 
         start = self._clock()
         body = json.dumps(payload(case, self.model_id, self.host)).encode("utf-8")
-        for attempt in range(1, MAX_TRIES + 1):
+        throttled = network_retries = 0  # the retries of the two kinds are counted apart
+        while True:
             try:
                 response = self.client.invoke_agent_runtime(
                     agentRuntimeArn=self.runtime_arn,
@@ -141,14 +154,22 @@ class AgentCoreAgent:
             except ClientError as exc:
                 error = exc.response.get("Error", {})
                 code = str(error.get("Code") or "ClientError")
-                if code in RETRYABLE and attempt < MAX_TRIES:
-                    self._sleep(backoff_s(attempt, base_s=BACKOFF_S, cap_s=BACKOFF_MAX_S))
+                if code in RETRYABLE and throttled + 1 < MAX_TRIES:
+                    throttled += 1
+                    self._sleep(backoff_s(throttled, base_s=BACKOFF_S, cap_s=BACKOFF_MAX_S))
                     continue
                 return AgentAnswer(
                     "", self._error(f"{code}: {error.get('Message') or ''}".strip()), self._clock() - start
+                )
+            except (ConnectionClosedError, EndpointConnectionError, ConnectTimeoutError) as exc:
+                if network_retries < NETWORK_RETRIES:
+                    network_retries += 1
+                    self._sleep(backoff_s(network_retries, base_s=BACKOFF_S, cap_s=BACKOFF_MAX_S))
+                    continue
+                return AgentAnswer(
+                    "", f"{type(exc).__name__}: the call to the agent runtime failed", self._clock() - start
                 )
             except BotoCoreError as exc:  # its text can hold a request: only its type leaves
                 return AgentAnswer(
                     "", f"{type(exc).__name__}: the call to the agent runtime failed", self._clock() - start
                 )
-        raise AssertionError("unreachable")

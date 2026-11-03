@@ -2,6 +2,7 @@ import copy
 from types import SimpleNamespace as NS
 
 import pytest
+import requests
 from databricks.sdk.errors import NotFound
 from mlflow.exceptions import MlflowException
 
@@ -183,3 +184,84 @@ def test_expected_skill_is_always_written_so_a_merge_clears_a_stale_label():
     new = ds_mod.case_record(negative, "x")["expectations"]
     assert None not in new.values()  # nulls are rejected
     assert {**stale, **new}["expected_skill"] == ds_mod.NO_EXPECTED_SKILL
+
+
+CONFLICT_BODY = (
+    '{"error_code":"INTERNAL_ERROR","message":"io.delta.exceptions.ConcurrentAppendException: '
+    "[DELTA_CONCURRENT_APPEND.ROW_LEVEL_CHANGES] Transaction conflict detected. A concurrent CREATE OR REPLACE "
+    'TABLE AS SELECT added data to table cat.common_evals.ds_x committed at version 469."}'
+)
+
+
+def conflict_500(body=CONFLICT_BODY):
+    """As databricks.rag_eval's raise_for_status builds it: status line, then the response text."""
+    resp = requests.Response()
+    resp.status_code = 500
+    return requests.HTTPError(f"500 Server Error: Internal Server Error\n{body}. ", response=resp)
+
+
+class ConflictingDataset(FakeDataset):
+    """Merges like FakeDataset (matching by case_id), but the first `conflicts` merges fail like the live sync."""
+
+    def __init__(self, name, conflicts, error=None):
+        super().__init__(name)
+        self.conflicts, self.calls, self.error = conflicts, 0, error or conflict_500()
+
+    def merge_records(self, records):
+        self.calls += 1
+        if self.calls <= self.conflicts:
+            raise self.error
+        by_case = {r["inputs"]["case_id"]: r for r in self.records}
+        by_case.update({r["inputs"]["case_id"]: r for r in records})
+        self.records = list(by_case.values())
+        self.digest = f"d{len(self.records)}"
+        return copy.copy(self)
+
+
+def test_a_delta_write_conflict_from_a_concurrent_sync_is_retried_and_the_records_merge_once(monkeypatch):
+    monkeypatch.setattr(ds_mod, "SYNC_BACKOFF_S", 0.0)
+    store, created = {}, []
+    monkeypatch.setattr(ds_mod, "ds_api", fake_api(store, created))
+    store[TABLE] = ConflictingDataset(TABLE, conflicts=2)
+    _, digest = ds_mod.sync_dataset(make_cfg(), "common", "earnings-preview", ef_fixture(), "42")
+    ds = store[TABLE]
+    assert ds.calls == 3 and created == []
+    assert sorted(r["inputs"]["case_id"] for r in ds.records) == [1, 2, 3, 4]  # no case twice
+    assert digest == "d4"
+
+
+def test_a_conflict_in_get_dataset_is_retried_too(monkeypatch):
+    monkeypatch.setattr(ds_mod, "SYNC_BACKOFF_S", 0.0)
+    store = {TABLE: FakeDataset(TABLE)}
+    api = fake_api(store, [])
+    gets = []
+
+    def get_dataset(name=None, **kw):
+        gets.append(name)
+        if len(gets) == 1:
+            raise conflict_500()
+        return api.get_dataset(name=name)
+
+    monkeypatch.setattr(ds_mod, "ds_api", NS(get_dataset=get_dataset, create_dataset=api.create_dataset))
+    _, digest = ds_mod.sync_dataset(make_cfg(), "common", "earnings-preview", ef_fixture(), "42")
+    assert digest == "d4" and len(gets) == 3
+
+
+def test_a_dataset_that_keeps_conflicting_is_an_error_after_the_last_attempt(monkeypatch):
+    monkeypatch.setattr(ds_mod, "SYNC_BACKOFF_S", 0.0)
+    store = {}
+    monkeypatch.setattr(ds_mod, "ds_api", fake_api(store, []))
+    store[TABLE] = ConflictingDataset(TABLE, conflicts=99)
+    with pytest.raises(requests.HTTPError, match="ConcurrentAppendException"):
+        ds_mod.sync_dataset(make_cfg(), "common", "earnings-preview", ef_fixture(), "42")
+    assert store[TABLE].calls == ds_mod.SYNC_ATTEMPTS
+
+
+def test_a_server_error_that_is_not_a_write_conflict_is_not_retried(monkeypatch):
+    monkeypatch.setattr(ds_mod, "SYNC_BACKOFF_S", 0.0)
+    store = {}
+    monkeypatch.setattr(ds_mod, "ds_api", fake_api(store, []))
+    store[TABLE] = ConflictingDataset(TABLE, conflicts=99, error=conflict_500('{"message":"disk full"}'))
+    with pytest.raises(requests.HTTPError, match="disk full"):
+        ds_mod.sync_dataset(make_cfg(), "common", "earnings-preview", ef_fixture(), "42")
+    assert store[TABLE].calls == 1

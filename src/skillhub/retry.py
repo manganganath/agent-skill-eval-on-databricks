@@ -1,7 +1,7 @@
 """Which errors are worth another attempt, and a jittered exponential backoff to make it.
 
 A rate limit or a briefly unavailable service (HTTP 429, 503, 504) is transient. So is a Delta write conflict
-between two writers of one table, for a write that checks again what is there (insert unless it exists).
+between two writers of one table, for a write that checks again what is there (insert unless it exists, merge by key).
 A library often wraps the error it got, so the whole cause and context chain is checked.
 """
 
@@ -25,7 +25,10 @@ TRANSIENT_STATUSES = frozenset({429, 503, 504})
 TRANSIENT_CODES = frozenset({"REQUEST_LIMIT_EXCEEDED", "TEMPORARILY_UNAVAILABLE"})
 # "429" as a word, so a count such as 1429 is not a status
 _TRANSIENT_TEXT = re.compile(r"\b429\b|Too Many Requests|TEMPORARILY_UNAVAILABLE|REQUEST_LIMIT_EXCEEDED")
-_CONFLICT_TEXT = re.compile(r"DELTA_CONCURRENT_APPEND|ConcurrentAppendException|Transaction conflict")
+_CONFLICT_TEXT = re.compile(
+    r"DELTA_CONCURRENT_\w+|DELTA_METADATA_CHANGED|Transaction conflict"
+    r"|Concurrent(?:Append|DeleteRead|DeleteDelete|Transaction)Exception|MetadataChangedException"
+)
 
 
 def _chain(exc: BaseException) -> Iterator[BaseException]:
@@ -66,7 +69,8 @@ def is_transient(exc: BaseException) -> bool:
 
 
 def is_write_conflict(exc: BaseException) -> bool:
-    """A Delta transaction conflict (a concurrent append) anywhere in the error's chain."""
+    """A Delta transaction conflict (a concurrent append, delete, transaction or metadata change) anywhere in the
+    error's chain. A service often reports it inside an HTTP 500 body, which the error's text then holds."""
     return any(_CONFLICT_TEXT.search(str(e)) for e in _chain(exc))
 
 

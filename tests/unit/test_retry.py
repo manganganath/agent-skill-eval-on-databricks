@@ -100,6 +100,14 @@ def test_a_cyclic_chain_ends():
         RuntimeError("io.delta.exceptions.ConcurrentAppendException: Files were added"),
         RuntimeError("Transaction conflict detected"),
         chained(RuntimeError("record failed"), SqlError("[DELTA_CONCURRENT_APPEND] conflict")),
+        RuntimeError("io.delta.exceptions.ConcurrentDeleteReadException: file was deleted"),
+        RuntimeError("io.delta.exceptions.ConcurrentTransactionException: same app id"),
+        RuntimeError("[DELTA_CONCURRENT_DELETE_DELETE.WHOLE_TABLE_READ] deleted"),
+        RuntimeError("io.delta.exceptions.MetadataChangedException: metadata changed"),
+        requests.HTTPError(
+            '500 Server Error: Internal Server Error\n{"error_code":"INTERNAL_ERROR","message":'
+            '"io.delta.exceptions.ConcurrentAppendException: [DELTA_CONCURRENT_APPEND.ROW_LEVEL_CHANGES]"}. '
+        ),
     ],
     ids=repr,
 )

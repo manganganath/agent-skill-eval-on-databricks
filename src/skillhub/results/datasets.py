@@ -9,10 +9,18 @@ from mlflow.exceptions import MlflowException
 from skillhub.config import HubConfig
 from skillhub.evalspec import EvalCase, EvalFile
 from skillhub.naming import dataset_table
+from skillhub.retry import is_write_conflict, retrying
 
 # `expected_skill` when the case expects no skill. A null would be rejected, and leaving the key out
 # would keep a stale value: merge_records merges expectations as {**existing, **new}.
 NO_EXPECTED_SKILL = ""
+
+# Two runs of one skill sync the same dataset table at once. The Databricks backend rewrites that table from its
+# records (CREATE OR REPLACE TABLE AS SELECT) in `merge_records` and in `get_dataset`, and the second writer can
+# get a Delta conflict as an HTTP 500. Jittered exponential backoff, bounded.
+SYNC_ATTEMPTS = 5
+SYNC_BACKOFF_S = 1.0
+SYNC_BACKOFF_MAX_S = 15.0
 
 
 def case_record(case: EvalCase, skill: str) -> dict[str, Any]:
@@ -64,12 +72,26 @@ def sync_dataset(
 ) -> tuple[object, str]:
     """Write the cases to the UC-backed dataset and return (fresh dataset, digest).
 
-    merge_records returns a stale handle, so the digest comes from a fresh get_dataset.
+    merge_records returns a stale handle, so the digest comes from a fresh get_dataset. A Delta write conflict
+    with another run of the same skill repeats the whole sequence, which is safe: the dataset is found or created,
+    and merge_records matches records by their inputs (the case) and merges expectations and tags, so the same
+    records merged again change nothing.
     """
     name = dataset_table(cfg, dept, skill)
     records = [case_record(c, skill) for c in ef.evals]
-    handle = _get_or_create(name, experiment_id)
-    if records:
-        handle.merge_records(records)
-    fresh = ds_api.get_dataset(name=name)
-    return fresh, fresh.digest
+
+    def sync() -> tuple[object, str]:
+        handle = _get_or_create(name, experiment_id)
+        if records:
+            handle.merge_records(records)
+        fresh = ds_api.get_dataset(name=name)
+        return fresh, fresh.digest
+
+    return retrying(
+        sync,
+        attempts=SYNC_ATTEMPTS,
+        base_s=SYNC_BACKOFF_S,
+        cap_s=SYNC_BACKOFF_MAX_S,
+        retry_on=is_write_conflict,
+        what=f"{dept}/{skill} dataset sync",
+    )
