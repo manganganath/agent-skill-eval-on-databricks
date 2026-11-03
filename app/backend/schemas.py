@@ -361,9 +361,14 @@ class ModelTestOut(BaseModel):
     job_run_id: int | None = None
 
 
+# What a hub.yaml profile is used for: a model of defaults.models, a judge of `judges` or `judges_pr`, the
+# `generator`, or the security scan's LLM reviewer.
+ModelRole = Literal["default_gate", "judge", "pr_judge", "generator", "scan_reviewer"]
+
+
 class ModelOut(BaseModel):
     """One eval target: a hub.yaml profile (`release_gate`, changed only in hub.yaml) or a model catalog row.
-    Mirrors CatalogModel in app/frontend/src/api/types.ts."""
+    Mirrors CatalogModel in app/frontend/src/api/types.ts. `roles` is empty for a catalog row."""
 
     name: str
     kind: ProfileKind
@@ -376,6 +381,7 @@ class ModelOut(BaseModel):
     agent: dict[str, str] | None = None  # an external agent's settings
     enabled: bool
     release_gate: bool
+    roles: list[ModelRole] = []
     price_in: float | None = None
     price_out: float | None = None
     tested_at: str | None = None

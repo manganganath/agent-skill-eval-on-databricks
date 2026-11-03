@@ -257,8 +257,8 @@ describe("RunEval with drafts", () => {
 
 const catalogRow = (over: Partial<CatalogModel>): CatalogModel => ({
   name: "x", kind: "ug_model", route: "serving", endpoint: null, model_id: null, region: null, model_class: "fast",
-  harness: "reference", enabled: true, release_gate: false, price_in: null, price_out: null, tested_at: null,
-  test: null, updated_by: null, updated_at: null, ...over,
+  harness: "reference", enabled: true, release_gate: false, roles: [], price_in: null, price_out: null,
+  tested_at: null, test: null, updated_by: null, updated_at: null, ...over,
 });
 
 describe("RunEval, models from the model catalog", () => {

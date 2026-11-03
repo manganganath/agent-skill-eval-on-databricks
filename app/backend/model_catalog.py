@@ -16,7 +16,7 @@ from databricks.sdk.errors import DatabricksError
 
 from backend.authz import Reason
 from backend.deps import problem
-from backend.schemas import ModelOut, ModelTestOut
+from backend.schemas import ModelOut, ModelRole, ModelTestOut
 from skillhub.config import HubConfig
 from skillhub.model_catalog import store
 from skillhub.model_catalog.entry import CatalogEntry
@@ -74,6 +74,20 @@ def require_runnable(sql: SqlExecutor, cfg: HubConfig, names: list[str]) -> list
     return [n for n in extra if known[n].kind == "external_agent"]
 
 
+def roles(cfg: HubConfig, name: str) -> list[ModelRole]:
+    """What hub.yaml uses a profile for. A skill gates on its evals.json `models`, else on defaults.models, so only a
+    `default_gate` model gates a skill that names none."""
+    scan = cfg.scan.llm
+    used: list[tuple[ModelRole, bool]] = [
+        ("default_gate", name in cfg.defaults.models),
+        ("judge", name in cfg.judges),
+        ("pr_judge", name in cfg.judges_pr),
+        ("generator", name == cfg.generator),
+        ("scan_reviewer", scan.enabled and name == scan.model),
+    ]
+    return [role for role, yes in used if yes]
+
+
 def hub_rows(cfg: HubConfig) -> list[ModelOut]:
     """The hub.yaml profiles: the release-gate models, listed first and changed only in hub.yaml."""
     return [
@@ -88,6 +102,7 @@ def hub_rows(cfg: HubConfig) -> list[ModelOut]:
             harness="reference",
             enabled=True,
             release_gate=True,
+            roles=roles(cfg, name),
         )
         for name, p in cfg.models.items()
     ]

@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type ChangeEvent, type FormEvent } from "react";
 import { Link } from "react-router-dom";
 import { ApiError, api } from "../api/client";
-import type { AgentHarness, CatalogModel, Me, ModelIn, ModelsList, ProbeStatus, ServingEndpoint } from "../api/types";
+import type { AgentHarness, CatalogModel, Me, ModelIn, ModelRole, ModelsList, ProbeStatus, ServingEndpoint } from "../api/types";
 import { useAsync } from "../hooks/useAsync";
 import { ErrorState } from "../components/ErrorState";
 import { Loading } from "../components/Loading";
@@ -53,6 +53,21 @@ function LastTest({ model, test }: { model: CatalogModel; test?: Test }) {
   return <span>{model.test.status === "passed" ? "Passed" : "Failed"}{model.test.message ? `: ${model.test.message}` : ""}</span>;
 }
 
+const ROLE_LABELS: Record<Exclude<ModelRole, "default_gate">, string> = {
+  judge: "judge", pr_judge: "pull request judge", generator: "test case generator", scan_reviewer: "scan reviewer",
+};
+
+// A skill gates on its evals.json `models`, else on defaults.models: only a default gate model gates every skill.
+function GateStatus({ roles }: { roles: ModelRole[] }) {
+  const others = roles.flatMap((r) => (r === "default_gate" ? [] : [ROLE_LABELS[r]]));
+  return (
+    <>
+      {roles.includes("default_gate") ? "Gates by default" : "Gates a skill that names it"}
+      {others.length > 0 && <span className="cell-sub">Also {others.map((o) => `the ${o}`).join(", ")}</span>}
+    </>
+  );
+}
+
 function ModelTable({ title, rows, reviewer, tests, onTest, onToggle, onEdit }: {
   title: string; rows: CatalogModel[]; reviewer: boolean; tests: Record<string, Test>;
   onTest: (m: CatalogModel) => void; onToggle: (m: CatalogModel) => void; onEdit: (m: CatalogModel) => void;
@@ -80,7 +95,7 @@ function ModelTable({ title, rows, reviewer, tests, onTest, onToggle, onEdit }: 
                 <tr key={m.name}>
                   <th scope="row">{m.name}</th>
                   <td>{m.route ?? "-"}</td><td>{targetOf(m)}</td><td>{m.model_class}</td><td>{HARNESS_LABELS[m.harness] ?? m.harness}</td>
-                  <td>{m.release_gate ? "Release gate" : m.enabled ? "Enabled" : "Disabled"}</td>
+                  <td>{m.release_gate ? <GateStatus roles={m.roles} /> : m.enabled ? "Enabled" : "Disabled"}</td>
                   <td>
                     {m.release_gate ? "-" : <LastTest model={m} test={tests[m.name]} />}
                     {m.kind === "ug_model" && !passed && (
@@ -335,7 +350,8 @@ export default function Models() {
         <div>
           <h1>Models</h1>
           <p className="lede">
-            The models an evaluation can run on. Only the release gate models, set in hub.yaml, gate a release.
+            The models an evaluation can run on. Only the release gate models, set in hub.yaml, gate a release:
+            each skill gates on the models its evals.json names, or on the default ones.
           </p>
         </div>
         {reviewer && !form && (
