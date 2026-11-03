@@ -14,6 +14,7 @@ from mlflow.genai.scorers import (
 
 from skillhub import SkillHubError
 from skillhub.agent.loop import SKILL_PREFIX as SKILL_TOOL
+from skillhub.agents.traces import MCP_PREFIX, tool_names
 from skillhub.config import ConfigError
 from skillhub.eval.scorers import make_planted_bugs_scorer, make_skill_trigger_scorer
 from skillhub.naming import judge_name
@@ -87,8 +88,19 @@ class SkillAwareToolCallCorrectness(ToolCallCorrectness):
             return expectations
         if expectations.get("expected_skill") != self.skill_name:
             return expectations
+        expected = expectations["expected_tool_calls"]
+        if any(self._is_skill_call(call) for call in expected):
+            return expectations
         skill_call = {"name": self.skill_tool, "arguments": {}}
-        return {**expectations, "expected_tool_calls": [*expectations["expected_tool_calls"], skill_call]}
+        return {**expectations, "expected_tool_calls": [*expected, skill_call]}
+
+    def _is_skill_call(self, call) -> bool:
+        """Whether an expected call is to the skill's tool, by any name an agent gives it (see `tool_names`)."""
+        name = call.get("name") if isinstance(call, dict) else getattr(call, "name", None)
+        if not isinstance(name, str):
+            return False
+        names = tool_names([self.skill_tool.removeprefix(SKILL_TOOL)])
+        return MCP_PREFIX.sub("", name, count=1) in names
 
 
 def builtin_scorers(
