@@ -1912,32 +1912,50 @@ def test_the_eval_note_names_the_run_key_and_trigger_the_release_gates_on():
     assert _publish_job(release.EVAL_JOB)["if"] == "${{ needs.plan.outputs.reeval != '' }}"
 
 
-def test_nothing_the_release_scan_prints_can_be_a_workflow_command(tmp_path):
-    """The scan prints raw file names. Between the stop and resume commands the runner ignores `::` lines, and the step
-    still ends with the scan's own status."""
-    release = _release_names()
-    step = next(s for s in _publish_job(release.PLAN_JOB)["steps"] if s.get("name") == release.SCAN_STEP)
-    assert step["continue-on-error"] is True and step["id"] == release.SCAN_STEP_ID
-    bin_dir = tmp_path / "bin"
-    bin_dir.mkdir()
-    uv = bin_dir / "uv"
-    forged = f"::notice title={release.SCAN_TITLE}::success"
-    uv.write_text(
+WITHOUT_COMMANDS = "scripts/without_workflow_commands.sh"
+
+
+def test_a_command_run_without_workflow_commands_cannot_issue_one(tmp_path):
+    """The scans print raw file names from a pull request. Between the stop and resume commands the runner ignores `::`
+    lines, standard error included, and the script ends with the command's own status and a new token each run."""
+    forged = "::notice title=skillhub-release-scan::success"
+    cmd = tmp_path / "scan"
+    cmd.write_text(
         f'#!/bin/bash\nprintf "%s\\n" "$@" > "{tmp_path}/argv"\necho "{forged}"\necho "{forged}" >&2\nexit 3\n'
     )
-    uv.chmod(0o755)
-    summary = tmp_path / "summary.md"
-    env = {"PATH": f"{bin_dir}:/usr/bin:/bin", "SKILLS": "common/a", "GITHUB_STEP_SUMMARY": str(summary)}
-    proc = _run_note(step, env)
-    assert proc.returncode == 3  # the scan's status is the step's
+    cmd.chmod(0o755)
+    run = [str(ROOT / WITHOUT_COMMANDS), str(cmd), "--skills", "common/a b"]
+    proc = subprocess.run(run, capture_output=True, text=True, env={"PATH": "/usr/bin:/bin"})
+    assert proc.returncode == 3
     lines = proc.stdout.splitlines()
     assert lines[0].startswith("::stop-commands::")
     token = lines[0].split("::", 2)[2]
-    assert len(token) >= 32 and lines[-1] == f"::{token}::"
+    assert len(token) == 32 and lines[-1] == f"::{token}::"
     assert lines[1:-1] == [forged, forged]  # stderr is merged in, so it cannot arrive after the resume
-    assert (tmp_path / "argv").read_text().splitlines() == [
-        "run", "skillhub", "scan", "--skills", "common/a", "--allow-high", "--summary", str(summary),
-    ]  # fmt: skip
-    assert _run_note(step, env).stdout.splitlines()[0] != lines[0]  # a new token every run
-    uv.write_text("#!/bin/bash\nexit 0\n")
-    assert _run_note(step, env).returncode == 0
+    assert (tmp_path / "argv").read_text().splitlines() == ["--skills", "common/a b"]
+    again = subprocess.run(run, capture_output=True, text=True, env={"PATH": "/usr/bin:/bin"})
+    assert again.stdout.splitlines()[0] != lines[0]
+    cmd.write_text("#!/bin/bash\nexit 0\n")
+    assert subprocess.run(run, capture_output=True, text=True, env={"PATH": "/usr/bin:/bin"}).returncode == 0
+
+
+@pytest.mark.parametrize(
+    ("workflow", "job", "step_name"),
+    [
+        ("skills-publish.yml", "plan", "Security scan of the release (for the approver)"),
+        ("skills-pr.yml", None, "1b. Scan changed skills (no Databricks needed)"),
+        ("skills-pr.yml", None, "1c. LLM review of changed skills"),
+    ],
+)
+def test_every_scan_runs_without_workflow_commands(workflow, job, step_name):
+    doc = yaml.safe_load((WORKFLOWS / workflow).read_text())
+    jobs = [doc["jobs"][job]] if job else list(doc["jobs"].values())
+    step = next(s for j in jobs for s in j.get("steps", []) if s.get("name") == step_name)
+    scans = [line.strip() for line in step["run"].splitlines() if "skillhub scan" in line]
+    assert scans and all(line.startswith(f"{WITHOUT_COMMANDS} uv run skillhub scan ") for line in scans)
+
+
+def test_the_release_scan_keeps_its_id_and_never_fails_the_plan():
+    release = _release_names()
+    step = next(s for s in _publish_job(release.PLAN_JOB)["steps"] if s.get("name") == release.SCAN_STEP)
+    assert step["continue-on-error"] is True and step["id"] == release.SCAN_STEP_ID

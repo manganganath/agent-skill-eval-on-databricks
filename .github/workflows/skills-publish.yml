@@ -121,26 +121,15 @@ jobs:
 
       # For the production approver: the security scan of what this release publishes, in the run's summary. It
       # does not block here: publish refuses critical findings itself, and a reviewer accepted any high ones in the
-      # pull request. The scan prints raw file names, and a name can hold a newline and a `::notice` text, so the
-      # runner is told to ignore workflow commands until the scan has ended (a fresh random token each run). Standard
-      # error joins standard output, so none of it can arrive after the resume. The step ends with the scan's status.
+      # pull request. The scan prints raw file names, and a name can hold a newline and a `::notice` text, so it runs
+      # with workflow commands turned off; the step ends with the scan's status.
       - name: Security scan of the release (for the approver)
         id: release_scan
         if: ${{ steps.plan.outputs.reeval != '' }}
         continue-on-error: true
         env:
           SKILLS: ${{ steps.plan.outputs.reeval }}
-        run: |
-          token=$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n')
-          if [ "${#token}" -ne 32 ]; then
-            echo "::error::Could not make a token to stop workflow commands during the scan."
-            exit 1
-          fi
-          echo "::stop-commands::$token"
-          status=0
-          uv run skillhub scan --skills "$SKILLS" --allow-high --summary "$GITHUB_STEP_SUMMARY" 2>&1 || status=$?
-          echo "::$token::"
-          exit "$status"
+        run: scripts/without_workflow_commands.sh uv run skillhub scan --skills "$SKILLS" --allow-high --summary "$GITHUB_STEP_SUMMARY"
 
       # The scan never fails the job (continue-on-error), so GitHub reports its step as passed either way. This step
       # records the real outcome as an annotation, for the Skill Hub's Releases page. It runs after a failed scan, since
