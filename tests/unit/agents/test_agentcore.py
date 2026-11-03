@@ -4,6 +4,13 @@ from pathlib import Path
 
 import boto3
 import pytest
+from botocore.exceptions import (
+    ClientError,
+    ConnectionClosedError,
+    ConnectTimeoutError,
+    EndpointConnectionError,
+    ReadTimeoutError,
+)
 from botocore.response import StreamingBody
 from botocore.stub import ANY, Stubber
 
@@ -113,6 +120,61 @@ def test_an_agent_that_keeps_being_throttled_is_an_error_after_the_last_try():
     with stub:
         got = agent(client).run(agent_case())
     assert got == AgentAnswer("", "ThrottlingException: Rate exceeded", got.seconds)
+
+
+URL = "https://bedrock-agentcore.us-east-1.amazonaws.com/runtimes/x/invocations"
+CONNECTION_ERRORS = [
+    ConnectionClosedError(endpoint_url=URL),
+    EndpointConnectionError(endpoint_url=URL),
+    ConnectTimeoutError(endpoint_url=URL),
+]
+
+
+class ScriptedClient:
+    """invoke_agent_runtime raises or returns each scripted item in turn (the Stubber cannot raise a network error)."""
+
+    def __init__(self, *script):
+        self.script, self.sessions = list(script), []
+
+    def invoke_agent_runtime(self, **kw):
+        self.sessions.append(kw["runtimeSessionId"])
+        item = self.script.pop(0)
+        if isinstance(item, Exception):
+            raise item
+        return item
+
+
+@pytest.mark.parametrize("failure", CONNECTION_ERRORS, ids=lambda e: type(e).__name__)
+def test_a_dropped_connection_is_retried_once_in_a_new_session_with_backoff(failure):
+    client = ScriptedClient(failure, answer({"answer": "ok"}))
+    sleeps = []
+    got = agent(client, sleeps).run(agent_case())
+    assert got.text == "ok" and len(sleeps) == 1 and len(set(client.sessions)) == 2
+
+
+def test_a_connection_that_drops_again_is_an_error_after_one_retry():
+    client = ScriptedClient(*[ConnectionClosedError(endpoint_url=URL)] * 3)
+    got = agent(client).run(agent_case())
+    assert got.error == "ConnectionClosedError: the call to the agent runtime failed"
+    assert len(client.sessions) == 1 + agentcore.NETWORK_RETRIES == 2
+
+
+def test_the_network_retry_and_the_throttling_retries_are_counted_apart():
+    throttled = ClientError(
+        {"Error": {"Code": "ThrottlingException", "Message": "Rate"}}, "InvokeAgentRuntime"
+    )
+    client = ScriptedClient(
+        *[throttled] * (agentcore.MAX_TRIES - 1),
+        ConnectionClosedError(endpoint_url=URL),
+        answer({"answer": "ok"}),
+    )
+    assert agent(client).run(agent_case()).text == "ok"
+
+
+def test_a_read_timeout_is_not_retried_because_a_second_run_would_wait_as_long():
+    client = ScriptedClient(ReadTimeoutError(endpoint_url=URL), answer({"answer": "ok"}))
+    got = agent(client).run(agent_case())
+    assert got.error == "ReadTimeoutError: the call to the agent runtime failed" and len(client.sessions) == 1
 
 
 @pytest.mark.parametrize(
