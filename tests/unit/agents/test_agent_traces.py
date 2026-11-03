@@ -281,6 +281,39 @@ def test_a_strands_trace_gets_its_request_and_each_tool_calls_arguments_and_resu
     ]
 
 
+def _tool_calls_for(attrs):
+    from mlflow.genai.utils.trace_utils import extract_tools_called_from_trace
+
+    trace = _otel_trace(
+        ("invoke_agent Strands Agents", {"gen_ai.operation.name": "invoke_agent"}, []),
+        ("execute_tool read_workbook", {"gen_ai.operation.name": "execute_tool",
+                                        "gen_ai.tool.name": "read_workbook", **attrs}, []),
+    )  # fmt: skip
+    return [(c.name, c.arguments) for c in extract_tools_called_from_trace(for_judges(trace))]
+
+
+def _call_messages(arguments):
+    return json.dumps(
+        [{"role": "tool", "parts": [{"type": "tool_call", "name": "read_workbook", "id": "t1",
+                                     "arguments": arguments}]}]
+    )  # fmt: skip
+
+
+def test_a_tool_call_with_only_chat_messages_gets_the_arguments_of_its_tool_call_part():
+    args = {"path": "model.xlsx"}
+    assert _tool_calls_for({"gen_ai.input.messages": _call_messages(args)}) == [("read_workbook", args)]
+
+
+def test_a_tool_call_whose_arguments_are_not_an_object_keeps_them_as_their_json_string():
+    assert _tool_calls_for({"gen_ai.tool.call.arguments": "[1, 2]"}) == [("read_workbook", "[1, 2]")]
+
+
+def test_a_tool_call_with_messages_that_are_not_one_tool_call_gets_them_as_a_json_string():
+    messages = json.dumps([{"role": "user", "parts": [{"type": "text", "content": "hi"}]}])
+    [(name, arguments)] = _tool_calls_for({"gen_ai.input.messages": messages})
+    assert (name, json.loads(arguments)) == ("read_workbook", json.loads(messages))
+
+
 def test_a_trace_with_mlflow_inputs_keeps_them_and_a_span_that_cannot_be_translated_stays_as_it_was(
     monkeypatch,
 ):
