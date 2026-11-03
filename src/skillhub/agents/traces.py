@@ -46,7 +46,7 @@ TOOL_DEFINITIONS = "gen_ai.tool.definitions"
 TOOL_ARGUMENTS = "gen_ai.tool.call.arguments"
 TOOL_RESULT = "gen_ai.tool.call.result"
 CALLED_ONLY = "Called by the agent in this trace. The agent does not record its tool definitions."
-_MCP_PREFIX = re.compile(r"mcp__[A-Za-z0-9-]+__")  # a Claude Code tool name keeps its server's name in front
+MCP_PREFIX = re.compile(r"mcp__[A-Za-z0-9-]+__")  # a Claude Code tool name keeps its server's name in front
 _TABLE = re.compile(r"[a-z0-9_]+\.[a-z0-9_]+\." + SPANS_TABLE)
 _MODEL_SPANS = frozenset({"claude_code.llm_request"})
 _MODEL_TYPES = frozenset({SpanType.CHAT_MODEL, SpanType.LLM})
@@ -79,7 +79,7 @@ def _attr(span: Any, key: str) -> Any:
 
 
 def _skill_of(tool: str, names: Mapping[str, str]) -> str | None:
-    tool = _MCP_PREFIX.sub("", tool, count=1) if tool.startswith("mcp__") else tool
+    tool = MCP_PREFIX.sub("", tool, count=1) if tool.startswith("mcp__") else tool
     if tool in names:
         return names[tool]
     if not tool.startswith(SKILL_TOOL):
@@ -114,6 +114,36 @@ def _decoded(value: Any) -> Any:
     return value
 
 
+def _call_arguments(messages: Any) -> Any:
+    """The arguments of the one tool_call part in chat messages, or None when the messages are anything else."""
+    if not isinstance(messages, list):
+        return None
+    calls = [
+        part
+        for m in messages
+        if isinstance(m, dict) and isinstance(m.get("parts"), list)
+        for part in m["parts"]
+        if isinstance(part, dict) and part.get("type") == "tool_call"
+    ]
+    if len(calls) != 1 or not isinstance(calls[0].get("arguments"), dict | str):
+        return None
+    return calls[0]["arguments"]
+
+
+def _judge_safe_inputs(attributes: dict) -> None:
+    """Make the inputs of a tool call, which the judges read as its arguments, a dict or a string: MLflow's extraction
+    of the calls fails on anything else. The call's arguments when the inputs are the call as chat messages, else
+    the inputs as a JSON string."""
+    raw = attributes.get(SpanAttributeKey.INPUTS)
+    if raw is None:
+        return
+    value = _decoded(raw)
+    if isinstance(value, dict | str):
+        return
+    arguments = _call_arguments(value)
+    attributes[SpanAttributeKey.INPUTS] = json.dumps(raw if arguments is None else arguments)
+
+
 def _judged(span: Any) -> tuple[Any, dict | None]:
     """The span as MLflow would have stored it, with the dict it was built from. A tool call is named after its tool,
     and has the call's arguments and result as its inputs and outputs. Unchanged, with no dict, when it cannot be
@@ -131,7 +161,13 @@ def _judged(span: Any) -> tuple[Any, dict | None]:
             ):
                 value = _attr(span, key)
                 if value is not None:
-                    data["attributes"][mlflow_key] = json.dumps(_decoded(value))
+                    decoded = _decoded(value)
+                    # Arguments that are not an object stay as the string that the agent sent.
+                    if mlflow_key == SpanAttributeKey.INPUTS and not isinstance(decoded, dict):
+                        decoded = value if isinstance(value, str) else json.dumps(value)
+                    data["attributes"][mlflow_key] = json.dumps(decoded)
+            if _attr(span, TOOL_ARGUMENTS) is None:
+                _judge_safe_inputs(data["attributes"])
         return Span.from_dict(data), data
     except Exception:
         log.debug("span %s not translated for the judges", getattr(span, "name", "?"), exc_info=True)
