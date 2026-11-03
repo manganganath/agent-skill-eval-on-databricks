@@ -4,8 +4,12 @@
 Examples:
   uv run python scripts/mark_reviewed.py --skill earnings-preview --ids 1,2,3
   uv run python scripts/mark_reviewed.py --skill earnings-preview --rubric
+  uv run python scripts/mark_reviewed.py --skill audit-xls --rubric --rehash
 
 Only the listed cases change. Every other case and field stays as it is.
+--rehash records the skill's current content hash in rubric.json. Use it after a change that leaves what the rubric
+judges as it was, such as a wording fix, once you have checked that every criterion still fits: regenerating the
+rubric instead would replace its reviewed criteria.
 Cases are written before the rubric, so a rubric failure can follow a saved --ids update.
 """
 
@@ -15,6 +19,7 @@ import argparse
 import sys
 from pathlib import Path
 
+from skillhub.bundle import content_hash, load_bundle
 from skillhub.evalspec import load_evals, load_rubric, save_evals, save_rubric
 
 
@@ -52,6 +57,18 @@ def mark_rubric(rubric_path: Path) -> bool:
     return True
 
 
+def rehash_rubric(rubric_path: Path, skill_root: Path) -> bool:
+    """Record the skill's current content hash as the rubric's source. Return True when it changed. The criteria and
+    the review stay as they are."""
+    rubric = load_rubric(rubric_path)
+    current = content_hash(load_bundle(skill_root, skill_root.parent.name).files)
+    if rubric.source_hash == current:
+        return False
+    rubric.source_hash = current
+    save_rubric(rubric_path, rubric)
+    return True
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
@@ -59,6 +76,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--skill", required=True)
     parser.add_argument("--ids", default="", help="comma-separated case ids")
     parser.add_argument("--rubric", action="store_true", help="also mark rubric.json reviewed")
+    parser.add_argument(
+        "--rehash",
+        action="store_true",
+        help="with --rubric: record the skill's current content hash in rubric.json",
+    )
     args = parser.parse_args(argv)
     try:
         ids = [int(x) for x in args.ids.split(",") if x.strip()]
@@ -66,6 +88,8 @@ def main(argv: list[str] | None = None) -> int:
         parser.error("--ids must be comma-separated integers")
     if not ids and not args.rubric:
         parser.error("give --ids and/or --rubric")
+    if args.rehash and not args.rubric:
+        parser.error("--rehash needs --rubric")
     evals_dir = skill_dir(args.skill) / "evals"
     try:
         if ids:
@@ -73,6 +97,10 @@ def main(argv: list[str] | None = None) -> int:
             print(f"{args.skill}: reviewed cases now marked {changed}")
         if args.rubric:
             print(f"{args.skill}: rubric newly marked {mark_rubric(evals_dir / 'rubric.json')}")
+        if args.rehash:
+            print(
+                f"{args.skill}: rubric hash updated {rehash_rubric(evals_dir / 'rubric.json', evals_dir.parent)}"
+            )
     except (FileNotFoundError, ValueError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2

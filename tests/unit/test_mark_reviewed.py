@@ -125,3 +125,22 @@ def test_skill_dir_zero_or_many_matches_exit(tmp_path):
     (root / "b" / "demo" / "SKILL.md").write_text("x", encoding="utf-8")
     with pytest.raises(SystemExit):
         mark.skill_dir("demo", root)
+
+
+def test_rehash_records_the_skills_current_content_hash_and_keeps_the_review(tmp_path, monkeypatch):
+    from skillhub.bundle import content_hash, load_bundle
+
+    ev = _skills_tree(tmp_path, monkeypatch)
+    assert mark.main(["--skill", "demo", "--rubric", "--rehash"]) == 0
+    rubric = load_rubric(ev / "rubric.json")
+    assert rubric.source_hash == content_hash(load_bundle(ev.parent, "dept").files)
+    assert rubric.reviewed is True and len(rubric.criteria) == 5  # the criteria and the review stay
+    assert mark.rehash_rubric(ev / "rubric.json", ev.parent) is False  # already current
+
+
+def test_rehash_needs_rubric(tmp_path, monkeypatch):
+    ev = _skills_tree(tmp_path, monkeypatch)
+    with pytest.raises(SystemExit) as exc:
+        mark.main(["--skill", "demo", "--rehash"])
+    assert exc.value.code == 2
+    assert load_rubric(ev / "rubric.json").source_hash == "sha256:x"
