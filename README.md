@@ -31,13 +31,15 @@ It answers five questions for every skill before it reaches users:
   - **Trigger:** does the agent pick the skill when it should, and leave it alone for near-misses and unrelated requests? Accuracy, precision and recall per skill and model.
   - **Effectiveness:** is the answer better with the skill than without it? A panel of MLflow judges scores both answers against a rubric and the cases' assertions. The difference is the *uplift*.
   - Every result is tied to the exact content hash, rubric and test cases. Every score links to the MLflow trace that earned it.
-- **CI/CD gates in GitHub Actions.** A pull request that changes a skill is evaluated automatically, and a failed trigger eval blocks the merge. A named reviewer approves each release in a GitHub environment before CI publishes it. Each publish, switch and retire can POST a signed JSON event to your webhooks.
+- **CI/CD gates in GitHub Actions.** A pull request that changes a skill is evaluated automatically, and a failed trigger eval blocks the merge. A named reviewer approves each release in a GitHub environment before CI publishes it. Each publish, switch and retire can POST a JSON event to webhooks you list in `config/hub.yaml`, signed when you configure a signing secret. See [Release webhooks](docs/operations.md#release-webhooks).
 - **A security scan of every skill.** Before a pull request's skills reach the workspace, rules check them for credentials, hidden Unicode, prompt injection, data exfiltration, encoded payloads and risky scripts, and an LLM reviewer reads them for unsafe instructions. Critical findings block the pull request and the publish. A reviewer other than the author can accept high ones, until the next push. See [docs/operations.md](docs/operations.md#security-scanning).
 - **The Skill Hub**, a Databricks App, governed by each user's own Unity Catalog permissions. In it you can:
   - browse the catalog;
   - try a skill with and without it;
   - upload a draft, run an evaluation, and submit the draft for review;
   - follow its release, merge it (reviewers), and switch or roll back versions;
+  - see the releases that wait for approval, with their eval verdicts and security scan result, and open the run in GitHub to approve it (reviewers);
+  - register, test and enable more models and external agents (reviewers);
   - read the Eval matrix and a Dashboard.
 - **Results as data.** Evaluation runs and cases are Delta tables in your catalog, with views, a Genie space, four SQL alerts and a nightly re-evaluation of every live skill.
 
@@ -106,7 +108,7 @@ The Skill Hub's **Access** page shows the full table with your own roles marked;
 | 4. **Submit for review** | The draft's page | The app opens a pull request with the skill under `skills/<dept>/<skill>/`. The skill is now a *candidate*. |
 | 5. **Eval gate** | GitHub, automatic | `skills-pr` evaluates the candidate on the default models and posts a "Skill evaluation" comment. A failed trigger eval blocks the merge. |
 | 6. **Merge** | Skill Hub (reviewers) or GitHub | `skills-publish` checks the merged content's results. It reuses the gate's when only the skill changed and the content is identical, else it evaluates again. Then it waits for approval. A merge to `main` also starts the `platform` deploy, which asks for its own `production` approval. |
-| 7. **Approve** | GitHub → the run → Review deployments → `production` | The Job `skill-switch` creates the next version, switches it live and records who did it. Approve the `platform` run the same way, so the merged code is deployed. |
+| 7. **Approve** | GitHub → the run → Review deployments → `production` (reviewers find the waiting run on the Skill Hub's **Releases** page) | The Job `skill-switch` creates the next version, switches it live and records who did it. Approve the `platform` run the same way, so the merged code is deployed. |
 | 8. **Live** | Everywhere | Agents with read access load it through Unity Gateway. The Skill Hub's **Release path** panel shows each step as it happens. |
 
 Rollback is a **Switch version** on the skill's page (reviewers): pick the version, compare the two in the matrix, confirm. It runs the same `skill-switch` Job.
@@ -127,7 +129,7 @@ A test-case file with assertions on its trigger cases works as it is. Each trigg
 
 ### Evaluate on more models
 
-Reviewers register more models on the Skill Hub's **Models** page: any serving endpoint on Unity Gateway, an Amazon Bedrock model, or an external agent (Claude Code, or an agent on Amazon Bedrock AgentCore) that runs each case itself and sends its OpenTelemetry trace to Databricks. A **Test** runs one short call, or one case on an agent, as the eval service principal, and a model can be enabled once its test passed. Run eval then lists it after the release gate models. Its results appear in the Eval matrix with a badge for its kind; only the `config/hub.yaml` models gate a release. See [Model catalog](docs/operations.md#model-catalog).
+Reviewers register more models on the Skill Hub's **Models** page: any serving endpoint on Unity Gateway, an Amazon Bedrock model, or an external agent (Claude Code, or an agent on Amazon Bedrock AgentCore) that runs each case itself and sends its OpenTelemetry trace to Databricks. A **Test** runs one short call, or one case on an agent, as the eval service principal, and a model can be enabled once its test passed. Run eval then lists it after the release gate models. Its results appear in the Eval matrix with a badge for its kind; only the `config/hub.yaml` models gate a release. An agent on Amazon Bedrock AgentCore needs its own Databricks service principal in the `skillhub-agents` group; see the sample's README. See [Model catalog](docs/operations.md#model-catalog).
 
 ### Connect your own agents
 
@@ -204,7 +206,7 @@ Agents outside the Skill Hub load skills from the Unity Gateway skills MCP (Beta
 - The Skill Hub shows your skills as live, with a verdict per model.
 - **Access** shows your roles.
 - **Try this skill** answers with "Skill invoked: yes".
-- `uv run skillhub check-permissions`, with the variables from step 2, exits 0.
+- `uv run skillhub check-permissions`, with the variables from step 2 plus `SKILLHUB_CI_PRINCIPAL`, `SKILLHUB_CI_EVAL_PRINCIPAL` and `SKILLHUB_APP_PRINCIPAL` (the three application IDs), exits 0.
 
 ### Upgrade
 
@@ -223,6 +225,9 @@ Everything customer-specific is in `config/hub.yaml`. `${VAR}` values come from 
 | `external` | Where the eval Jobs find the AWS key for Amazon Bedrock (`bedrock.secret_scope`) and the default Bedrock region. See [Amazon Bedrock](docs/operations.md#amazon-bedrock). |
 | `judges`, `judges_pr`, `generator` | The judge panel for full runs, the single judge for pull request runs, and the model that drafts test cases and rubrics. |
 | `defaults` | The default models and repeats, the verdict thresholds, `min_reviewed_cases`, the concurrency, and `gating_modes`, the modes whose verdicts block a release. |
+| `scan` | The hosts a skill may name in a URL (`allowed_domains`) and the LLM reviewer. See [Security scanning](docs/operations.md#security-scanning). |
+| `notifications` | Webhooks that get a JSON event after each publish, switch and retire. Off by default. See [Release webhooks](docs/operations.md#release-webhooks). |
+| `retention` | How long the results tables keep their write history (`history_days`, default 7 years). See [docs/retention.md](docs/retention.md). |
 | `import` | A pinned upstream skill repository and how its folders map to departments. |
 
 **Verdicts:**
@@ -282,7 +287,7 @@ Example skills are imported from [anthropics/financial-services](https://github.
 ## Documentation
 
 - [docs/architecture.md](docs/architecture.md): components, data flow, Unity Catalog layout, permissions, versions and switch, the evaluation method, results.
-- [docs/operations.md](docs/operations.md): bootstrap, identities, secrets, deploy, running evals, switch and rollback, alerts, nightly.
+- [docs/operations.md](docs/operations.md): bootstrap, identities, secrets, deploy, running evals, switch and rollback, alerts, nightly, model catalog and external agents, security scanning, release webhooks.
 - [docs/onboarding.md](docs/onboarding.md): roles, adding a skill, evaluating a new skill, drafts and Submit for review, importing a skill repository.
 - [docs/api.md](docs/api.md): the Skill Hub REST API and the Databricks API equivalents.
 - [docs/retention.md](docs/retention.md): what is kept where for an audit, what the product guarantees, and what to add for a multi-year retention period.
