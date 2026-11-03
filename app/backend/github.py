@@ -34,6 +34,9 @@ API = "https://api.github.com"
 API_VERSION = "2022-11-28"
 TIMEOUT_S = 10.0
 ANSWER_S = 5.0  # a GET answer is reused this long; the release page refreshes every 20 to 30 seconds
+# What can no longer change is reused much longer: the pull request of a merged commit, a merged pull request and its
+# files, and the annotations of a completed job. The jobs of a run are not among them: they hold the waiting state.
+SETTLED_S = 600.0
 TOKEN_S = 60.0  # the token is read again after this long, so a rotated secret is picked up
 REPO_ENV = "SKILLHUB_GITHUB_REPO"
 SECRET_ENV = "SKILLHUB_GITHUB_TOKEN_SECRET"
@@ -86,7 +89,9 @@ def _error(status: int) -> GitHubError:
     return GitHubUnavailable(status)
 
 
-def _cached(key: tuple, ttl: float, compute: Callable[[], Any]) -> Any:
+def _cached(key: tuple, ttl: float | Callable[[Any], float], compute: Callable[[], Any]) -> Any:
+    """The answer for `key`, computed once per `ttl` seconds. A callable `ttl` is given the answer and returns how long
+    to keep it, so an answer that may still change is kept briefly."""
     now = time.monotonic()
     with _lock:
         hit = _cache.get(key)
@@ -96,7 +101,7 @@ def _cached(key: tuple, ttl: float, compute: Callable[[], Any]) -> Any:
     with _lock:
         if len(_cache) >= MAX_CACHED:
             _cache.clear()
-        _cache[key] = (time.monotonic() + ttl, value)
+        _cache[key] = (time.monotonic() + (ttl(value) if callable(ttl) else ttl), value)
     return value
 
 
@@ -284,11 +289,17 @@ class GitHubClient:
         except ValueError:
             raise GitHubUnavailable(status) from None
 
-    def get(self, path: str, query: dict[str, Any] | None = None) -> Any:
+    def get(
+        self,
+        path: str,
+        query: dict[str, Any] | None = None,
+        *,
+        ttl: float | Callable[[Any], float] = ANSWER_S,
+    ) -> Any:
         full = path + ("?" + urllib.parse.urlencode(query) if query else "")
         if not self._cached_answers:
             return self._request("GET", full)
-        return _cached(("GET", self._repo, full), ANSWER_S, lambda: self._request("GET", full))
+        return _cached(("GET", self._repo, full), ttl, lambda: self._request("GET", full))
 
     # --- branches and commits: the Git Data API -----------------------------------------------------------------
 
@@ -331,7 +342,13 @@ class GitHubClient:
         return _pull(raw)
 
     def pull(self, number: int) -> Pull:
-        return _pull(self.get(f"{self._root}/pulls/{number}"))
+        """A merged pull request no longer changes, so its answer is kept for SETTLED_S; an open one for ANSWER_S."""
+        return _pull(
+            self.get(
+                f"{self._root}/pulls/{number}",
+                ttl=lambda raw: SETTLED_S if isinstance(raw, dict) and raw.get("merged") else ANSWER_S,
+            )
+        )
 
     def pulls_for_branch(self, branch: str) -> list[Pull]:
         raw = self.get(
@@ -339,10 +356,13 @@ class GitHubClient:
         )
         return [_pull(p) for p in raw]
 
-    def pull_paths(self, number: int) -> list[str]:
+    def pull_paths(self, number: int, *, settled: bool = False) -> list[str]:
+        """The files of a pull request. `settled` says it is merged, so the files no longer change and the answer is kept
+        for SETTLED_S; the files of an open pull request are kept for ANSWER_S."""
         paths: list[str] = []
+        ttl = SETTLED_S if settled else ANSWER_S
         for page in range(1, MAX_PAGES + 1):
-            files = self.get(f"{self._root}/pulls/{number}/files", {"per_page": PAGE, "page": page})
+            files = self.get(f"{self._root}/pulls/{number}/files", {"per_page": PAGE, "page": page}, ttl=ttl)
             paths += [str(f["filename"]) for f in files]
             if len(files) < PAGE:
                 return paths
@@ -410,7 +430,12 @@ class GitHubClient:
     def merged_pull_number(self, sha: str) -> int | None:
         """The number of the pull request whose merge commit is `sha`, or None: a commit pushed straight to main has
         none."""
-        raw = self.get(f"{self._root}/commits/{sha}/pulls", {"per_page": 5})
+        raw = self.get(
+            f"{self._root}/commits/{sha}/pulls",
+            {"per_page": 5},
+            # A merged commit keeps its pull request. "None" may only mean GitHub has not linked them yet.
+            ttl=lambda found: SETTLED_S if any(p.get("merge_commit_sha") == sha for p in found) else ANSWER_S,
+        )
         return next((int(p["number"]) for p in raw if p.get("merge_commit_sha") == sha), None)
 
     def run_jobs(self, run_id: int) -> list[Job]:
@@ -433,6 +458,12 @@ class GitHubClient:
         ]
 
     def job_annotations(self, job_id: int) -> list[Annotation]:
-        """The annotations of a job's check run: what its steps recorded with `::notice title=...::message`."""
-        raw = self.get(f"{self._root}/check-runs/{job_id}/annotations", {"per_page": PAGE})
+        """The annotations of a job's check run: what its steps recorded with `::notice title=...::message`. Ask for a
+        completed job only: its annotations no longer change, so they are kept for SETTLED_S. An empty answer, which may
+        be GitHub not having them yet, is kept for ANSWER_S."""
+        raw = self.get(
+            f"{self._root}/check-runs/{job_id}/annotations",
+            {"per_page": PAGE},
+            ttl=lambda notes: SETTLED_S if notes else ANSWER_S,
+        )
         return [Annotation(str(a.get("title") or ""), str(a.get("message") or "")) for a in raw or []]
