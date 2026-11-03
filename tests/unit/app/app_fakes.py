@@ -362,7 +362,7 @@ class FakeGitHub:
             return replace(self.pulls[number], mergeable_state=self.mergeable_reads[number].pop(0))
         return self.pulls[number]
 
-    def pull_paths(self, number):
+    def pull_paths(self, number, *, settled=False):
         self._touch("pull_paths")
         if number in self.paths:
             return list(self.paths[number])

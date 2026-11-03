@@ -1820,3 +1820,142 @@ def test_deploys_start_the_app_and_deploy_its_source():
         assert runs.index(f"databricks bundle deploy -t {target}") < runs.index(
             f"databricks bundle run skill_hub -t {target}"
         )
+
+
+# --- The annotations the Skill Hub's Releases page reads ---
+
+
+def _release_names():
+    """backend.release, which holds the names the Releases page matches on (the app's folder joins the path as in
+    tests/unit/app/conftest.py)."""
+    import sys
+
+    app = str(ROOT / "app")
+    if app not in sys.path:
+        sys.path.append(app)
+    from backend import release
+
+    return release
+
+
+def _publish_job(name: str) -> dict:
+    return next(j for j in load_workflow("skills-publish.yml")["jobs"].values() if j.get("name") == name)
+
+
+def _run_note(step: dict, env: dict[str, str]) -> subprocess.CompletedProcess:
+    base = {"PATH": "/usr/bin:/bin:/opt/homebrew/bin:/usr/local/bin"}
+    return subprocess.run(
+        ["bash", "-eo", "pipefail", "-c", step["run"]], env=base | env, capture_output=True, text=True
+    )
+
+
+def test_the_names_and_titles_the_releases_page_reads_are_in_the_workflow():
+    release = _release_names()
+    plan, evalj = _publish_job(release.PLAN_JOB), _publish_job(release.EVAL_JOB)
+    steps = {s["name"]: s for s in plan["steps"] if "name" in s}
+    assert steps[release.PLAN_RECORD_STEP]["id"] == release.PLAN_RECORD_STEP_ID
+    assert f"title={release.PLAN_TITLE}::" in steps[release.PLAN_RECORD_STEP]["run"]
+    names = list(steps)
+    # After the step that computes the plan; the scan and its record step stay next to each other.
+    assert names.index(release.PLAN_RECORD_STEP) == names.index("Plan re-evaluation, publish and retire") + 1
+    assert names.index(release.RECORD_STEP) == names.index(release.SCAN_STEP) + 1
+    last = evalj["steps"][-1]
+    assert last["name"] == release.EVAL_RECORD_STEP and f"title={release.EVAL_TITLE}::" in last["run"]
+    assert "always()" not in json.dumps(plan) + json.dumps(evalj)
+
+
+def test_the_plan_note_lists_what_the_release_publishes_and_retires_as_one_escaped_line():
+    release = _release_names()
+    step = next(
+        s for s in _publish_job(release.PLAN_JOB)["steps"] if s.get("name") == release.PLAN_RECORD_STEP
+    )
+    # Values come in by env; nothing is interpolated into the script, and a failed note must not fail the plan.
+    assert step["env"] == {
+        "PUBLISH": "${{ steps.plan.outputs.publish }}",
+        "RETIRE": "${{ steps.plan.outputs.retire }}",
+    }
+    assert "${{" not in step["run"] and step["continue-on-error"] is True
+    publish = json.dumps([{"dept": "common", "skill": "a", "hash": "sha256:x", "cells": ["m/trigger"]}])
+    proc = _run_note(
+        step, {"PUBLISH": publish, "RETIRE": json.dumps([{"dept": "common", "skill": "b%\n::x"}])}
+    )
+    assert proc.returncode == 0, proc.stderr
+    (line,) = proc.stdout.splitlines()
+    assert line.startswith(f"::notice title={release.PLAN_TITLE}::")
+    message = line.split("::", 2)[2]
+    assert "\n" not in message and "\r" not in message
+    # The runner decodes the three escapes; what is left is the compact JSON of the names only.
+    decoded = message.replace("%0A", "\n").replace("%0D", "\r").replace("%25", "%")
+    assert json.loads(decoded) == {
+        "publish": [{"dept": "common", "skill": "a"}],
+        "retire": [{"dept": "common", "skill": "b%\n::x"}],
+    }
+    empty = _run_note(step, {"PUBLISH": "[]", "RETIRE": "[]"})
+    assert empty.stdout == f'::notice title={release.PLAN_TITLE}::{{"publish":[],"retire":[]}}\n'
+
+
+def test_the_eval_note_names_the_run_key_and_trigger_the_release_gates_on():
+    release = _release_names()
+    evalj = _publish_job(release.EVAL_JOB)
+    step = evalj["steps"][-1]
+    # The same expressions as the job's outputs, so the note and the key publish cites cannot differ.
+    assert step["env"]["RUN_KEY"] == evalj["outputs"]["eval_run_key"]
+    assert step["env"]["TRIGGER_SOURCE"] == evalj["outputs"]["eval_trigger_source"]
+    assert (
+        "${{" not in step["run"] and "if" not in step
+    )  # it runs after the gate passed, never after a failure
+    proc = _run_note(step, {"RUN_KEY": "pr12_ab12cd3_a2", "TRIGGER_SOURCE": "pr"})
+    assert proc.returncode == 0, proc.stderr
+    note = f'::notice title={release.EVAL_TITLE}::{{"run_key":"pr12_ab12cd3_a2","trigger_source":"pr"}}\n'
+    assert proc.stdout == note
+    # A release that only retires skills skips the whole job, so it writes no note and the page shows no eval.
+    assert _publish_job(release.EVAL_JOB)["if"] == "${{ needs.plan.outputs.reeval != '' }}"
+
+
+WITHOUT_COMMANDS = "scripts/without_workflow_commands.sh"
+
+
+def test_a_command_run_without_workflow_commands_cannot_issue_one(tmp_path):
+    """The scans print raw file names from a pull request. Between the stop and resume commands the runner ignores `::`
+    lines, standard error included, and the script ends with the command's own status and a new token each run."""
+    forged = "::notice title=skillhub-release-scan::success"
+    cmd = tmp_path / "scan"
+    cmd.write_text(
+        f'#!/bin/bash\nprintf "%s\\n" "$@" > "{tmp_path}/argv"\necho "{forged}"\necho "{forged}" >&2\nexit 3\n'
+    )
+    cmd.chmod(0o755)
+    run = [str(ROOT / WITHOUT_COMMANDS), str(cmd), "--skills", "common/a b"]
+    proc = subprocess.run(run, capture_output=True, text=True, env={"PATH": "/usr/bin:/bin"})
+    assert proc.returncode == 3
+    lines = proc.stdout.splitlines()
+    assert lines[0].startswith("::stop-commands::")
+    token = lines[0].split("::", 2)[2]
+    assert len(token) == 32 and lines[-1] == f"::{token}::"
+    assert lines[1:-1] == [forged, forged]  # stderr is merged in, so it cannot arrive after the resume
+    assert (tmp_path / "argv").read_text().splitlines() == ["--skills", "common/a b"]
+    again = subprocess.run(run, capture_output=True, text=True, env={"PATH": "/usr/bin:/bin"})
+    assert again.stdout.splitlines()[0] != lines[0]
+    cmd.write_text("#!/bin/bash\nexit 0\n")
+    assert subprocess.run(run, capture_output=True, text=True, env={"PATH": "/usr/bin:/bin"}).returncode == 0
+
+
+@pytest.mark.parametrize(
+    ("workflow", "job", "step_name"),
+    [
+        ("skills-publish.yml", "plan", "Security scan of the release (for the approver)"),
+        ("skills-pr.yml", None, "1b. Scan changed skills (no Databricks needed)"),
+        ("skills-pr.yml", None, "1c. LLM review of changed skills"),
+    ],
+)
+def test_every_scan_runs_without_workflow_commands(workflow, job, step_name):
+    doc = yaml.safe_load((WORKFLOWS / workflow).read_text())
+    jobs = [doc["jobs"][job]] if job else list(doc["jobs"].values())
+    step = next(s for j in jobs for s in j.get("steps", []) if s.get("name") == step_name)
+    scans = [line.strip() for line in step["run"].splitlines() if "skillhub scan" in line]
+    assert scans and all(line.startswith(f"{WITHOUT_COMMANDS} uv run skillhub scan ") for line in scans)
+
+
+def test_the_release_scan_keeps_its_id_and_never_fails_the_plan():
+    release = _release_names()
+    step = next(s for s in _publish_job(release.PLAN_JOB)["steps"] if s.get("name") == release.SCAN_STEP)
+    assert step["continue-on-error"] is True and step["id"] == release.SCAN_STEP_ID
