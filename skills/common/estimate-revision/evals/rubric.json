@@ -1,0 +1,51 @@
+{
+  "skill_name": "estimate-revision",
+  "source_hash": "sha256:3a066f6ffc3286b9e57445eb0e2677231b0672d58a5c07d3b8747df304299f38",
+  "generated_by": "human",
+  "pass_score": 0.7,
+  "reviewed": true,
+  "criteria": [
+    {
+      "id": "c1",
+      "text": "The response gives a table with house and consensus figures for each line both sources cover, with the gap as an amount and as a percentage of consensus.",
+      "type": "task_quality",
+      "weight": 5,
+      "source": "Workflow: step 2"
+    },
+    {
+      "id": "c2",
+      "text": "Every figure matches the materials; a line or period missing from either source is marked as not in the materials instead of being estimated.",
+      "type": "task_quality",
+      "weight": 5,
+      "source": "Rules: never invent a number"
+    },
+    {
+      "id": "c3",
+      "text": "The response gives an action per line: in line with no change for a gap within 1%, review for a larger gap.",
+      "type": "task_quality",
+      "weight": 4,
+      "source": "Workflow: step 3"
+    },
+    {
+      "id": "c4",
+      "text": "The response names both sources and their as-of dates.",
+      "type": "task_quality",
+      "weight": 3,
+      "source": "Output format: Sources"
+    },
+    {
+      "id": "c5",
+      "text": "The note uses the heading, the table columns Line, House, Consensus, Gap, Gap % and Action, and the What to revise and Sources lines.",
+      "type": "skill_format",
+      "weight": 4,
+      "source": "Output format"
+    },
+    {
+      "id": "c6",
+      "text": "Revenue is in $M with one decimal, EPS in dollars with two decimals, margins in % with one decimal, and the note fits one screen.",
+      "type": "skill_format",
+      "weight": 2,
+      "source": "Rules: units and length"
+    }
+  ]
+}
