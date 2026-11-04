@@ -1,0 +1,240 @@
+{
+  "skill_name": "estimate-revision",
+  "evals": [
+    {
+      "id": 1,
+      "kind": "trigger",
+      "prompt": "How do our Q3 numbers for Northwind compare with consensus? Write a short revision note.",
+      "should_trigger": true
+    },
+    {
+      "id": 2,
+      "kind": "trigger",
+      "prompt": "Are we above or below the street on Northwind's FY26 revenue? Should we revise?",
+      "should_trigger": true
+    },
+    {
+      "id": 3,
+      "kind": "trigger",
+      "prompt": "Estimate check before the print: our EPS versus consensus for Northwind, and what we would change.",
+      "should_trigger": true
+    },
+    {
+      "id": 4,
+      "kind": "trigger",
+      "prompt": "Compare the house estimates with Consensus Hub for NWRB and flag any gap over 2%.",
+      "should_trigger": true
+    },
+    {
+      "id": 5,
+      "kind": "trigger",
+      "prompt": "We're at $408M revenue for Q3 and consensus has moved. Draft an estimate-revision note.",
+      "should_trigger": true
+    },
+    {
+      "id": 6,
+      "kind": "trigger",
+      "prompt": "Where are we versus the street on gross margin for Q3 FY26?",
+      "should_trigger": true
+    },
+    {
+      "id": 7,
+      "kind": "trigger",
+      "prompt": "Write a quick note on whether to raise or cut our Northwind numbers given the latest consensus.",
+      "should_trigger": true
+    },
+    {
+      "id": 8,
+      "kind": "trigger",
+      "prompt": "Bridge our prior estimates to the new consensus for Northwind, line by line.",
+      "should_trigger": true
+    },
+    {
+      "id": 9,
+      "kind": "trigger",
+      "prompt": "Build a DCF for Northwind with a 9% WACC and a 3% terminal growth rate.",
+      "should_trigger": false,
+      "expected_skill": "dcf-model"
+    },
+    {
+      "id": 10,
+      "kind": "trigger",
+      "prompt": "Pull trading comps for Northwind against three robotics peers, with EV/EBITDA and P/E.",
+      "should_trigger": false,
+      "expected_skill": "comps-analysis"
+    },
+    {
+      "id": 11,
+      "kind": "trigger",
+      "prompt": "Audit the formulas in Northwind's model.xlsx before it goes to the investment committee.",
+      "should_trigger": false,
+      "expected_skill": "audit-xls"
+    },
+    {
+      "id": 12,
+      "kind": "trigger",
+      "prompt": "Build a three-statement model for Northwind from the latest press release.",
+      "should_trigger": false,
+      "expected_skill": "3-statement-model"
+    },
+    {
+      "id": 13,
+      "kind": "trigger",
+      "prompt": "Summarise the plot of Pride and Prejudice in three sentences.",
+      "should_trigger": false
+    },
+    {
+      "id": 14,
+      "kind": "trigger",
+      "prompt": "What is the capital of Australia?",
+      "should_trigger": false
+    },
+    {
+      "id": 15,
+      "kind": "trigger",
+      "prompt": "Write a haiku about autumn leaves.",
+      "should_trigger": false
+    },
+    {
+      "id": 101,
+      "kind": "effectiveness",
+      "prompt": "Compare our Q3 FY26 estimates for Northwind with consensus and write the revision note.",
+      "should_trigger": true,
+      "assertions": [
+        "Gives a table with house and consensus Q3 FY26 revenue ($408.0M against $405.0M), non-GAAP EPS ($0.81 against $0.79) and gross margin (41.0% against 40.8%)",
+        "States the gap for each line, for example revenue +$3.0M, about +0.7% above consensus",
+        "Names both sources with their dates: house estimates as of 2026-10-15 and Consensus Hub as of 2026-10-20"
+      ],
+      "fixtures": [
+        "northwind/prior_estimates.json",
+        "northwind/consensus_q3.json"
+      ],
+      "expected_tool_calls": [
+        {
+          "name": "read_file",
+          "arguments": {
+            "path": "northwind/prior_estimates.json"
+          }
+        },
+        {
+          "name": "read_file",
+          "arguments": {
+            "path": "northwind/consensus_q3.json"
+          }
+        }
+      ]
+    },
+    {
+      "id": 102,
+      "kind": "effectiveness",
+      "prompt": "Is our FY26 revenue estimate for Northwind in line with the street?",
+      "should_trigger": true,
+      "assertions": [
+        "Says house FY26 revenue of $1,650.0M equals consensus FY26 revenue of $1,650.0M, so that line needs no revision",
+        "Does not invent an FY27 consensus figure, and says FY27 consensus is not in the materials if FY27 comes up"
+      ],
+      "fixtures": [
+        "northwind/prior_estimates.json",
+        "northwind/consensus_q3.json"
+      ],
+      "expected_tool_calls": [
+        {
+          "name": "read_file",
+          "arguments": {
+            "path": "northwind/prior_estimates.json"
+          }
+        },
+        {
+          "name": "read_file",
+          "arguments": {
+            "path": "northwind/consensus_q3.json"
+          }
+        }
+      ]
+    },
+    {
+      "id": 103,
+      "kind": "effectiveness",
+      "prompt": "Should we revise our Q4 FY26 numbers for Northwind?",
+      "should_trigger": true,
+      "assertions": [
+        "Says the house estimates have no Q4 FY26 figures, so no gap can be computed for Q4",
+        "Gives Q4 FY26 consensus of $428.0M revenue and $0.92 non-GAAP EPS from Consensus Hub"
+      ],
+      "fixtures": [
+        "northwind/prior_estimates.json",
+        "northwind/consensus_q3.json"
+      ],
+      "expected_tool_calls": [
+        {
+          "name": "read_file",
+          "arguments": {
+            "path": "northwind/prior_estimates.json"
+          }
+        },
+        {
+          "name": "read_file",
+          "arguments": {
+            "path": "northwind/consensus_q3.json"
+          }
+        }
+      ]
+    },
+    {
+      "id": 104,
+      "kind": "effectiveness",
+      "prompt": "Does the latest consensus change our rating or price target on Northwind?",
+      "should_trigger": true,
+      "assertions": [
+        "States the house rating, Overweight, and the price target, $56.0, as of 2026-10-15",
+        "Keeps the rating and price target, or ties any change to the estimate gaps it reports"
+      ],
+      "fixtures": [
+        "northwind/prior_estimates.json",
+        "northwind/consensus_q3.json"
+      ],
+      "expected_tool_calls": [
+        {
+          "name": "read_file",
+          "arguments": {
+            "path": "northwind/prior_estimates.json"
+          }
+        },
+        {
+          "name": "read_file",
+          "arguments": {
+            "path": "northwind/consensus_q3.json"
+          }
+        }
+      ]
+    },
+    {
+      "id": 105,
+      "kind": "effectiveness",
+      "prompt": "One line for the morning meeting: where are we against consensus on Northwind's Q3?",
+      "should_trigger": true,
+      "assertions": [
+        "Says the house is slightly above consensus on Q3 FY26 revenue, non-GAAP EPS and gross margin",
+        "Keeps the answer to one or two sentences"
+      ],
+      "fixtures": [
+        "northwind/prior_estimates.json",
+        "northwind/consensus_q3.json"
+      ],
+      "expected_tool_calls": [
+        {
+          "name": "read_file",
+          "arguments": {
+            "path": "northwind/prior_estimates.json"
+          }
+        },
+        {
+          "name": "read_file",
+          "arguments": {
+            "path": "northwind/consensus_q3.json"
+          }
+        }
+      ]
+    }
+  ]
+}
